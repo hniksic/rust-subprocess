@@ -8,7 +8,6 @@ pub use posix::{SIGKILL, SIGTERM, ExitStatus};
 
 #[derive(Debug)]
 pub struct Popen {
-    args: Vec<PathBuf>,
     pid: Option<u32>,
     exit_status: ExitStatus,
 }
@@ -28,22 +27,20 @@ impl Popen {
         let args: Vec<PathBuf> = args.iter()
             .map(|p| p.as_ref().to_owned()).collect();
         let mut inst = Popen {
-            args: args,
             pid: None,
             exit_status: ExitStatus::Unknown,
         };
-        try!(inst.start());
-        Ok(inst)
+        inst.start(args).and(Ok(inst))
     }
 
-    fn start(&mut self) -> Result<()> {
+    fn start(&mut self, args: Vec<PathBuf>) -> Result<()> {
         let mut exec_fail_pipe = try!(posix::pipe());
         try!(set_cloexec(&exec_fail_pipe.0));
         try!(set_cloexec(&exec_fail_pipe.1));
         let child_pid = try!(posix::fork());
         if child_pid == 0 {
             mem::drop(exec_fail_pipe.0);
-            let result = posix::execvp(&self.args[0], &self.args);
+            let result = posix::execvp(&args[0], &args);
             // Notify the parent process that exec has failed, and exit.
             let error_code: i32 = match result {
                 Ok(()) => unreachable!(),
