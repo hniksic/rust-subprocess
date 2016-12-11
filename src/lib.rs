@@ -8,7 +8,7 @@ mod tests {
 
     #[test]
     fn good_cmd() {
-        let p = Popen::create(&["ls", "-al"]).unwrap();
+        Popen::create(&["ls", "-al"]).unwrap();
     }
 
     #[test]

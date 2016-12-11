@@ -2,12 +2,11 @@ use std::path::{PathBuf, Path};
 use std::io::{Result, Error, Read, Write};
 use std::mem;
 
-use libc;
-
 #[derive(Debug)]
 pub struct Popen {
     args: Vec<PathBuf>,
-    pid: Option<libc::pid_t>,
+    pid: Option<u32>,
+    return_code: Option<u8>,
 }
 
 mod wrapped {
@@ -39,8 +38,8 @@ mod wrapped {
         })
     }
 
-    pub fn fork() -> Result<libc::pid_t> {
-        check_err(unsafe { libc::fork() })
+    pub fn fork() -> Result<u32> {
+        check_err(unsafe { libc::fork() }).map(|pid| pid as u32)
     }
 
     pub fn execvp<P1, P2>(cmd: P1, args: &[P2]) -> Result<()>
@@ -53,6 +52,9 @@ mod wrapped {
             .map(|_| ())
     }
 
+    pub fn _exit(status: u8) -> ! {
+        unsafe { libc::_exit(status as libc::c_int) }
+    }
 }
 
 impl Popen {
@@ -62,6 +64,7 @@ impl Popen {
         let mut inst = Popen {
             args: args,
             pid: None,
+            return_code: None,
         };
         try!(inst.start());
         Ok(inst)
@@ -80,9 +83,9 @@ impl Popen {
             // XXX we don't really need formatting here - just send
             // off the 4-byte content of the variable over the pipe
             exec_fail_pipe.1.write_all(format!("{}", error_code).as_bytes()).unwrap();
-            unsafe { libc::_exit(127) }
+            wrapped::_exit(127);
         }
-        self.pid = Some(child_pid);
+        self.pid = Some(child_pid as u32);
         mem::drop(exec_fail_pipe.1);
         let mut error_string = String::new();
         exec_fail_pipe.0.read_to_string(&mut error_string).unwrap();
