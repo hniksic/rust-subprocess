@@ -1,5 +1,6 @@
 extern crate libc;
 
+mod posix;
 pub mod popen;
 
 #[cfg(test)]
