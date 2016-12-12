@@ -11,7 +11,7 @@ mod tests {
     #[test]
     fn good_cmd() {
         let mut p = Popen::create(&["ls", "-al"]).unwrap();
-        assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
     }
 
     #[test]
@@ -23,13 +23,14 @@ mod tests {
     #[test]
     fn err_exit() {
         let mut p = Popen::create(&["sh", "-c", "exit 13"]).unwrap();
-        assert!(p.wait().unwrap() == ExitStatus::Exited(13));
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(13)));
     }
 
     #[test]
     fn err_signal() {
         let mut p = Popen::create(&["sleep", "5"]).unwrap();
+        assert!(p.poll().is_none());
         p.terminate().unwrap();
-        assert!(p.wait().unwrap() == ExitStatus::Signaled(popen::SIGTERM));
+        assert!(p.wait().unwrap() == Some(ExitStatus::Signaled(popen::SIGTERM)));
     }
 }

@@ -8,9 +8,9 @@ use std::ptr;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ExitStatus {
-    Unknown,
     Exited(u8),
     Signaled(u8),
+    Other(i32),
 }
 
 fn check_err<T: Ord + Default>(num: T) -> Result<T> {
@@ -69,7 +69,7 @@ fn decode_exit_status(status: i32) -> ExitStatus {
         } else if libc::WIFSIGNALED(status) {
             ExitStatus::Signaled(libc::WTERMSIG(status) as u8)
         } else {
-            ExitStatus::Unknown
+            ExitStatus::Other(status)
         }
     }
 }

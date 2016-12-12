@@ -9,7 +9,7 @@ pub use posix::{SIGKILL, SIGTERM, ExitStatus};
 #[derive(Debug)]
 pub struct Popen {
     pid: Option<u32>,
-    exit_status: ExitStatus,
+    exit_status: Option<ExitStatus>,
 }
 
 
@@ -17,8 +17,8 @@ fn set_cloexec(f: &File) -> Result<()> {
     use std::os::unix::io::AsRawFd;
     let fd = f.as_raw_fd();
     let old = try!(posix::fcntl(fd, posix::F_GETFD, None));
-    posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC))
-        .and(Ok(()))
+    try!(posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC)));
+    Ok(())
 }
 
 
@@ -28,9 +28,10 @@ impl Popen {
             .map(|p| p.as_ref().to_owned()).collect();
         let mut inst = Popen {
             pid: None,
-            exit_status: ExitStatus::Unknown,
+            exit_status: None,
         };
-        inst.start(args).and(Ok(inst))
+        try!(inst.start(args));
+        Ok(inst)
     }
 
     fn start(&mut self, args: Vec<PathBuf>) -> Result<()> {
@@ -62,19 +63,27 @@ impl Popen {
         }
     }
 
-    pub fn wait(&mut self) -> Result<ExitStatus> {
+    fn wait_with(&mut self, wait_flags: i32) -> Result<Option<ExitStatus>> {
         match self.pid {
             Some(pid) => {
                 // XXX handle some kinds of error - at least ECHILD and EINTR
-                let (pid_out, exit_status) = try!(posix::waitpid(pid, 0));
+                let (pid_out, exit_status) = try!(posix::waitpid(pid, wait_flags));
                 if pid_out == pid {
                     self.pid = None;
-                    self.exit_status = exit_status;
+                    self.exit_status = Some(exit_status);
                 }
             },
             None => (),
         }
         Ok(self.exit_status)
+    }
+
+    pub fn wait(&mut self) -> Result<Option<ExitStatus>> {
+        self.wait_with(0)
+    }
+
+    pub fn poll(&mut self) -> Option<ExitStatus> {
+        self.wait_with(posix::WNOHANG).unwrap_or(None)
     }
 
     fn send_signal(&self, signal: u8) -> Result<()> {
