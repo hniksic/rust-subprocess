@@ -71,7 +71,8 @@ impl Popen {
                     Err(e) => e.raw_os_error().unwrap_or(-1)
                 };
                 // XXX use the byteorder crate to serialize the error
-                exec_fail_pipe.1.write_all(format!("{}", error_code).as_bytes()).unwrap();
+                exec_fail_pipe.1.write_all(format!("{}", error_code).as_bytes())
+                    .expect("write to error pipe");
                 posix::_exit(127);
             }
             self.pid = Some(child_pid as u32);
@@ -80,7 +81,8 @@ impl Popen {
         let mut error_string = String::new();
         try!(exec_fail_pipe.0.read_to_string(&mut error_string));
         if error_string.len() != 0 {
-            let error_code: i32 = error_string.parse().unwrap();
+            let error_code: i32 = error_string.parse()
+                .expect("parse child error code");
             Err(Error::from_raw_os_error(error_code))
         } else {
             Ok(())
