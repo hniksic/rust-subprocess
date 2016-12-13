@@ -6,11 +6,14 @@ pub mod popen;
 #[cfg(test)]
 mod tests {
     use popen;
-    use popen::{Popen, ExitStatus};
+    use popen::{Popen, ExitStatus, Redirection};
+    use std::fs::File;
+    use std::io::{Read, Write};
+    use std::mem;
 
     #[test]
     fn good_cmd() {
-        let mut p = Popen::create(&["ls", "-al"]).unwrap();
+        let mut p = Popen::create(&["true"]).unwrap();
         assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
     }
 
@@ -32,5 +35,31 @@ mod tests {
         assert!(p.poll().is_none());
         p.terminate().unwrap();
         assert!(p.wait().unwrap() == Some(ExitStatus::Signaled(popen::SIGTERM)));
+    }
+
+    #[test]
+    fn read_from_stdout() {
+        let mut p = Popen::create_full(
+            &["echo", "foo"], Redirection::None, Redirection::Pipe, Redirection::None)
+            .unwrap();
+        let mut output = String::new();
+        p.stdout.as_mut().unwrap().read_to_string(&mut output).unwrap();
+        assert!(output == "foo\n");
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    }
+
+    #[test]
+    fn write_to_stdin() {
+        let tmpname = "/tmp/foo";
+        let mut p = Popen::create_full(
+            &["dd".to_string(), format!("of={}", tmpname), "status=none".to_string()],
+            Redirection::Pipe, Redirection::None, Redirection::None)
+            .unwrap();
+        p.stdin.as_mut().unwrap().write_all(b"foo").unwrap();
+        mem::drop(p.stdin.take());
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+        let mut file_contents = String::new();
+        File::open(tmpname).unwrap().read_to_string(&mut file_contents).unwrap();
+        assert!(file_contents == "foo");
     }
 }

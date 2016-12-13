@@ -5,6 +5,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::fs::File;
 use std::os::unix::io::FromRawFd;
 use std::ptr;
+use std::ffi::CString;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ExitStatus {
@@ -20,9 +21,14 @@ fn check_err<T: Ord + Default>(num: T) -> Result<T> {
     Ok(num)
 }
 
-fn path_as_ptr(p: &Path) -> *const libc::c_char {
-    let c_bytes = p.as_os_str().as_bytes();
-    &c_bytes[0] as *const u8 as *const libc::c_char
+fn path_to_cstring(p: &Path) -> (CString, *const libc::c_char) {
+    let holder = CString::new(p.as_os_str().as_bytes()).unwrap();
+    let ptr;
+    {
+        let c_bytes = holder.as_bytes_with_nul();
+        ptr = &c_bytes[0] as *const u8 as *const libc::c_char;
+    }
+    (holder, ptr)
 }
 
 pub fn pipe() -> Result<(File, File)> {
@@ -37,13 +43,19 @@ pub fn fork() -> Result<u32> {
     check_err(unsafe { libc::fork() }).map(|pid| pid as u32)
 }
 
+use std::fmt::Debug;
+
 pub fn execvp<P1, P2>(cmd: P1, args: &[P2]) -> Result<()>
-    where P1: AsRef<Path>, P2: AsRef<Path> {
-    let mut args_os: Vec<_> = args.iter()
-        .map(|x| path_as_ptr(x.as_ref())).collect();
+    where P1: AsRef<Path> + Debug, P2: AsRef<Path> {
+    let cstrings: Vec<_> = args.iter()
+        .map(|x| path_to_cstring(x.as_ref())).collect();
+    let mut args_os: Vec<_> = cstrings.iter().map(|&(_, ptr)| ptr).collect();
     args_os.push(ptr::null());
     let argv = &args_os[0] as *const *const libc::c_char;
-    try!(check_err(unsafe { libc::execvp(path_as_ptr(cmd.as_ref()), argv) }));
+
+    let cmd = path_to_cstring(cmd.as_ref());
+
+    try!(check_err(unsafe { libc::execvp(cmd.1, argv) }));
     Ok(())
 }
 
@@ -95,4 +107,11 @@ pub fn fcntl(fd: i32, cmd: i32, arg1: Option<i32>) -> Result<i32> {
             None => libc::fcntl(fd, cmd),
         }
     })
+}
+
+pub fn dup2(oldfd: i32, newfd: i32) -> Result<()> {
+    try!(check_err(unsafe {
+        libc::dup2(oldfd, newfd)
+    }));
+    Ok(())
 }
