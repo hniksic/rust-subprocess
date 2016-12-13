@@ -27,7 +27,7 @@ fn set_cloexec(f: &File) -> Result<()> {
 #[derive(Debug)]
 pub enum Redirection {
     None,
-    //File(File),
+    File(File),
     Pipe,
 }
 
@@ -98,7 +98,8 @@ impl Popen {
                 self.stdin = Some(write);
                 Some(read)
             }
-            Redirection::None => None
+            Redirection::File(file) => Some(file),
+            Redirection::None => None,
         };
         let child_stdout = match stdout {
             Redirection::Pipe => {
@@ -107,6 +108,7 @@ impl Popen {
                 self.stdout = Some(read);
                 Some(write)
             }
+            Redirection::File(file) => Some(file),
             Redirection::None => None
         };
         let child_stderr = match stderr {
@@ -116,6 +118,7 @@ impl Popen {
                 self.stderr = Some(read);
                 Some(write)
             }
+            Redirection::File(file) => Some(file),
             Redirection::None => None
         };
         Ok((child_stdin, child_stdout, child_stderr))

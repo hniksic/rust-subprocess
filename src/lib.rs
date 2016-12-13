@@ -62,4 +62,56 @@ mod tests {
         File::open(tmpname).unwrap().read_to_string(&mut file_contents).unwrap();
         assert!(file_contents == "foo");
     }
+
+    #[test]
+    fn output_to_file() {
+        let tmpname = "/tmp/bar";
+        let outfile = File::create(tmpname).unwrap();
+        let mut p = Popen::create_full(
+            &["echo", "foo"], Redirection::None, Redirection::File(outfile), Redirection::None)
+            .unwrap();
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+        let mut file_contents = String::new();
+        File::open(tmpname).unwrap().read_to_string(&mut file_contents).unwrap();
+        assert!(file_contents == "foo\n");
+    }
+
+    #[test]
+    fn input_from_file() {
+        let tmpname = "/tmp/baz";
+        {
+            let mut outfile = File::create(tmpname).unwrap();
+            outfile.write_all(b"foo").unwrap();
+        }
+        let mut p = Popen::create_full(
+            &["cat", tmpname],
+            Redirection::File(File::open(tmpname).unwrap()),
+            Redirection::Pipe,
+            Redirection::None)
+            .unwrap();
+        let mut output = String::new();
+        p.stdout.as_mut().unwrap().read_to_string(&mut output).unwrap();
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+        assert!(output == "foo");
+    }
+
+    #[test]
+    fn input_output_from_file() {
+        let tmpname_in = "/tmp/qux-in";
+        let tmpname_out = "/tmp/qux-out";
+        {
+            let mut f = File::create(tmpname_in).unwrap();
+            f.write_all(b"foo").unwrap();
+        }
+        let mut p = Popen::create_full(
+            &["cat"],
+            Redirection::File(File::open(tmpname_in).unwrap()),
+            Redirection::File(File::create(tmpname_out).unwrap()),
+            Redirection::None)
+            .unwrap();
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+        let mut output = String::new();
+        File::open(tmpname_out).unwrap().read_to_string(&mut output).unwrap();
+        assert!(output == "foo");
+    }
 }
