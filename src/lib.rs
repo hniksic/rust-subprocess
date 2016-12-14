@@ -37,14 +37,18 @@ mod tests {
         assert!(p.wait().unwrap() == Some(ExitStatus::Signaled(popen::SIGTERM)));
     }
 
+    fn read_whole_file(mut f: File) -> String {
+        let mut content = String::new();
+        f.read_to_string(&mut content).unwrap();
+        content
+    }
+
     #[test]
     fn read_from_stdout() {
         let mut p = Popen::create_full(
             &["echo", "foo"], Redirection::None, Redirection::Pipe, Redirection::None)
             .unwrap();
-        let mut output = String::new();
-        p.stdout.as_mut().unwrap().read_to_string(&mut output).unwrap();
-        assert!(output == "foo\n");
+        assert!(read_whole_file(p.stdout.take().unwrap()) == "foo\n");
         assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
     }
 
@@ -58,9 +62,7 @@ mod tests {
         p.stdin.as_mut().unwrap().write_all(b"foo").unwrap();
         mem::drop(p.stdin.take());
         assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
-        let mut file_contents = String::new();
-        File::open(tmpname).unwrap().read_to_string(&mut file_contents).unwrap();
-        assert!(file_contents == "foo");
+        assert!(read_whole_file(File::open(tmpname).unwrap()) == "foo");
     }
 
     #[test]
@@ -71,9 +73,7 @@ mod tests {
             &["echo", "foo"], Redirection::None, Redirection::File(outfile), Redirection::None)
             .unwrap();
         assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
-        let mut file_contents = String::new();
-        File::open(tmpname).unwrap().read_to_string(&mut file_contents).unwrap();
-        assert!(file_contents == "foo\n");
+        assert!(read_whole_file(File::open(tmpname).unwrap()) == "foo\n");
     }
 
     #[test]
@@ -89,10 +89,8 @@ mod tests {
             Redirection::Pipe,
             Redirection::None)
             .unwrap();
-        let mut output = String::new();
-        p.stdout.as_mut().unwrap().read_to_string(&mut output).unwrap();
+        assert!(read_whole_file(p.stdout.take().unwrap()) == "foo");
         assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
-        assert!(output == "foo");
     }
 
     #[test]
