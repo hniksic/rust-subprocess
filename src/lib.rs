@@ -108,8 +108,38 @@ mod tests {
             Redirection::None)
             .unwrap();
         assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
-        let mut output = String::new();
-        File::open(tmpname_out).unwrap().read_to_string(&mut output).unwrap();
-        assert!(output == "foo");
+        assert!(read_whole_file(File::open(tmpname_out).unwrap()) == "foo");
+    }
+
+    #[test]
+    fn communicate_input() {
+        let tmpname = "/tmp/communicate_input";
+        let mut p = Popen::create_full(
+            &["cat"],
+            Redirection::Pipe,
+            Redirection::File(File::create(tmpname).unwrap()),
+            Redirection::None)
+            .unwrap();
+        if let (None, None) = p.communicate_bytes(Some(b"hello world")).unwrap() {
+        } else {
+            assert!(false);
+        }
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+        assert!(read_whole_file(File::open(tmpname).unwrap()) == "hello world");
+    }
+
+    #[test]
+    fn communicate_output() {
+        let mut p = Popen::create_full(
+            &["sh", "-c", "echo foo; echo bar >&2"],
+            Redirection::None, Redirection::Pipe, Redirection::Pipe)
+            .unwrap();
+        if let (Some(out), Some(err)) = p.communicate_bytes(None).unwrap() {
+            assert_eq!(out, b"foo\n");
+            assert_eq!(err, b"bar\n");
+        } else {
+            assert!(false);
+        }
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
     }
 }

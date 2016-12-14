@@ -178,6 +178,55 @@ impl Popen {
     pub fn kill(&self) -> Result<()> {
         self.send_signal(SIGKILL)
     }
+
+    fn read_chunk(f: &mut File, append_to: &mut Vec<u8>) -> Result<bool> {
+        let mut buf = [0u8; 8192];
+        let cnt = try!(f.read(&mut buf));
+        if cnt != 0 {
+            append_to.extend_from_slice(&buf[..cnt]);
+            Ok(false)
+        } else {
+            Ok(true)
+        }
+    }
+
+    pub fn communicate_bytes(&mut self, input_data: Option<&[u8]>)
+                             -> Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        if let None = self.stdin {
+            assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            let (mut done_out, mut done_err) = (self.stdout.is_none(),
+                                                self.stderr.is_none());
+            while !(done_out && done_err) {
+                if !done_out {
+                    if let Some(ref mut stdout) = self.stdout {
+                        done_out = try!(Popen::read_chunk(stdout, &mut out));
+                    }
+                }
+                if !done_err {
+                    if let Some(ref mut stderr) = self.stderr {
+                        done_err = try!(Popen::read_chunk(stderr, &mut err));
+                    }
+                }
+            }
+            self.stdout.take();
+            self.stderr.take();
+            return Ok((Some(out), Some(err)));
+        }
+
+        if let (&None, &None) = (&self.stdout, &self.stderr) {
+            if let (Some(ref mut stdin), Some(input_data)) = (self.stdin.as_mut(), input_data) {
+                try!(stdin.write_all(input_data));
+            }
+            self.stdin.take();
+            return Ok((None, None));
+        }
+
+        Ok((None, None))
+    }
+
+    //pub fn communicate(&mut self) -> Result<(String, String>)
 }
 
 impl Drop for Popen {
