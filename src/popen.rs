@@ -1,8 +1,14 @@
+extern crate crossbeam;
+
+use std::error::Error;
 use std::path::{PathBuf, Path};
-use std::io::{Result, Error, Read, Write};
+use std::io;
+use std::io::{Read, Write};
 use std::mem;
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
+use std::string::FromUtf8Error;
+use std::fmt;
 
 use posix;
 pub use posix::{SIGKILL, SIGTERM, ExitStatus};
@@ -17,7 +23,7 @@ pub struct Popen {
 }
 
 
-fn set_cloexec(f: &File) -> Result<()> {
+fn set_cloexec(f: &File) -> io::Result<()> {
     let fd = f.as_raw_fd();
     let old = try!(posix::fcntl(fd, posix::F_GETFD, None));
     try!(posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC)));
@@ -34,7 +40,7 @@ pub enum Redirection {
 impl Popen {
     pub fn create_full<P: AsRef<Path>>(
         args: &[P], stdin: Redirection, stdout: Redirection, stderr: Redirection)
-        -> Result<Popen>
+        -> io::Result<Popen>
     {
         let args: Vec<PathBuf> = args.iter()
             .map(|p| p.as_ref().to_owned()).collect();
@@ -49,13 +55,13 @@ impl Popen {
         Ok(inst)
     }
 
-    pub fn create<P: AsRef<Path>>(args: &[P]) -> Result<Popen> {
+    pub fn create<P: AsRef<Path>>(args: &[P]) -> io::Result<Popen> {
         Popen::create_full(args, Redirection::None, Redirection::None, Redirection::None)
     }
 
     fn start(&mut self, args: Vec<PathBuf>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
-             -> Result<()> {
+             -> io::Result<()> {
         let mut exec_fail_pipe = try!(posix::pipe());
         try!(set_cloexec(&exec_fail_pipe.0));
         try!(set_cloexec(&exec_fail_pipe.1));
@@ -83,14 +89,14 @@ impl Popen {
         if error_string.len() != 0 {
             let error_code: i32 = error_string.parse()
                 .expect("parse child error code");
-            Err(Error::from_raw_os_error(error_code))
+            Err(io::Error::from_raw_os_error(error_code))
         } else {
             Ok(())
         }
     }
 
     fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                   -> Result<(Option<File>, Option<File>, Option<File>)> {
+                   -> io::Result<(Option<File>, Option<File>, Option<File>)> {
         let child_stdin = match stdin {
             Redirection::Pipe => {
                 let (read, write) = try!(posix::pipe());
@@ -125,7 +131,7 @@ impl Popen {
     }
 
     fn do_exec(args: Vec<PathBuf>,
-               child_ends: (Option<File>, Option<File>, Option<File>)) -> Result<()> {
+               child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()> {
         let (stdin, stdout, stderr) = child_ends;
         if let Some(stdin) = stdin {
             try!(posix::dup2(stdin.as_raw_fd(), 0));
@@ -139,7 +145,7 @@ impl Popen {
         posix::execvp(&args[0], &args)
     }
 
-    fn wait_with(&mut self, wait_flags: i32) -> Result<Option<ExitStatus>> {
+    fn wait_with(&mut self, wait_flags: i32) -> io::Result<Option<ExitStatus>> {
         match self.pid {
             Some(pid) => {
                 // XXX handle some kinds of error - at least ECHILD and EINTR
@@ -154,7 +160,7 @@ impl Popen {
         Ok(self.exit_status)
     }
 
-    pub fn wait(&mut self) -> Result<Option<ExitStatus>> {
+    pub fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
         self.wait_with(0)
     }
 
@@ -162,7 +168,7 @@ impl Popen {
         self.wait_with(posix::WNOHANG).unwrap_or(None)
     }
 
-    fn send_signal(&self, signal: u8) -> Result<()> {
+    fn send_signal(&self, signal: u8) -> io::Result<()> {
         match self.pid {
             Some(pid) => {
                 posix::kill(pid, signal)
@@ -171,62 +177,96 @@ impl Popen {
         }
     }
 
-    pub fn terminate(&self) -> Result<()> {
+    pub fn terminate(&self) -> io::Result<()> {
         self.send_signal(SIGTERM)
     }
 
-    pub fn kill(&self) -> Result<()> {
+    pub fn kill(&self) -> io::Result<()> {
         self.send_signal(SIGKILL)
     }
 
-    fn read_chunk(f: &mut File, append_to: &mut Vec<u8>) -> Result<bool> {
+    fn read_chunk(f: &mut File, append_to: &mut Vec<u8>) -> io::Result<bool> {
         let mut buf = [0u8; 8192];
         let cnt = try!(f.read(&mut buf));
         if cnt != 0 {
             append_to.extend_from_slice(&buf[..cnt]);
-            Ok(false)
-        } else {
             Ok(true)
+        } else {
+            Ok(false)
         }
+    }
+
+    fn comm_read(outfile: &mut Option<File>) -> io::Result<Vec<u8>> {
+        let mut contents = Vec::new();
+        {
+            let outfile = outfile.as_mut().expect("file missing");
+            while try!(Popen::read_chunk(outfile, &mut contents)) {
+            }
+        }
+        outfile.take();
+        Ok(contents)
+    }
+
+    fn comm_write(infile: &mut Option<File>, input_data: Option<&[u8]>) -> io::Result<()> {
+        {
+            let infile = infile.as_mut().expect("file missing");
+            if let Some(input_data) = input_data {
+                try!(infile.write_all(input_data));
+            }
+        }
+        infile.take();
+        Ok(())
     }
 
     pub fn communicate_bytes(&mut self, input_data: Option<&[u8]>)
-                             -> Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        if let None = self.stdin {
-            assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
-            let mut out = Vec::new();
-            let mut err = Vec::new();
-            let (mut done_out, mut done_err) = (self.stdout.is_none(),
-                                                self.stderr.is_none());
-            while !(done_out && done_err) {
-                if !done_out {
-                    if let Some(ref mut stdout) = self.stdout {
-                        done_out = try!(Popen::read_chunk(stdout, &mut out));
-                    }
-                }
-                if !done_err {
-                    if let Some(ref mut stderr) = self.stderr {
-                        done_err = try!(Popen::read_chunk(stderr, &mut err));
-                    }
-                }
+                             -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        match (&mut self.stdin, &mut self.stdout, &mut self.stderr) {
+            (mut stdin_ref @ &mut Some(_), &mut None, &mut None) => {
+                try!(Popen::comm_write(stdin_ref, input_data));
+                Ok((None, None))
             }
-            self.stdout.take();
-            self.stderr.take();
-            return Ok((Some(out), Some(err)));
-        }
-
-        if let (&None, &None) = (&self.stdout, &self.stderr) {
-            if let (Some(ref mut stdin), Some(input_data)) = (self.stdin.as_mut(), input_data) {
-                try!(stdin.write_all(input_data));
+            (&mut None, mut stdout_ref @ &mut Some(_), &mut None) => {
+                assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
+                let out = try!(Popen::comm_read(stdout_ref));
+                Ok((Some(out), None))
             }
-            self.stdin.take();
-            return Ok((None, None));
+            (&mut None, &mut None, mut stderr_ref @ &mut Some(_)) => {
+                assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
+                let err = try!(Popen::comm_read(stderr_ref));
+                Ok((Some(err), None))
+            }
+            (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) =>
+                crossbeam::scope(move |scope| {
+                    let (mut in_thr, mut out_thr, mut err_thr) = (None, None, None);
+                    if stdin_ref.is_some() {
+                        in_thr = Some(scope.spawn(move || Popen::comm_write(stdin_ref, input_data)))
+                    }
+                    if stdout_ref.is_some() {
+                        out_thr = Some(scope.spawn(move || Popen::comm_read(stdout_ref)))
+                    }
+                    if stderr_ref.is_some() {
+                        err_thr = Some(scope.spawn(move || Popen::comm_read(stderr_ref)))
+                    }
+                    if let Some(in_thr) = in_thr {
+                        try!(in_thr.join());
+                    }
+                    Ok((if let Some(out_thr) = out_thr {Some(try!(out_thr.join()))} else {None},
+                        if let Some(err_thr) = err_thr {Some(try!(err_thr.join()))} else {None}))
+                })
         }
-
-        Ok((None, None))
     }
 
-    //pub fn communicate(&mut self) -> Result<(String, String>)
+    pub fn communicate(&mut self, input_data: Option<&str>)
+                       -> Result<(Option<String>, Option<String>), PopenError> {
+        let (out, err) = try!(self.communicate_bytes(input_data.map(|s| s.as_bytes())));
+        let out_str = if let Some(out_vec) = out {
+            Some(try!(String::from_utf8(out_vec)))
+        } else { None };
+        let err_str = if let Some(err_vec) = err {
+            Some(try!(String::from_utf8(err_vec)))
+        } else { None };
+        Ok((out_str, err_str))
+    }
 }
 
 impl Drop for Popen {
@@ -235,6 +275,50 @@ impl Drop for Popen {
         match self.pid {
             Some(pid) => { posix::waitpid(pid, posix::WNOHANG).ok(); },
             None => ()
+        }
+    }
+}
+
+
+#[derive(Debug)]
+pub enum PopenError {
+    UtfError(FromUtf8Error),
+    IoError(io::Error),
+}
+
+impl From<FromUtf8Error> for PopenError {
+    fn from(err: FromUtf8Error) -> PopenError {
+        PopenError::UtfError(err)
+    }
+}
+
+impl From<io::Error> for PopenError {
+    fn from(err: io::Error) -> PopenError {
+        PopenError::IoError(err)
+    }
+}
+
+impl Error for PopenError {
+    fn description(&self) -> &str {
+        match *self {
+            PopenError::UtfError(ref err) => err.description(),
+            PopenError::IoError(ref err) => err.description(),
+        }
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        Some(match *self {
+            PopenError::UtfError(ref err) => err as &Error,
+            PopenError::IoError(ref err) => err as &Error,
+        })
+    }
+}
+
+impl fmt::Display for PopenError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            PopenError::UtfError(ref err) => fmt::Display::fmt(err, f),
+            PopenError::IoError(ref err) => fmt::Display::fmt(err, f),
         }
     }
 }

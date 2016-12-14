@@ -86,8 +86,7 @@ mod tests {
         let mut p = Popen::create_full(
             &["cat", tmpname],
             Redirection::File(File::open(tmpname).unwrap()),
-            Redirection::Pipe,
-            Redirection::None)
+            Redirection::Pipe, Redirection::None)
             .unwrap();
         assert!(read_whole_file(p.stdout.take().unwrap()) == "foo");
         assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
@@ -137,6 +136,52 @@ mod tests {
         if let (Some(out), Some(err)) = p.communicate_bytes(None).unwrap() {
             assert_eq!(out, b"foo\n");
             assert_eq!(err, b"bar\n");
+        } else {
+            assert!(false);
+        }
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    }
+
+    #[test]
+    fn communicate_input_output() {
+        let mut p = Popen::create_full(
+            &["sh", "-c", "cat; echo foo >&2"],
+            Redirection::Pipe, Redirection::Pipe, Redirection::Pipe)
+            .unwrap();
+        if let (Some(out), Some(err)) = p.communicate_bytes(Some(b"hello world")).unwrap() {
+            assert!(out == b"hello world");
+            assert!(err == b"foo\n");
+        } else {
+            assert!(false);
+        }
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    }
+
+    #[test]
+    fn communicate_input_output_long() {
+        let mut p = Popen::create_full(
+            &["sh", "-c", "cat; printf '%100000s' '' >&2"],
+            Redirection::Pipe, Redirection::Pipe, Redirection::Pipe)
+            .unwrap();
+        let input = [65u8; 1_000_000];
+        if let (Some(out), Some(err)) = p.communicate_bytes(Some(&input)).unwrap() {
+            assert!(&out[..] == &input[..]);
+            assert!(&err[..] == &[32u8; 100_000][..]);
+        } else {
+            assert!(false);
+        }
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    }
+
+    #[test]
+    fn communicate_input_output_str() {
+        let mut p = Popen::create_full(
+            &["sh", "-c", "cat; echo foo >&2"],
+            Redirection::Pipe, Redirection::Pipe, Redirection::Pipe)
+            .unwrap();
+        if let (Some(out), Some(err)) = p.communicate(Some("hello world")).unwrap() {
+            assert!(out == "hello world");
+            assert!(err == "foo\n");
         } else {
             assert!(false);
         }
