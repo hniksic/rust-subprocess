@@ -1,12 +1,17 @@
 extern crate libc;
 
-mod posix;
-pub mod popen;
+pub mod subprocess {
+    mod popen;
+    mod posix;
+
+    pub use self::posix::{SIGKILL, SIGTERM, ExitStatus};
+    pub use self::popen::{Popen, Redirection};
+}
 
 #[cfg(test)]
 mod tests {
-    use popen;
-    use popen::{Popen, ExitStatus, Redirection};
+    use subprocess;
+    use subprocess::{Popen, ExitStatus, Redirection};
     use std::fs::File;
     use std::io::{Read, Write};
     use std::mem;
@@ -34,7 +39,7 @@ mod tests {
         let mut p = Popen::create(&["sleep", "5"]).unwrap();
         assert!(p.poll().is_none());
         p.terminate().unwrap();
-        assert!(p.wait().unwrap() == Some(ExitStatus::Signaled(popen::SIGTERM)));
+        assert!(p.wait().unwrap() == Some(ExitStatus::Signaled(subprocess::SIGTERM)));
     }
 
     fn read_whole_file(mut f: File) -> String {

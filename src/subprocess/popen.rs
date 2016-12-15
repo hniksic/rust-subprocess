@@ -10,8 +10,8 @@ use std::os::unix::io::AsRawFd;
 use std::string::FromUtf8Error;
 use std::fmt;
 
-use posix;
-pub use posix::{SIGKILL, SIGTERM, ExitStatus};
+use subprocess::posix;
+use subprocess::posix::ExitStatus;
 
 #[derive(Debug)]
 pub struct Popen {
@@ -20,14 +20,6 @@ pub struct Popen {
     pub stdin: Option<File>,
     pub stdout: Option<File>,
     pub stderr: Option<File>,
-}
-
-
-fn set_cloexec(f: &File) -> io::Result<()> {
-    let fd = f.as_raw_fd();
-    let old = try!(posix::fcntl(fd, posix::F_GETFD, None));
-    try!(posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC)));
-    Ok(())
 }
 
 #[derive(Debug)]
@@ -178,11 +170,11 @@ impl Popen {
     }
 
     pub fn terminate(&self) -> io::Result<()> {
-        self.send_signal(SIGTERM)
+        self.send_signal(posix::SIGTERM)
     }
 
     pub fn kill(&self) -> io::Result<()> {
-        self.send_signal(SIGKILL)
+        self.send_signal(posix::SIGKILL)
     }
 
     fn read_chunk(f: &mut File, append_to: &mut Vec<u8>) -> io::Result<bool> {
@@ -318,4 +310,11 @@ impl fmt::Display for PopenError {
             PopenError::IoError(ref err) => fmt::Display::fmt(err, f),
         }
     }
+}
+
+fn set_cloexec(f: &File) -> io::Result<()> {
+    let fd = f.as_raw_fd();
+    let old = try!(posix::fcntl(fd, posix::F_GETFD, None));
+    try!(posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC)));
+    Ok(())
 }
