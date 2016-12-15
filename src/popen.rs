@@ -207,12 +207,10 @@ impl Popen {
         Ok(contents)
     }
 
-    fn comm_write(infile: &mut Option<File>, input_data: Option<&[u8]>) -> io::Result<()> {
+    fn comm_write(infile: &mut Option<File>, input_data: &[u8]) -> io::Result<()> {
         {
             let infile = infile.as_mut().expect("file missing");
-            if let Some(input_data) = input_data {
-                try!(infile.write_all(input_data));
-            }
+            try!(infile.write_all(input_data));
         }
         infile.take();
         Ok(())
@@ -222,6 +220,7 @@ impl Popen {
                              -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         match (&mut self.stdin, &mut self.stdout, &mut self.stderr) {
             (mut stdin_ref @ &mut Some(_), &mut None, &mut None) => {
+                let input_data = input_data.expect("must provide input to redirected stdin");
                 try!(Popen::comm_write(stdin_ref, input_data));
                 Ok((None, None))
             }
@@ -239,6 +238,7 @@ impl Popen {
                 crossbeam::scope(move |scope| {
                     let (mut in_thr, mut out_thr, mut err_thr) = (None, None, None);
                     if stdin_ref.is_some() {
+                        let input_data = input_data.expect("must provide input to redirected stdin");
                         in_thr = Some(scope.spawn(move || Popen::comm_write(stdin_ref, input_data)))
                     }
                     if stdout_ref.is_some() {
