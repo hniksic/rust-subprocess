@@ -177,6 +177,10 @@ impl Popen {
         self.send_signal(posix::SIGKILL)
     }
 
+    pub fn detach(&mut self) {
+        self.pid = None;
+    }
+
     fn read_chunk(f: &mut File, append_to: &mut Vec<u8>) -> io::Result<bool> {
         let mut buf = [0u8; 8192];
         let cnt = try!(f.read(&mut buf));
@@ -258,13 +262,13 @@ impl Popen {
     }
 }
 
+
 impl Drop for Popen {
     fn drop(&mut self) {
-        // attempt to reap the child process to avoid leaving a zombie
-        match self.pid {
-            Some(pid) => { posix::waitpid(pid, posix::WNOHANG).ok(); },
-            None => ()
-        }
+        // Wait for the process to exit.  To avoid this, call
+        // detach().
+        // XXX Log error occurred during wait()?
+        self.wait().ok();
     }
 }
 
