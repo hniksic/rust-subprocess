@@ -6,3 +6,6 @@ authors = ["Hrvoje Niksic <hniksic@gmail.com>"]
 [dependencies]
 libc = "0.2"
 crossbeam = "0.2.10"
+
+[dev-dependencies]
+tempdir = "0.3.5"
