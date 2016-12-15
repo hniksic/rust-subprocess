@@ -260,6 +260,10 @@ impl Popen {
         } else { None };
         Ok((out_str, err_str))
     }
+
+    pub fn get_pid(&self) -> Option<u32> {
+        self.pid
+    }
 }
 
 
