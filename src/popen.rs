@@ -236,19 +236,16 @@ impl Popen {
             }
             (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) =>
                 crossbeam::scope(move |scope| {
-                    let (mut in_thr, mut out_thr, mut err_thr) = (None, None, None);
-                    if stdin_ref.is_some() {
-                        let input_data = input_data.expect("must provide input to redirected stdin");
-                        in_thr = Some(scope.spawn(move || Popen::comm_write(stdin_ref, input_data)))
-                    }
+                    let (mut out_thr, mut err_thr) = (None, None);
                     if stdout_ref.is_some() {
                         out_thr = Some(scope.spawn(move || Popen::comm_read(stdout_ref)))
                     }
                     if stderr_ref.is_some() {
                         err_thr = Some(scope.spawn(move || Popen::comm_read(stderr_ref)))
                     }
-                    if let Some(in_thr) = in_thr {
-                        try!(in_thr.join());
+                    if stdin_ref.is_some() {
+                        let input_data = input_data.expect("must provide input to redirected stdin");
+                        try!(Popen::comm_write(stdin_ref, input_data));
                     }
                     Ok((if let Some(out_thr) = out_thr {Some(try!(out_thr.join()))} else {None},
                         if let Some(err_thr) = err_thr {Some(try!(err_thr.join()))} else {None}))
