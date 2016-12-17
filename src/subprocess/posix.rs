@@ -7,12 +7,7 @@ use std::os::unix::io::FromRawFd;
 use std::ptr;
 use std::ffi::CString;
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum ExitStatus {
-    Exited(u8),
-    Signaled(u8),
-    Other(i32),
-}
+use subprocess::common::ExitStatus;
 
 fn check_err<T: Ord + Default>(num: T) -> Result<T> {
     if num < T::default() {

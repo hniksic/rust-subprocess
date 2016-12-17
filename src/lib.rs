@@ -2,9 +2,12 @@ extern crate libc;
 
 pub mod subprocess {
     mod popen;
+    #[cfg(unix)]
     mod posix;
+    mod common;
 
-    pub use self::posix::{SIGKILL, SIGTERM, ExitStatus};
+    pub use self::common::ExitStatus;
+    pub use self::posix::{SIGKILL, SIGTERM};
     pub use self::popen::{Popen, Redirection};
 }
 

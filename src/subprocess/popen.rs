@@ -4,14 +4,11 @@ use std::error::Error;
 use std::path::{PathBuf, Path};
 use std::io;
 use std::io::{Read, Write};
-use std::mem;
 use std::fs::File;
-use std::os::unix::io::AsRawFd;
 use std::string::FromUtf8Error;
 use std::fmt;
 
-use subprocess::posix;
-use subprocess::posix::ExitStatus;
+use subprocess::common::ExitStatus;
 
 #[derive(Debug)]
 pub struct Popen {
@@ -20,6 +17,16 @@ pub struct Popen {
     pub stdin: Option<File>,
     pub stdout: Option<File>,
     pub stderr: Option<File>,
+}
+
+trait PopenImpl {
+    fn start(&mut self, args: Vec<PathBuf>,
+             stdin: Redirection, stdout: Redirection, stderr: Redirection)
+             -> io::Result<()>;
+    fn wait(&mut self) -> io::Result<Option<ExitStatus>>;
+    fn poll(&mut self) -> Option<ExitStatus>;
+    fn terminate(&self) -> io::Result<()>;
+    fn kill(&self) -> io::Result<()>;
 }
 
 #[derive(Debug)]
@@ -49,132 +56,6 @@ impl Popen {
 
     pub fn create<P: AsRef<Path>>(args: &[P]) -> io::Result<Popen> {
         Popen::create_full(args, Redirection::None, Redirection::None, Redirection::None)
-    }
-
-    fn start(&mut self, args: Vec<PathBuf>,
-             stdin: Redirection, stdout: Redirection, stderr: Redirection)
-             -> io::Result<()> {
-        let mut exec_fail_pipe = try!(posix::pipe());
-        try!(set_cloexec(&exec_fail_pipe.0));
-        try!(set_cloexec(&exec_fail_pipe.1));
-        {
-            let child_ends = try!(self.setup_pipes(stdin, stdout, stderr));
-            let child_pid = try!(posix::fork());
-            if child_pid == 0 {
-                mem::drop(exec_fail_pipe.0);
-                let result = Popen::do_exec(args, child_ends);
-                // Notify the parent process that exec has failed, and exit.
-                let error_code: i32 = match result {
-                    Ok(()) => unreachable!(),
-                    Err(e) => e.raw_os_error().unwrap_or(-1)
-                };
-                // XXX use the byteorder crate to serialize the error
-                exec_fail_pipe.1.write_all(format!("{}", error_code).as_bytes())
-                    .expect("write to error pipe");
-                posix::_exit(127);
-            }
-            self.pid = Some(child_pid as u32);
-        }
-        mem::drop(exec_fail_pipe.1);
-        let mut error_string = String::new();
-        try!(exec_fail_pipe.0.read_to_string(&mut error_string));
-        if error_string.len() != 0 {
-            let error_code: i32 = error_string.parse()
-                .expect("parse child error code");
-            Err(io::Error::from_raw_os_error(error_code))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                   -> io::Result<(Option<File>, Option<File>, Option<File>)> {
-        let child_stdin = match stdin {
-            Redirection::Pipe => {
-                let (read, write) = try!(posix::pipe());
-                try!(set_cloexec(&write));
-                self.stdin = Some(write);
-                Some(read)
-            }
-            Redirection::File(file) => Some(file),
-            Redirection::None => None,
-        };
-        let child_stdout = match stdout {
-            Redirection::Pipe => {
-                let (read, write) = try!(posix::pipe());
-                try!(set_cloexec(&read));
-                self.stdout = Some(read);
-                Some(write)
-            }
-            Redirection::File(file) => Some(file),
-            Redirection::None => None
-        };
-        let child_stderr = match stderr {
-            Redirection::Pipe => {
-                let (read, write) = try!(posix::pipe());
-                try!(set_cloexec(&read));
-                self.stderr = Some(read);
-                Some(write)
-            }
-            Redirection::File(file) => Some(file),
-            Redirection::None => None
-        };
-        Ok((child_stdin, child_stdout, child_stderr))
-    }
-
-    fn do_exec(args: Vec<PathBuf>,
-               child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()> {
-        let (stdin, stdout, stderr) = child_ends;
-        if let Some(stdin) = stdin {
-            try!(posix::dup2(stdin.as_raw_fd(), 0));
-        }
-        if let Some(stdout) = stdout {
-            try!(posix::dup2(stdout.as_raw_fd(), 1));
-        }
-        if let Some(stderr) = stderr {
-            try!(posix::dup2(stderr.as_raw_fd(), 2));
-        }
-        posix::execvp(&args[0], &args)
-    }
-
-    fn wait_with(&mut self, wait_flags: i32) -> io::Result<Option<ExitStatus>> {
-        match self.pid {
-            Some(pid) => {
-                // XXX handle some kinds of error - at least ECHILD and EINTR
-                let (pid_out, exit_status) = try!(posix::waitpid(pid, wait_flags));
-                if pid_out == pid {
-                    self.pid = None;
-                    self.exit_status = Some(exit_status);
-                }
-            },
-            None => (),
-        }
-        Ok(self.exit_status)
-    }
-
-    pub fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        self.wait_with(0)
-    }
-
-    pub fn poll(&mut self) -> Option<ExitStatus> {
-        self.wait_with(posix::WNOHANG).unwrap_or(None)
-    }
-
-    fn send_signal(&self, signal: u8) -> io::Result<()> {
-        match self.pid {
-            Some(pid) => {
-                posix::kill(pid, signal)
-            },
-            None => Ok(()),
-        }
-    }
-
-    pub fn terminate(&self) -> io::Result<()> {
-        self.send_signal(posix::SIGTERM)
-    }
-
-    pub fn kill(&self) -> io::Result<()> {
-        self.send_signal(posix::SIGKILL)
     }
 
     pub fn detach(&mut self) {
@@ -264,6 +145,207 @@ impl Popen {
     pub fn get_pid(&self) -> Option<u32> {
         self.pid
     }
+
+    fn start(&mut self,
+             args: Vec<PathBuf>,
+             stdin: Redirection, stdout: Redirection, stderr: Redirection)
+             -> io::Result<()> {
+        let self_ = self as &mut os::PopenImpl;
+        self_.start(args, stdin, stdout, stderr)
+    }
+
+    pub fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        let self_ = self as &mut os::PopenImpl;
+        self_.wait()
+    }
+
+    pub fn poll(&mut self) -> Option<ExitStatus> {
+        let self_ = self as &mut os::PopenImpl;
+        self_.poll()
+    }
+
+    pub fn terminate(&self) -> io::Result<()> {
+        let self_ = self as &os::PopenImpl;
+        self_.terminate()
+    }
+
+    pub fn kill(&self) -> io::Result<()> {
+        let self_ = self as &os::PopenImpl;
+        self_.kill()
+    }
+}
+
+
+#[cfg(unix)]
+mod os {
+    use super::*;
+    use std::io;
+    use std::io::{Read, Write};
+    use std::fs::File;
+    use std::path::PathBuf;
+    use subprocess::posix;
+    use std::mem;
+    use std::os::unix::io::AsRawFd;
+    use subprocess::common::ExitStatus;
+
+    pub trait PopenImpl {
+        fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                       -> io::Result<(Option<File>, Option<File>, Option<File>)>;
+        fn do_exec(&self, args: Vec<PathBuf>,
+                   child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()>;
+        fn start(&mut self, args: Vec<PathBuf>,
+                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                 -> io::Result<()>;
+        fn wait_with(&mut self, wait_flags: i32) -> io::Result<Option<ExitStatus>>;
+        fn wait(&mut self) -> io::Result<Option<ExitStatus>>;
+        fn poll(&mut self) -> Option<ExitStatus>;
+        fn send_signal(&self, signal: u8) -> io::Result<()>;
+        fn terminate(&self) -> io::Result<()>;
+        fn kill(&self) -> io::Result<()>;
+    }
+
+    impl PopenImpl for Popen {
+        fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                       -> io::Result<(Option<File>, Option<File>, Option<File>)> {
+            let child_stdin = match stdin {
+                Redirection::Pipe => {
+                    let (read, write) = try!(posix::pipe());
+                    try!(set_cloexec(&write));
+                    self.stdin = Some(write);
+                    Some(read)
+                }
+                Redirection::File(file) => Some(file),
+                Redirection::None => None,
+            };
+            let child_stdout = match stdout {
+                Redirection::Pipe => {
+                    let (read, write) = try!(posix::pipe());
+                    try!(set_cloexec(&read));
+                    self.stdout = Some(read);
+                    Some(write)
+                }
+                Redirection::File(file) => Some(file),
+                Redirection::None => None
+            };
+            let child_stderr = match stderr {
+                Redirection::Pipe => {
+                    let (read, write) = try!(posix::pipe());
+                    try!(set_cloexec(&read));
+                    self.stderr = Some(read);
+                    Some(write)
+                }
+                Redirection::File(file) => Some(file),
+                Redirection::None => None
+            };
+            Ok((child_stdin, child_stdout, child_stderr))
+        }
+
+        fn do_exec(&self, args: Vec<PathBuf>,
+                   child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()> {
+            let (stdin, stdout, stderr) = child_ends;
+            if let Some(stdin) = stdin {
+                try!(posix::dup2(stdin.as_raw_fd(), 0));
+            }
+            if let Some(stdout) = stdout {
+                try!(posix::dup2(stdout.as_raw_fd(), 1));
+            }
+            if let Some(stderr) = stderr {
+                try!(posix::dup2(stderr.as_raw_fd(), 2));
+            }
+            posix::execvp(&args[0], &args)
+        }
+
+        fn start(&mut self,
+                 args: Vec<PathBuf>,
+                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                 -> io::Result<()> {
+            let mut exec_fail_pipe = try!(posix::pipe());
+            try!(set_cloexec(&exec_fail_pipe.0));
+            try!(set_cloexec(&exec_fail_pipe.1));
+            {
+                let child_ends = try!(self.setup_pipes(stdin, stdout, stderr));
+                let child_pid = try!(posix::fork());
+                if child_pid == 0 {
+                    mem::drop(exec_fail_pipe.0);
+                    let result: io::Result<()> = self.do_exec(args, child_ends);
+                    // Notify the parent process that exec has failed, and exit.
+                    let error_code: i32 = match result {
+                        Ok(()) => unreachable!(),
+                        Err(e) => e.raw_os_error().unwrap_or(-1)
+                    };
+                    // XXX use the byteorder crate to serialize the error
+                    exec_fail_pipe.1.write_all(format!("{}", error_code).as_bytes())
+                        .expect("write to error pipe");
+                    posix::_exit(127);
+                }
+                self.pid = Some(child_pid as u32);
+            }
+            mem::drop(exec_fail_pipe.1);
+            let mut error_string = String::new();
+            try!(exec_fail_pipe.0.read_to_string(&mut error_string));
+            if error_string.len() != 0 {
+                let error_code: i32 = error_string.parse()
+                    .expect("parse child error code");
+                Err(io::Error::from_raw_os_error(error_code))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn wait_with(&mut self, wait_flags: i32) -> io::Result<Option<ExitStatus>> {
+            match self.pid {
+                Some(pid) => {
+                    // XXX handle some kinds of error - at least ECHILD and EINTR
+                    let (pid_out, exit_status) = try!(posix::waitpid(pid, wait_flags));
+                    if pid_out == pid {
+                        self.pid = None;
+                        self.exit_status = Some(exit_status);
+                    }
+                },
+                None => (),
+            }
+            Ok(self.exit_status)
+        }
+
+        fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
+            self.wait_with(0)
+        }
+
+        fn poll(&mut self) -> Option<ExitStatus> {
+            self.wait_with(posix::WNOHANG).unwrap_or(None)
+        }
+
+        fn send_signal(&self, signal: u8) -> io::Result<()> {
+            match self.pid {
+                Some(pid) => {
+                    posix::kill(pid, signal)
+                },
+                None => Ok(()),
+            }
+        }
+
+        fn terminate(&self) -> io::Result<()> {
+            self.send_signal(posix::SIGTERM)
+        }
+
+        fn kill(&self) -> io::Result<()> {
+            self.send_signal(posix::SIGKILL)
+        }
+    }
+
+
+    fn set_cloexec(f: &File) -> io::Result<()> {
+        let fd = f.as_raw_fd();
+        let old = try!(posix::fcntl(fd, posix::F_GETFD, None));
+        try!(posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC)));
+        Ok(())
+    }
+}
+
+
+#[cfg(windows)]
+mod os {
+    // ...
 }
 
 
@@ -320,9 +402,3 @@ impl fmt::Display for PopenError {
     }
 }
 
-fn set_cloexec(f: &File) -> io::Result<()> {
-    let fd = f.as_raw_fd();
-    let old = try!(posix::fcntl(fd, posix::F_GETFD, None));
-    try!(posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC)));
-    Ok(())
-}
