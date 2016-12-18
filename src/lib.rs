@@ -7,7 +7,7 @@ pub mod subprocess {
     mod common;
 
     pub use self::common::ExitStatus;
-    pub use self::popen::{Popen, Redirection};
+    pub use self::popen::{Popen, PopenImpl, Redirection};
 }
 
 #[cfg(all(test, unix))]
@@ -22,6 +22,7 @@ mod tests {
     use libc::SIGTERM;
 
     use self::tempdir::TempDir;
+    //use subprocess::PopenImpl;
 
     #[test]
     fn good_cmd() {
