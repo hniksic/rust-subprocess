@@ -7,20 +7,19 @@ pub mod subprocess {
     mod common;
 
     pub use self::common::ExitStatus;
-    pub use self::posix::{SIGKILL, SIGTERM};
     pub use self::popen::{Popen, Redirection};
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     extern crate tempdir;
 
-    use subprocess;
     use subprocess::{Popen, ExitStatus, Redirection};
     use std::fs::File;
     use std::io::{Read, Write};
     use std::path::Path;
     use std::mem;
+    use libc::SIGTERM;
 
     use self::tempdir::TempDir;
 
@@ -47,7 +46,7 @@ mod tests {
         let mut p = Popen::create(&["sleep", "5"]).unwrap();
         assert!(p.poll().is_none());
         p.terminate().unwrap();
-        assert!(p.wait().unwrap() == Some(ExitStatus::Signaled(subprocess::SIGTERM)));
+        assert!(p.wait().unwrap() == Some(ExitStatus::Signaled(SIGTERM as u8)));
     }
 
     fn read_whole_file(mut f: File) -> String {
