@@ -1,9 +1,16 @@
 extern crate libc;
 
+#[cfg(windows)]
+extern crate kernel32;
+#[cfg(windows)]
+extern crate winapi;
+
 pub mod subprocess {
     mod popen;
     #[cfg(unix)]
     mod posix;
+    #[cfg(windows)]
+    mod win32;
     mod common;
 
     pub use self::common::ExitStatus;
@@ -202,6 +209,17 @@ mod tests {
         } else {
             assert!(false);
         }
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use subprocess::{Popen, ExitStatus};
+
+    #[test]
+    fn good_cmd() {
+        let mut p = Popen::create(&[r"c:\users\hniksic\rust\create"]).unwrap();
         assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
     }
 }

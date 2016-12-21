@@ -8,6 +8,7 @@ use std::fs::File;
 use std::string::FromUtf8Error;
 use std::fmt;
 
+use subprocess;
 use subprocess::common::ExitStatus;
 
 #[derive(Debug)]
@@ -17,6 +18,9 @@ pub struct Popen {
     pub stdin: Option<File>,
     pub stdout: Option<File>,
     pub stderr: Option<File>,
+
+    #[cfg(windows)]
+    handle: Option<subprocess::win32::Handle>,
 }
 
 trait PopenImpl {
@@ -49,6 +53,7 @@ impl Popen {
             stdin: None,
             stdout: None,
             stderr: None,
+            handle: None,
         };
         try!(inst.start(args, stdin, stdout, stderr));
         Ok(inst)
@@ -345,7 +350,129 @@ mod os {
 
 #[cfg(windows)]
 mod os {
-    // ...
+    use super::*;
+    use std::io;
+    use std::fs::File;
+    use std::path::PathBuf;
+    use subprocess::win32;
+    use subprocess::common::ExitStatus;
+    use std::ffi::{OsStr, OsString};
+
+    pub trait PopenImpl {
+        fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                       -> io::Result<(Option<File>, Option<File>, Option<File>)>;
+        fn start(&mut self, args: Vec<PathBuf>,
+                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                 -> io::Result<()>;
+        fn wait(&mut self) -> io::Result<Option<ExitStatus>>;
+        fn poll(&mut self) -> Option<ExitStatus>;
+        fn terminate(&self) -> io::Result<()>;
+        fn kill(&self) -> io::Result<()>;
+    }
+
+    impl PopenImpl for Popen {
+        fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                       -> io::Result<(Option<File>, Option<File>, Option<File>)> {
+            let child_stdin = match stdin {
+                Redirection::Pipe => {
+                    let (read, mut write) = try!(win32::CreatePipe(true));
+                    try!(win32::SetHandleInformation(
+                         &mut write, win32::HANDLE_FLAG_INHERIT, 0));
+                    self.stdin = Some(write);
+                    Some(read)
+                }
+                Redirection::File(file) => Some(file),
+                Redirection::None => None,
+            };
+            let child_stdout = match stdout {
+                Redirection::Pipe => {
+                    let (mut read, write) = try!(win32::CreatePipe(true));
+                    try!(win32::SetHandleInformation(
+                         &mut read, win32::HANDLE_FLAG_INHERIT, 0));
+                    self.stdout = Some(read);
+                    Some(write)
+                }
+                Redirection::File(file) => Some(file),
+                Redirection::None => None
+            };
+            let child_stderr = match stderr {
+                Redirection::Pipe => {
+                    let (mut read, write) = try!(win32::CreatePipe(true));
+                    try!(win32::SetHandleInformation(
+                         &mut read, win32::HANDLE_FLAG_INHERIT, 0));
+                    self.stderr = Some(read);
+                    Some(write)
+                }
+                Redirection::File(file) => Some(file),
+                Redirection::None => None
+            };
+            Ok((child_stdin, child_stdout, child_stderr))
+        }
+
+        fn start(&mut self,
+                 args: Vec<PathBuf>,
+                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                 -> io::Result<()> {
+            let (child_stdin, child_stdout, child_stderr)
+                = try!(self.setup_pipes(stdin, stdout, stderr));
+            let cmdline = get_cmdline(args);
+            let (handle, pid)
+                = try!(win32::CreateProcess(&cmdline, child_stdin, child_stdout, child_stderr,
+                                            win32::STARTF_USESTDHANDLES));
+            self.pid = Some(pid as u32);
+            self.handle = Some(handle);
+            Ok(())
+        }
+
+/*         fn wait_with(&mut self, wait_flags: i32) -> io::Result<Option<ExitStatus>> {
+            match self.pid {
+                Some(pid) => {
+                    // XXX handle some kinds of error - at least ECHILD and EINTR
+                    let (pid_out, exit_status) = try!(posix::waitpid(pid, wait_flags));
+                    if pid_out == pid {
+                        self.pid = None;
+                        self.exit_status = Some(exit_status);
+                    }
+                },
+                None => (),
+            }
+            Ok(self.exit_status)
+        }
+ */
+        fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
+            match self.handle.as_ref() {
+                Some(ref handle) => {
+                    try!(win32::WaitForSingleObject(handle, None));
+                    self.exit_status = Some(ExitStatus::Exited(0)); // XXX
+                },
+                None => (),
+            }
+            Ok(self.exit_status)
+        }
+
+        fn poll(&mut self) -> Option<ExitStatus> {
+            panic!();
+        }
+
+        fn terminate(&self) -> io::Result<()> {
+            panic!();
+        }
+
+        fn kill(&self) -> io::Result<()> {
+            panic!();
+        }
+    }
+
+    fn get_cmdline(args: Vec<PathBuf>) -> OsString {
+        let mut cmdline = OsString::new();
+        let sep = OsStr::new(" ");
+        for arg in args {
+            cmdline.push(arg.as_os_str());
+            cmdline.push(sep);
+        }
+        cmdline
+    }
+
 }
 
 
@@ -401,4 +528,3 @@ impl fmt::Display for PopenError {
         }
     }
 }
-
