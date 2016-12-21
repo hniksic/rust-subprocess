@@ -146,7 +146,13 @@ pub fn CreateProcess(cmdline: &OsStr,
     }
 }
 
-pub fn WaitForSingleObject(handle: &Handle, duration: Option<u32>) -> Result<bool> {
+pub enum Wait {
+    Finished,
+    Abandoned,
+    TimedOut,
+}
+
+pub fn WaitForSingleObject(handle: &Handle, duration: Option<u32>) -> Result<Wait> {
     const WAIT_ABANDONED: u32 = 0x80;
     const WAIT_OBJECT_0: u32 = 0x0;
     const WAIT_FAILED: u32 = 0xFFFFFFFF;
@@ -157,10 +163,20 @@ pub fn WaitForSingleObject(handle: &Handle, duration: Option<u32>) -> Result<boo
         kernel32::WaitForSingleObject(handle.as_raw_handle(),
                                       duration.unwrap_or(INFINITE))
     };
-    if result == WAIT_OBJECT_0 || result == WAIT_ABANDONED { Ok(true) }
-    else if result == WAIT_TIMEOUT { Ok(false) }
+    if result == WAIT_OBJECT_0 { Ok(Wait::Finished) }
+    else if result == WAIT_ABANDONED { Ok(Wait::Abandoned) }
+    else if result == WAIT_TIMEOUT { Ok(Wait::TimedOut) }
     else if result == WAIT_FAILED { Err(Error::last_os_error()) }
     else {
         panic!(format!("WaitForSingleObject returned {}", result));
     }
+}
+
+pub fn GetExitCodeProcess(handle: &Handle) -> Result<u32> {
+    let mut exit_code = 0u32;
+    try!(check(unsafe {
+        kernel32::GetExitCodeProcess(handle.as_raw_handle(),
+                                     &mut exit_code as *mut u32)
+    }));
+    Ok(exit_code)
 }

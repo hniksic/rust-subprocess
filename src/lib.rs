@@ -222,4 +222,16 @@ mod tests {
         let mut p = Popen::create(&[r"c:\users\hniksic\rust\create"]).unwrap();
         assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
     }
+
+    #[test]
+    fn bad_cmd() {
+        let result = Popen::create(&["nosuchcommand"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn non_zero_exit() {
+        let mut p = Popen::create(&[r"c:\mingw\msys\1.0\bin\bash", "-c", "\"exit 13\""]).unwrap();
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(13)));
+    }
 }

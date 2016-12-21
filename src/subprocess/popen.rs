@@ -359,8 +359,6 @@ mod os {
     use std::ffi::{OsStr, OsString};
 
     pub trait PopenImpl {
-        fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                       -> io::Result<(Option<File>, Option<File>, Option<File>)>;
         fn start(&mut self, args: Vec<PathBuf>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> io::Result<()>;
@@ -368,6 +366,10 @@ mod os {
         fn poll(&mut self) -> Option<ExitStatus>;
         fn terminate(&self) -> io::Result<()>;
         fn kill(&self) -> io::Result<()>;
+
+        fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                       -> io::Result<(Option<File>, Option<File>, Option<File>)>;
+        fn _wait(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>>;
     }
 
     impl PopenImpl for Popen {
@@ -424,34 +426,27 @@ mod os {
             Ok(())
         }
 
-/*         fn wait_with(&mut self, wait_flags: i32) -> io::Result<Option<ExitStatus>> {
-            match self.pid {
-                Some(pid) => {
-                    // XXX handle some kinds of error - at least ECHILD and EINTR
-                    let (pid_out, exit_status) = try!(posix::waitpid(pid, wait_flags));
-                    if pid_out == pid {
-                        self.pid = None;
-                        self.exit_status = Some(exit_status);
-                    }
-                },
-                None => (),
-            }
-            Ok(self.exit_status)
-        }
- */
-        fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
-            match self.handle.as_ref() {
-                Some(ref handle) => {
-                    try!(win32::WaitForSingleObject(handle, None));
-                    self.exit_status = Some(ExitStatus::Exited(0)); // XXX
-                },
-                None => (),
+        fn _wait(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>> {
+            if self.handle.is_some() {
+                let timeout = timeout.map(|t| (t * 1000.0) as u32);
+                let waited = try!(win32::WaitForSingleObject(self.handle.as_ref().unwrap(), timeout));
+                if let win32::Wait::Finished = waited {
+                    self.pid = None;
+                    let handle = self.handle.take().unwrap();
+                    let exit_code = try!(win32::GetExitCodeProcess(&handle));
+                    println!("exit code: {}", exit_code);
+                    self.exit_status = Some(ExitStatus::Exited(exit_code as u8));  // XXX
+                }
             }
             Ok(self.exit_status)
         }
 
+        fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
+            self._wait(None)
+        }
+
         fn poll(&mut self) -> Option<ExitStatus> {
-            panic!();
+            self._wait(Some(0.0)).unwrap_or(None)
         }
 
         fn terminate(&self) -> io::Result<()> {
@@ -470,6 +465,7 @@ mod os {
             cmdline.push(arg.as_os_str());
             cmdline.push(sep);
         }
+        println!("cmdline: {:?}", cmdline);
         cmdline
     }
 
