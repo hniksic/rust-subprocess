@@ -72,6 +72,56 @@ mod tests_common {
         assert!(read_whole_file(p.stdout.take().unwrap()) == "foo");
         assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
     }
+
+    #[test]
+    fn output_to_file() {
+        let tmpdir = TempDir::new("test").unwrap();
+        let tmpname = tmpdir.path().join("output");
+        let outfile = File::create(&tmpname).unwrap();
+        let mut p = Popen::create_full(
+            &["printf", "foo"],
+            Redirection::None, Redirection::File(outfile), Redirection::None)
+            .unwrap();
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+        assert!(read_whole_file(File::open(&tmpname).unwrap()) == "foo");
+    }
+
+    #[test]
+    fn communicate_input() {
+        let tmpdir = TempDir::new("test").unwrap();
+        let tmpname = tmpdir.path().join("input");
+        let mut p = Popen::create_full(
+            &["cat"],
+            Redirection::Pipe,
+            Redirection::File(File::create(&tmpname).unwrap()),
+            Redirection::None)
+            .unwrap();
+        if let (None, None) = p.communicate_bytes(Some(b"hello world")).unwrap() {
+        } else {
+            assert!(false);
+        }
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+        assert!(read_whole_file(File::open(&tmpname).unwrap()) == "hello world");
+    }
+
+    #[test]
+    fn input_output_from_file() {
+        let tmpdir = TempDir::new("test").unwrap();
+        let tmpname_in = tmpdir.path().join("input");
+        let tmpname_out = tmpdir.path().join("output");
+        {
+            let mut f = File::create(&tmpname_in).unwrap();
+            f.write_all(b"foo").unwrap();
+        }
+        let mut p = Popen::create_full(
+            &["cat"],
+            Redirection::File(File::open(&tmpname_in).unwrap()),
+            Redirection::File(File::create(&tmpname_out).unwrap()),
+            Redirection::None)
+            .unwrap();
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+        assert!(read_whole_file(File::open(&tmpname_out).unwrap()) == "foo");
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -175,55 +225,6 @@ mod tests_unix {
             assert!(false);
         }
         assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
-    }
-
-    #[test]
-    fn output_to_file() {
-        let tmpdir = TempDir::new("test").unwrap();
-        let tmpname = tmpdir.path().join("output");
-        let outfile = File::create(&tmpname).unwrap();
-        let mut p = Popen::create_full(
-            &["echo", "foo"], Redirection::None, Redirection::File(outfile), Redirection::None)
-            .unwrap();
-        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
-        assert!(read_whole_file(File::open(&tmpname).unwrap()) == "foo\n");
-    }
-
-    #[test]
-    fn communicate_input() {
-        let tmpdir = TempDir::new("test").unwrap();
-        let tmpname = tmpdir.path().join("input");
-        let mut p = Popen::create_full(
-            &["cat"],
-            Redirection::Pipe,
-            Redirection::File(File::create(&tmpname).unwrap()),
-            Redirection::None)
-            .unwrap();
-        if let (None, None) = p.communicate_bytes(Some(b"hello world")).unwrap() {
-        } else {
-            assert!(false);
-        }
-        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
-        assert!(read_whole_file(File::open(&tmpname).unwrap()) == "hello world");
-    }
-
-    #[test]
-    fn input_output_from_file() {
-        let tmpdir = TempDir::new("test").unwrap();
-        let tmpname_in = tmpdir.path().join("input");
-        let tmpname_out = tmpdir.path().join("output");
-        {
-            let mut f = File::create(&tmpname_in).unwrap();
-            f.write_all(b"foo").unwrap();
-        }
-        let mut p = Popen::create_full(
-            &["cat"],
-            Redirection::File(File::open(&tmpname_in).unwrap()),
-            Redirection::File(File::create(&tmpname_out).unwrap()),
-            Redirection::None)
-            .unwrap();
-        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
-        assert!(read_whole_file(File::open(&tmpname_out).unwrap()) == "foo");
     }
 }
 

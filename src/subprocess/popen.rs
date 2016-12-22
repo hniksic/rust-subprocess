@@ -402,7 +402,11 @@ mod os {
                     self.stdin = Some(write);
                     Some(read)
                 }
-                Redirection::File(file) => Some(file),
+                Redirection::File(mut file) => {
+                    try!(win32::SetHandleInformation(
+                         &mut file, win32::HANDLE_FLAG_INHERIT, 1));
+                    Some(file)
+                }
                 Redirection::None => None,
             };
             let child_stdout = match stdout {
@@ -413,7 +417,11 @@ mod os {
                     self.stdout = Some(read);
                     Some(write)
                 }
-                Redirection::File(file) => Some(file),
+                Redirection::File(mut file) => {
+                    try!(win32::SetHandleInformation(
+                         &mut file, win32::HANDLE_FLAG_INHERIT, 1));
+                    Some(file)
+                }
                 Redirection::None => None
             };
             let child_stderr = match stderr {
@@ -424,7 +432,11 @@ mod os {
                     self.stderr = Some(read);
                     Some(write)
                 }
-                Redirection::File(file) => Some(file),
+                Redirection::File(mut file) => {
+                    try!(win32::SetHandleInformation(
+                         &mut file, win32::HANDLE_FLAG_INHERIT, 1));
+                    Some(file)
+                }
                 Redirection::None => None
             };
             Ok((child_stdin, child_stdout, child_stderr))
@@ -453,7 +465,6 @@ mod os {
             cmdline.push(arg.as_os_str());
             cmdline.push(sep);
         }
-        println!("cmdline: {:?}", cmdline);
         cmdline
     }
 
