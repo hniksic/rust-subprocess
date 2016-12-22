@@ -8,7 +8,6 @@ use std::fs::File;
 use std::string::FromUtf8Error;
 use std::fmt;
 
-use subprocess;
 use subprocess::common::ExitStatus;
 
 #[derive(Debug)]
@@ -19,18 +18,7 @@ pub struct Popen {
     pub stdout: Option<File>,
     pub stderr: Option<File>,
 
-    #[cfg(windows)]
-    handle: Option<subprocess::win32::Handle>,
-}
-
-trait PopenImpl {
-    fn start(&mut self, args: Vec<PathBuf>,
-             stdin: Redirection, stdout: Redirection, stderr: Redirection)
-             -> io::Result<()>;
-    fn wait(&mut self) -> io::Result<Option<ExitStatus>>;
-    fn poll(&mut self) -> Option<ExitStatus>;
-    fn terminate(&self) -> io::Result<()>;
-    fn kill(&self) -> io::Result<()>;
+    ext_data: os::ExtPopenData,
 }
 
 #[derive(Debug)]
@@ -53,7 +41,7 @@ impl Popen {
             stdin: None,
             stdout: None,
             stderr: None,
-            handle: None,
+            ext_data: os::ExtPopenData::default(),
         };
         try!(inst.start(args, stdin, stdout, stderr));
         Ok(inst)
@@ -155,31 +143,36 @@ impl Popen {
              args: Vec<PathBuf>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
              -> io::Result<()> {
-        let self_ = self as &mut os::PopenImpl;
-        self_.start(args, stdin, stdout, stderr)
+        (self as &mut PopenOs).start(args, stdin, stdout, stderr)
     }
 
     pub fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        let self_ = self as &mut os::PopenImpl;
-        self_.wait()
+        (self as &mut PopenOs).wait()
     }
 
     pub fn poll(&mut self) -> Option<ExitStatus> {
-        let self_ = self as &mut os::PopenImpl;
-        self_.poll()
+        (self as &mut PopenOs).poll()
     }
 
     pub fn terminate(&self) -> io::Result<()> {
-        let self_ = self as &os::PopenImpl;
-        self_.terminate()
+        (self as &PopenOs).terminate()
     }
 
     pub fn kill(&self) -> io::Result<()> {
-        let self_ = self as &os::PopenImpl;
-        self_.kill()
+        (self as &PopenOs).kill()
     }
 }
 
+
+trait PopenOs {
+    fn start(&mut self, args: Vec<PathBuf>,
+             stdin: Redirection, stdout: Redirection, stderr: Redirection)
+             -> io::Result<()>;
+    fn wait(&mut self) -> io::Result<Option<ExitStatus>>;
+    fn poll(&mut self) -> Option<ExitStatus>;
+    fn terminate(&self) -> io::Result<()>;
+    fn kill(&self) -> io::Result<()>;
+}
 
 #[cfg(unix)]
 mod os {
@@ -193,23 +186,73 @@ mod os {
     use std::os::unix::io::AsRawFd;
     use subprocess::common::ExitStatus;
 
-    pub trait PopenImpl {
+    pub type ExtPopenData = ();
+
+    impl super::PopenOs for Popen {
+        fn start(&mut self,
+                 args: Vec<PathBuf>,
+                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                 -> io::Result<()> {
+            let mut exec_fail_pipe = try!(posix::pipe());
+            try!(set_cloexec(&exec_fail_pipe.0));
+            try!(set_cloexec(&exec_fail_pipe.1));
+            {
+                let child_ends = try!(self.setup_pipes(stdin, stdout, stderr));
+                let child_pid = try!(posix::fork());
+                if child_pid == 0 {
+                    mem::drop(exec_fail_pipe.0);
+                    let result: io::Result<()> = self.do_exec(args, child_ends);
+                    // Notify the parent process that exec has failed, and exit.
+                    let error_code: i32 = match result {
+                        Ok(()) => unreachable!(),
+                        Err(e) => e.raw_os_error().unwrap_or(-1)
+                    };
+                    // XXX use the byteorder crate to serialize the error
+                    exec_fail_pipe.1.write_all(format!("{}", error_code).as_bytes())
+                        .expect("write to error pipe");
+                    posix::_exit(127);
+                }
+                self.pid = Some(child_pid as u32);
+            }
+            mem::drop(exec_fail_pipe.1);
+            let mut error_string = String::new();
+            try!(exec_fail_pipe.0.read_to_string(&mut error_string));
+            if error_string.len() != 0 {
+                let error_code: i32 = error_string.parse()
+                    .expect("parse child error code");
+                Err(io::Error::from_raw_os_error(error_code))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
+            self.wait_with(0)
+        }
+
+        fn poll(&mut self) -> Option<ExitStatus> {
+            self.wait_with(posix::WNOHANG).unwrap_or(None)
+        }
+
+        fn terminate(&self) -> io::Result<()> {
+            self.send_signal(posix::SIGTERM)
+        }
+
+        fn kill(&self) -> io::Result<()> {
+            self.send_signal(posix::SIGKILL)
+        }
+    }
+
+    trait PopenOsImpl: super::PopenOs {
         fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
                        -> io::Result<(Option<File>, Option<File>, Option<File>)>;
         fn do_exec(&self, args: Vec<PathBuf>,
                    child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()>;
-        fn start(&mut self, args: Vec<PathBuf>,
-                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                 -> io::Result<()>;
         fn wait_with(&mut self, wait_flags: i32) -> io::Result<Option<ExitStatus>>;
-        fn wait(&mut self) -> io::Result<Option<ExitStatus>>;
-        fn poll(&mut self) -> Option<ExitStatus>;
         fn send_signal(&self, signal: u8) -> io::Result<()>;
-        fn terminate(&self) -> io::Result<()>;
-        fn kill(&self) -> io::Result<()>;
     }
 
-    impl PopenImpl for Popen {
+    impl PopenOsImpl for Popen {
         fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
                        -> io::Result<(Option<File>, Option<File>, Option<File>)> {
             let child_stdin = match stdin {
@@ -260,43 +303,6 @@ mod os {
             posix::execvp(&args[0], &args)
         }
 
-        fn start(&mut self,
-                 args: Vec<PathBuf>,
-                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                 -> io::Result<()> {
-            let mut exec_fail_pipe = try!(posix::pipe());
-            try!(set_cloexec(&exec_fail_pipe.0));
-            try!(set_cloexec(&exec_fail_pipe.1));
-            {
-                let child_ends = try!(self.setup_pipes(stdin, stdout, stderr));
-                let child_pid = try!(posix::fork());
-                if child_pid == 0 {
-                    mem::drop(exec_fail_pipe.0);
-                    let result: io::Result<()> = self.do_exec(args, child_ends);
-                    // Notify the parent process that exec has failed, and exit.
-                    let error_code: i32 = match result {
-                        Ok(()) => unreachable!(),
-                        Err(e) => e.raw_os_error().unwrap_or(-1)
-                    };
-                    // XXX use the byteorder crate to serialize the error
-                    exec_fail_pipe.1.write_all(format!("{}", error_code).as_bytes())
-                        .expect("write to error pipe");
-                    posix::_exit(127);
-                }
-                self.pid = Some(child_pid as u32);
-            }
-            mem::drop(exec_fail_pipe.1);
-            let mut error_string = String::new();
-            try!(exec_fail_pipe.0.read_to_string(&mut error_string));
-            if error_string.len() != 0 {
-                let error_code: i32 = error_string.parse()
-                    .expect("parse child error code");
-                Err(io::Error::from_raw_os_error(error_code))
-            } else {
-                Ok(())
-            }
-        }
-
         fn wait_with(&mut self, wait_flags: i32) -> io::Result<Option<ExitStatus>> {
             match self.pid {
                 Some(pid) => {
@@ -312,14 +318,6 @@ mod os {
             Ok(self.exit_status)
         }
 
-        fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
-            self.wait_with(0)
-        }
-
-        fn poll(&mut self) -> Option<ExitStatus> {
-            self.wait_with(posix::WNOHANG).unwrap_or(None)
-        }
-
         fn send_signal(&self, signal: u8) -> io::Result<()> {
             match self.pid {
                 Some(pid) => {
@@ -328,16 +326,7 @@ mod os {
                 None => Ok(()),
             }
         }
-
-        fn terminate(&self) -> io::Result<()> {
-            self.send_signal(posix::SIGTERM)
-        }
-
-        fn kill(&self) -> io::Result<()> {
-            self.send_signal(posix::SIGKILL)
-        }
     }
-
 
     fn set_cloexec(f: &File) -> io::Result<()> {
         let fd = f.as_raw_fd();
@@ -358,21 +347,51 @@ mod os {
     use subprocess::common::ExitStatus;
     use std::ffi::{OsStr, OsString};
 
-    pub trait PopenImpl {
-        fn start(&mut self, args: Vec<PathBuf>,
-                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                 -> io::Result<()>;
-        fn wait(&mut self) -> io::Result<Option<ExitStatus>>;
-        fn poll(&mut self) -> Option<ExitStatus>;
-        fn terminate(&self) -> io::Result<()>;
-        fn kill(&self) -> io::Result<()>;
+    #[derive(Debug, Default)]
+    pub struct ExtPopenData {
+        handle: Option<win32::Handle>,
+    }
 
+    impl super::PopenOs for Popen {
+        fn start(&mut self,
+                 args: Vec<PathBuf>,
+                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                 -> io::Result<()> {
+            let (child_stdin, child_stdout, child_stderr)
+                = try!(self.setup_pipes(stdin, stdout, stderr));
+            let cmdline = get_cmdline(args);
+            let (handle, pid)
+                = try!(win32::CreateProcess(&cmdline, child_stdin, child_stdout, child_stderr,
+                                            win32::STARTF_USESTDHANDLES));
+            self.pid = Some(pid as u32);
+            self.ext_data.handle = Some(handle);
+            Ok(())
+        }
+
+        fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
+            self._wait(None)
+        }
+
+        fn poll(&mut self) -> Option<ExitStatus> {
+            self._wait(Some(0.0)).unwrap_or(None)
+        }
+
+        fn terminate(&self) -> io::Result<()> {
+            panic!();
+        }
+
+        fn kill(&self) -> io::Result<()> {
+            panic!();
+        }
+    }
+
+    trait PopenOsImpl: super::PopenOs {
         fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
                        -> io::Result<(Option<File>, Option<File>, Option<File>)>;
         fn _wait(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>>;
     }
 
-    impl PopenImpl for Popen {
+    impl PopenOsImpl for Popen {
         fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
                        -> io::Result<(Option<File>, Option<File>, Option<File>)> {
             let child_stdin = match stdin {
@@ -411,50 +430,19 @@ mod os {
             Ok((child_stdin, child_stdout, child_stderr))
         }
 
-        fn start(&mut self,
-                 args: Vec<PathBuf>,
-                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                 -> io::Result<()> {
-            let (child_stdin, child_stdout, child_stderr)
-                = try!(self.setup_pipes(stdin, stdout, stderr));
-            let cmdline = get_cmdline(args);
-            let (handle, pid)
-                = try!(win32::CreateProcess(&cmdline, child_stdin, child_stdout, child_stderr,
-                                            win32::STARTF_USESTDHANDLES));
-            self.pid = Some(pid as u32);
-            self.handle = Some(handle);
-            Ok(())
-        }
-
         fn _wait(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>> {
-            if self.handle.is_some() {
+            if self.ext_data.handle.is_some() {
                 let timeout = timeout.map(|t| (t * 1000.0) as u32);
-                let waited = try!(win32::WaitForSingleObject(self.handle.as_ref().unwrap(), timeout));
+                let waited = try!(win32::WaitForSingleObject(self.ext_data.handle.as_ref().unwrap(), timeout));
                 if let win32::Wait::Finished = waited {
                     self.pid = None;
-                    let handle = self.handle.take().unwrap();
+                    let handle = self.ext_data.handle.take().unwrap();
                     let exit_code = try!(win32::GetExitCodeProcess(&handle));
                     println!("exit code: {}", exit_code);
                     self.exit_status = Some(ExitStatus::Exited(exit_code as u8));  // XXX
                 }
             }
             Ok(self.exit_status)
-        }
-
-        fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
-            self._wait(None)
-        }
-
-        fn poll(&mut self) -> Option<ExitStatus> {
-            self._wait(Some(0.0)).unwrap_or(None)
-        }
-
-        fn terminate(&self) -> io::Result<()> {
-            panic!();
-        }
-
-        fn kill(&self) -> io::Result<()> {
-            panic!();
         }
     }
 
