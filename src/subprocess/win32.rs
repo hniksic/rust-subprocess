@@ -63,17 +63,17 @@ pub fn CreatePipe(inherit_handle: bool) -> Result<(File, File)> {
         bInheritHandle: if inherit_handle { 1 } else { 0 },
     };
     let (mut r, mut w) = (ptr::null_mut(), ptr::null_mut()); 
-    try!(check(unsafe {
+    check(unsafe {
         kernel32::CreatePipe(&mut r as PHANDLE, &mut w as PHANDLE,
                              &mut attributes as LPSECURITY_ATTRIBUTES, 0)
-    }));
+    })?;
     Ok(unsafe { (File::from_raw_handle(r), File::from_raw_handle(w)) })
 }
  
 pub fn SetHandleInformation(handle: &mut File, dwMask: u32, dwFlags: u32) -> Result<()> {
-    try!(check(unsafe {
+    check(unsafe {
         kernel32::SetHandleInformation(handle.as_raw_handle(), dwMask, dwFlags)
-    }));
+    })?;
     Ok(())
 }
 
@@ -97,7 +97,7 @@ pub fn CreateProcess(cmdline: &OsStr,
     sinfo.dwFlags = flags;
     let mut pinfo: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let mut cmdline = to_nullterm(OsStr::new(cmdline));
-    try!(check(unsafe {
+    check(unsafe {
         kernel32::CreateProcessW(ptr::null_mut(),
                                  &mut cmdline[0] as winapi::LPWSTR,
                                  ptr::null_mut(), // lpProcessAttributes
@@ -108,7 +108,7 @@ pub fn CreateProcess(cmdline: &OsStr,
                                  ptr::null_mut(), // lpCurrentDirectory
                                  &mut sinfo as LPSTARTUPINFOW,
                                  &mut pinfo as LPPROCESS_INFORMATION)
-    }));
+    })?;
     unsafe {
         mem::drop(Handle::from_raw_handle(pinfo.hThread));
         Ok((Handle::from_raw_handle(pinfo.hProcess), pinfo.dwProcessId as u64))
@@ -144,9 +144,9 @@ pub fn WaitForSingleObject(handle: &Handle, duration: Option<u32>)
 
 pub fn GetExitCodeProcess(handle: &Handle) -> Result<u32> {
     let mut exit_code = 0u32;
-    try!(check(unsafe {
+    check(unsafe {
         kernel32::GetExitCodeProcess(handle.as_raw_handle(),
                                      &mut exit_code as *mut u32)
-    }));
+    })?;
     Ok(exit_code)
 }

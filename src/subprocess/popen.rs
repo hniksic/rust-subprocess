@@ -43,7 +43,7 @@ impl Popen {
             stderr: None,
             ext_data: os::ExtPopenData::default(),
         };
-        try!(inst.start(args, stdin, stdout, stderr));
+        inst.start(args, stdin, stdout, stderr)?;
         Ok(inst)
     }
 
@@ -59,39 +59,39 @@ impl Popen {
                           -> io::Result<(Option<File>, Option<File>, Option<File>)> {
         let child_stdin = match stdin {
             Redirection::Pipe => {
-                let (read, mut write) = try!(os::make_pipe());
-                try!(os::set_inheritable(&mut write, false));
+                let (read, mut write) = os::make_pipe()?;
+                os::set_inheritable(&mut write, false)?;
                 self.stdin = Some(write);
                 Some(read)
             }
             Redirection::File(mut file) => {
-                try!(os::set_inheritable(&mut file, true));
+                os::set_inheritable(&mut file, true)?;
                 Some(file)
             }
             Redirection::None => None,
         };
         let child_stdout = match stdout {
             Redirection::Pipe => {
-                let (mut read, write) = try!(os::make_pipe());
-                try!(os::set_inheritable(&mut read, false));
+                let (mut read, write) = os::make_pipe()?;
+                os::set_inheritable(&mut read, false)?;
                 self.stdout = Some(read);
                 Some(write)
             }
             Redirection::File(mut file) => {
-                try!(os::set_inheritable(&mut file, true));
+                os::set_inheritable(&mut file, true)?;
                 Some(file)
             }
             Redirection::None => None
         };
         let child_stderr = match stderr {
             Redirection::Pipe => {
-                let (mut read, write) = try!(os::make_pipe());
-                try!(os::set_inheritable(&mut read, false));
+                let (mut read, write) = os::make_pipe()?;
+                os::set_inheritable(&mut read, false)?;
                 self.stderr = Some(read);
                 Some(write)
             }
             Redirection::File(mut file) => {
-                try!(os::set_inheritable(&mut file, true));
+                os::set_inheritable(&mut file, true)?;
                 Some(file)
             }
             Redirection::None => None
@@ -101,7 +101,7 @@ impl Popen {
 
     fn read_chunk(f: &mut File, append_to: &mut Vec<u8>) -> io::Result<bool> {
         let mut buf = [0u8; 8192];
-        let cnt = try!(f.read(&mut buf));
+        let cnt = f.read(&mut buf)?;
         if cnt != 0 {
             append_to.extend_from_slice(&buf[..cnt]);
             Ok(true)
@@ -114,7 +114,7 @@ impl Popen {
         let mut contents = Vec::new();
         {
             let outfile = outfile.as_mut().expect("file missing");
-            while try!(Popen::read_chunk(outfile, &mut contents)) {
+            while Popen::read_chunk(outfile, &mut contents)? {
             }
         }
         outfile.take();
@@ -124,7 +124,7 @@ impl Popen {
     fn comm_write(infile: &mut Option<File>, input_data: &[u8]) -> io::Result<()> {
         {
             let infile = infile.as_mut().expect("file missing");
-            try!(infile.write_all(input_data));
+            infile.write_all(input_data)?;
         }
         infile.take();
         Ok(())
@@ -135,17 +135,17 @@ impl Popen {
         match (&mut self.stdin, &mut self.stdout, &mut self.stderr) {
             (mut stdin_ref @ &mut Some(_), &mut None, &mut None) => {
                 let input_data = input_data.expect("must provide input to redirected stdin");
-                try!(Popen::comm_write(stdin_ref, input_data));
+                Popen::comm_write(stdin_ref, input_data)?;
                 Ok((None, None))
             }
             (&mut None, mut stdout_ref @ &mut Some(_), &mut None) => {
                 assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
-                let out = try!(Popen::comm_read(stdout_ref));
+                let out = Popen::comm_read(stdout_ref)?;
                 Ok((Some(out), None))
             }
             (&mut None, &mut None, mut stderr_ref @ &mut Some(_)) => {
                 assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
-                let err = try!(Popen::comm_read(stderr_ref));
+                let err = Popen::comm_read(stderr_ref)?;
                 Ok((Some(err), None))
             }
             (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) =>
@@ -159,22 +159,22 @@ impl Popen {
                     }
                     if stdin_ref.is_some() {
                         let input_data = input_data.expect("must provide input to redirected stdin");
-                        try!(Popen::comm_write(stdin_ref, input_data));
+                        Popen::comm_write(stdin_ref, input_data)?;
                     }
-                    Ok((if let Some(out_thr) = out_thr {Some(try!(out_thr.join()))} else {None},
-                        if let Some(err_thr) = err_thr {Some(try!(err_thr.join()))} else {None}))
+                    Ok((if let Some(out_thr) = out_thr {Some(out_thr.join()?)} else {None},
+                        if let Some(err_thr) = err_thr {Some(err_thr.join()?)} else {None}))
                 })
         }
     }
 
     pub fn communicate(&mut self, input_data: Option<&str>)
                        -> Result<(Option<String>, Option<String>), PopenError> {
-        let (out, err) = try!(self.communicate_bytes(input_data.map(|s| s.as_bytes())));
+        let (out, err) = self.communicate_bytes(input_data.map(|s| s.as_bytes()))?;
         let out_str = if let Some(out_vec) = out {
-            Some(try!(String::from_utf8(out_vec)))
+            Some(String::from_utf8(out_vec)?)
         } else { None };
         let err_str = if let Some(err_vec) = err {
-            Some(try!(String::from_utf8(err_vec)))
+            Some(String::from_utf8(err_vec)?)
         } else { None };
         Ok((out_str, err_str))
     }
@@ -238,12 +238,12 @@ mod os {
                  args: Vec<PathBuf>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> io::Result<()> {
-            let mut exec_fail_pipe = try!(posix::pipe());
-            try!(set_inheritable(&mut exec_fail_pipe.0, false));
-            try!(set_inheritable(&mut exec_fail_pipe.1, false));
+            let mut exec_fail_pipe = posix::pipe()?;
+            set_inheritable(&mut exec_fail_pipe.0, false)?;
+            set_inheritable(&mut exec_fail_pipe.1, false)?;
             {
-                let child_ends = try!(self.make_child_streams(stdin, stdout, stderr));
-                let child_pid = try!(posix::fork());
+                let child_ends = self.make_child_streams(stdin, stdout, stderr)?;
+                let child_pid = posix::fork()?;
                 if child_pid == 0 {
                     mem::drop(exec_fail_pipe.0);
                     let result: io::Result<()> = self.do_exec(args, child_ends);
@@ -261,7 +261,7 @@ mod os {
             }
             mem::drop(exec_fail_pipe.1);
             let mut error_string = String::new();
-            try!(exec_fail_pipe.0.read_to_string(&mut error_string));
+            exec_fail_pipe.0.read_to_string(&mut error_string)?;
             if error_string.len() != 0 {
                 let error_code: i32 = error_string.parse()
                     .expect("parse child error code");
@@ -300,13 +300,13 @@ mod os {
                    child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()> {
             let (stdin, stdout, stderr) = child_ends;
             if let Some(stdin) = stdin {
-                try!(posix::dup2(stdin.as_raw_fd(), 0));
+                posix::dup2(stdin.as_raw_fd(), 0)?;
             }
             if let Some(stdout) = stdout {
-                try!(posix::dup2(stdout.as_raw_fd(), 1));
+                posix::dup2(stdout.as_raw_fd(), 1)?;
             }
             if let Some(stderr) = stderr {
-                try!(posix::dup2(stderr.as_raw_fd(), 2));
+                posix::dup2(stderr.as_raw_fd(), 2)?;
             }
             posix::execvp(&args[0], &args)
         }
@@ -315,7 +315,7 @@ mod os {
             match self.pid {
                 Some(pid) => {
                     // XXX handle some kinds of error - at least ECHILD and EINTR
-                    let (pid_out, exit_status) = try!(posix::waitpid(pid, wait_flags));
+                    let (pid_out, exit_status) = posix::waitpid(pid, wait_flags)?;
                     if pid_out == pid {
                         self.pid = None;
                         self.exit_status = Some(exit_status);
@@ -341,8 +341,8 @@ mod os {
             // Unix pipes are inheritable by default.
         } else {
             let fd = f.as_raw_fd();
-            let old = try!(posix::fcntl(fd, posix::F_GETFD, None));
-            try!(posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC)));
+            let old = posix::fcntl(fd, posix::F_GETFD, None)?;
+            posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC))?;
         }
         Ok(())
     }
@@ -375,11 +375,11 @@ mod os {
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> io::Result<()> {
             let (child_stdin, child_stdout, child_stderr)
-                = try!(self.make_child_streams(stdin, stdout, stderr));
+                = self.make_child_streams(stdin, stdout, stderr)?;
             let cmdline = assemble_cmdline(args);
             let (handle, pid)
-                = try!(win32::CreateProcess(&cmdline, child_stdin, child_stdout, child_stderr,
-                                            win32::STARTF_USESTDHANDLES));
+                = win32::CreateProcess(&cmdline, child_stdin, child_stdout, child_stderr,
+                                            win32::STARTF_USESTDHANDLES)?;
             self.pid = Some(pid as u32);
             self.ext_data.handle = Some(handle);
             Ok(())
@@ -410,11 +410,11 @@ mod os {
         fn _wait(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>> {
             if self.ext_data.handle.is_some() {
                 let timeout = timeout.map(|t| (t * 1000.0) as u32);
-                let waited = try!(win32::WaitForSingleObject(self.ext_data.handle.as_ref().unwrap(), timeout));
+                let waited = win32::WaitForSingleObject(self.ext_data.handle.as_ref().unwrap(), timeout)?;
                 if let win32::WaitEvent::OBJECT_0 = waited {
                     self.pid = None;
                     let handle = self.ext_data.handle.take().unwrap();
-                    let exit_code = try!(win32::GetExitCodeProcess(&handle));
+                    let exit_code = win32::GetExitCodeProcess(&handle)?;
                     self.exit_status = Some(ExitStatus::Exited(exit_code as u8));  // XXX
                 }
             }
@@ -423,8 +423,8 @@ mod os {
     }
 
     pub fn set_inheritable(f: &mut File, inheritable: bool) -> io::Result<()> {
-        try!(win32::SetHandleInformation(f, win32::HANDLE_FLAG_INHERIT,
-                                         if inheritable {1} else {0}));
+        win32::SetHandleInformation(f, win32::HANDLE_FLAG_INHERIT,
+                                         if inheritable {1} else {0})?;
         Ok(())
     }
 

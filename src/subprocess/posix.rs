@@ -28,7 +28,7 @@ fn path_to_cstring(p: &Path) -> (CString, *const libc::c_char) {
 
 pub fn pipe() -> Result<(File, File)> {
     let mut fds = [0 as libc::c_int; 2];
-    try!(check_err(unsafe { libc::pipe(&mut fds[0]) }));
+    check_err(unsafe { libc::pipe(&mut fds[0]) })?;
     Ok(unsafe {
         (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1]))
     })
@@ -50,7 +50,7 @@ pub fn execvp<P1, P2>(cmd: P1, args: &[P2]) -> Result<()>
 
     let cmd = path_to_cstring(cmd.as_ref());
 
-    try!(check_err(unsafe { libc::execvp(cmd.1, argv) }));
+    check_err(unsafe { libc::execvp(cmd.1, argv) })?;
     Ok(())
 }
 
@@ -62,10 +62,10 @@ pub const WNOHANG: i32 = libc::WNOHANG;
 
 pub fn waitpid(pid: u32, flags: i32) -> Result<(u32, ExitStatus)> {
     let mut status = 0 as libc::c_int;
-    let pid = try!(check_err(unsafe {
+    let pid = check_err(unsafe {
         libc::waitpid(pid as libc::pid_t, &mut status as *mut libc::c_int,
                       flags as libc::c_int)
-    }));
+    })?;
     Ok((pid as u32, decode_exit_status(status)))
 }
 
@@ -85,9 +85,9 @@ pub const SIGTERM: u8 = libc::SIGTERM as u8;
 pub const SIGKILL: u8 = libc::SIGKILL as u8;
 
 pub fn kill(pid: u32, signal: u8) -> Result<()> {
-    try!(check_err(unsafe {
+    check_err(unsafe {
         libc::kill(pid as libc::c_int, signal as libc::c_int)
-    }));
+    })?;
     Ok(())
 }
 
@@ -105,8 +105,8 @@ pub fn fcntl(fd: i32, cmd: i32, arg1: Option<i32>) -> Result<i32> {
 }
 
 pub fn dup2(oldfd: i32, newfd: i32) -> Result<()> {
-    try!(check_err(unsafe {
+    check_err(unsafe {
         libc::dup2(oldfd, newfd)
-    }));
+    })?;
     Ok(())
 }
