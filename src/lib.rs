@@ -48,6 +48,12 @@ mod tests_common {
     }
 
     #[test]
+    fn err_exit() {
+        let mut p = Popen::create(&["sh", "-c", "exit 13"]).unwrap();
+        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(13)));
+    }
+
+    #[test]
     fn read_from_stdout() {
         let mut p = Popen::create_full(
             &["echo", "foo"], Redirection::None, Redirection::Pipe, Redirection::None)
@@ -139,12 +145,6 @@ mod tests_unix {
     use tests_common::read_whole_file;
 
     #[test]
-    fn err_exit() {
-        let mut p = Popen::create(&["sh", "-c", "exit 13"]).unwrap();
-        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(13)));
-    }
-
-    #[test]
     fn err_signal() {
         let mut p = Popen::create(&["sleep", "5"]).unwrap();
         assert!(p.poll().is_none());
@@ -230,11 +230,4 @@ mod tests_unix {
 
 #[cfg(all(test, windows))]
 mod tests_win32 {
-    use subprocess::{Popen, ExitStatus};
-
-    #[test]
-    fn non_zero_exit() {
-        let mut p = Popen::create(&["bash", "-c", "\"exit 13\""]).unwrap();
-        assert!(p.wait().unwrap() == Some(ExitStatus::Exited(13)));
-    }
 }

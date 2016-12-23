@@ -362,6 +362,7 @@ mod os {
     use subprocess::win32;
     use subprocess::common::ExitStatus;
     use std::ffi::{OsStr, OsString};
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
     #[derive(Debug, Default)]
     pub struct ExtPopenData {
@@ -375,7 +376,7 @@ mod os {
                  -> io::Result<()> {
             let (child_stdin, child_stdout, child_stderr)
                 = try!(self.make_child_streams(stdin, stdout, stderr));
-            let cmdline = get_cmdline(args);
+            let cmdline = assemble_cmdline(args);
             let (handle, pid)
                 = try!(win32::CreateProcess(&cmdline, child_stdin, child_stdout, child_stderr,
                                             win32::STARTF_USESTDHANDLES));
@@ -414,22 +415,11 @@ mod os {
                     self.pid = None;
                     let handle = self.ext_data.handle.take().unwrap();
                     let exit_code = try!(win32::GetExitCodeProcess(&handle));
-                    println!("exit code: {}", exit_code);
                     self.exit_status = Some(ExitStatus::Exited(exit_code as u8));  // XXX
                 }
             }
             Ok(self.exit_status)
         }
-    }
-
-    fn get_cmdline(args: Vec<PathBuf>) -> OsString {
-        let mut cmdline = OsString::new();
-        let sep = OsStr::new(" ");
-        for arg in args {
-            cmdline.push(arg.as_os_str());
-            cmdline.push(sep);
-        }
-        cmdline
     }
 
     pub fn set_inheritable(f: &mut File, inheritable: bool) -> io::Result<()> {
@@ -440,6 +430,55 @@ mod os {
 
     pub fn make_pipe() -> io::Result<(File, File)> {
         win32::CreatePipe(true)
+    }
+
+    fn assemble_cmdline(args: Vec<PathBuf>) -> OsString {
+        let mut cmdline = Vec::<u16>::new();
+        for arg in args {
+            append_quoted(arg.as_os_str(), &mut cmdline);
+            cmdline.push(' ' as u16);
+        }
+        OsString::from_wide(&cmdline)
+    }
+
+    // Translated from ArgvQuote at http://tinyurl.com/zmgtnls
+    fn append_quoted(arg: &OsStr, cmdline: &mut Vec<u16>) {
+        if !arg.is_empty() && !arg.encode_wide().any(
+            |c| c == ' ' as u16 || c == '\t' as u16 || c == '\n' as u16 ||
+                c == '\x0b' as u16 || c == '\"' as u16) {
+            cmdline.extend(arg.encode_wide());
+            return
+        }
+        cmdline.push('"' as u16);
+        
+        let arg: Vec<_> = arg.encode_wide().collect();
+        let mut i = 0;
+        while i < arg.len() {
+            let mut num_backslashes = 0;
+            while i < arg.len() && arg[i] == '\\' as u16 {
+                i += 1;
+                num_backslashes += 1;
+            }
+            
+            if i == arg.len() {
+                for _ in 0..num_backslashes*2 {
+                    cmdline.push('\\' as u16);
+                }
+                break;
+            } else if arg[i] == b'"' as u16 {
+                for _ in 0..num_backslashes*2 + 1 {
+                    cmdline.push('\\' as u16);
+                }
+                cmdline.push(arg[i]);
+            } else {
+                for _ in 0..num_backslashes {
+                    cmdline.push('\\' as u16);
+                }
+                cmdline.push(arg[i]);
+            }
+            i += 1;
+        }
+        cmdline.push('"' as u16);
     }
 }
 
