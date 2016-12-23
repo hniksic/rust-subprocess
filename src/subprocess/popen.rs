@@ -415,7 +415,7 @@ mod os {
                     self.pid = None;
                     let handle = self.ext_data.handle.take().unwrap();
                     let exit_code = win32::GetExitCodeProcess(&handle)?;
-                    self.exit_status = Some(ExitStatus::Exited(exit_code as u8));  // XXX
+                    self.exit_status = Some(ExitStatus::Exited(exit_code));
                 }
             }
             Ok(self.exit_status)

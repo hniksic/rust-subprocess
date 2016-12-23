@@ -72,7 +72,7 @@ pub fn waitpid(pid: u32, flags: i32) -> Result<(u32, ExitStatus)> {
 fn decode_exit_status(status: i32) -> ExitStatus {
     unsafe {
         if libc::WIFEXITED(status) {
-            ExitStatus::Exited(libc::WEXITSTATUS(status) as u8)
+            ExitStatus::Exited(libc::WEXITSTATUS(status) as u32)
         } else if libc::WIFSIGNALED(status) {
             ExitStatus::Signaled(libc::WTERMSIG(status) as u8)
         } else {

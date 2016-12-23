@@ -1,6 +1,6 @@
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum ExitStatus {
-    Exited(u8),
+    Exited(u32),
     Signaled(u8),
     Other(i32),
 }
