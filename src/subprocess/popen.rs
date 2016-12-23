@@ -55,6 +55,50 @@ impl Popen {
         self.pid = None;
     }
 
+    fn make_child_streams(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                          -> io::Result<(Option<File>, Option<File>, Option<File>)> {
+        let child_stdin = match stdin {
+            Redirection::Pipe => {
+                let (read, mut write) = try!(os::make_pipe());
+                try!(os::set_inheritable(&mut write, false));
+                self.stdin = Some(write);
+                Some(read)
+            }
+            Redirection::File(mut file) => {
+                try!(os::set_inheritable(&mut file, true));
+                Some(file)
+            }
+            Redirection::None => None,
+        };
+        let child_stdout = match stdout {
+            Redirection::Pipe => {
+                let (mut read, write) = try!(os::make_pipe());
+                try!(os::set_inheritable(&mut read, false));
+                self.stdout = Some(read);
+                Some(write)
+            }
+            Redirection::File(mut file) => {
+                try!(os::set_inheritable(&mut file, true));
+                Some(file)
+            }
+            Redirection::None => None
+        };
+        let child_stderr = match stderr {
+            Redirection::Pipe => {
+                let (mut read, write) = try!(os::make_pipe());
+                try!(os::set_inheritable(&mut read, false));
+                self.stderr = Some(read);
+                Some(write)
+            }
+            Redirection::File(mut file) => {
+                try!(os::set_inheritable(&mut file, true));
+                Some(file)
+            }
+            Redirection::None => None
+        };
+        Ok((child_stdin, child_stdout, child_stderr))
+    }
+
     fn read_chunk(f: &mut File, append_to: &mut Vec<u8>) -> io::Result<bool> {
         let mut buf = [0u8; 8192];
         let cnt = try!(f.read(&mut buf));
@@ -172,6 +216,7 @@ trait PopenOs {
     fn poll(&mut self) -> Option<ExitStatus>;
     fn terminate(&self) -> io::Result<()>;
     fn kill(&self) -> io::Result<()>;
+
 }
 
 #[cfg(unix)]
@@ -194,10 +239,10 @@ mod os {
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> io::Result<()> {
             let mut exec_fail_pipe = try!(posix::pipe());
-            try!(set_cloexec(&exec_fail_pipe.0));
-            try!(set_cloexec(&exec_fail_pipe.1));
+            try!(set_inheritable(&mut exec_fail_pipe.0, false));
+            try!(set_inheritable(&mut exec_fail_pipe.1, false));
             {
-                let child_ends = try!(self.setup_pipes(stdin, stdout, stderr));
+                let child_ends = try!(self.make_child_streams(stdin, stdout, stderr));
                 let child_pid = try!(posix::fork());
                 if child_pid == 0 {
                     mem::drop(exec_fail_pipe.0);
@@ -244,8 +289,6 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                       -> io::Result<(Option<File>, Option<File>, Option<File>)>;
         fn do_exec(&self, args: Vec<PathBuf>,
                    child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()>;
         fn wait_with(&mut self, wait_flags: i32) -> io::Result<Option<ExitStatus>>;
@@ -253,41 +296,6 @@ mod os {
     }
 
     impl PopenOsImpl for Popen {
-        fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                       -> io::Result<(Option<File>, Option<File>, Option<File>)> {
-            let child_stdin = match stdin {
-                Redirection::Pipe => {
-                    let (read, write) = try!(posix::pipe());
-                    try!(set_cloexec(&write));
-                    self.stdin = Some(write);
-                    Some(read)
-                }
-                Redirection::File(file) => Some(file),
-                Redirection::None => None,
-            };
-            let child_stdout = match stdout {
-                Redirection::Pipe => {
-                    let (read, write) = try!(posix::pipe());
-                    try!(set_cloexec(&read));
-                    self.stdout = Some(read);
-                    Some(write)
-                }
-                Redirection::File(file) => Some(file),
-                Redirection::None => None
-            };
-            let child_stderr = match stderr {
-                Redirection::Pipe => {
-                    let (read, write) = try!(posix::pipe());
-                    try!(set_cloexec(&read));
-                    self.stderr = Some(read);
-                    Some(write)
-                }
-                Redirection::File(file) => Some(file),
-                Redirection::None => None
-            };
-            Ok((child_stdin, child_stdout, child_stderr))
-        }
-
         fn do_exec(&self, args: Vec<PathBuf>,
                    child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()> {
             let (stdin, stdout, stderr) = child_ends;
@@ -328,11 +336,19 @@ mod os {
         }
     }
 
-    fn set_cloexec(f: &File) -> io::Result<()> {
-        let fd = f.as_raw_fd();
-        let old = try!(posix::fcntl(fd, posix::F_GETFD, None));
-        try!(posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC)));
+    pub fn set_inheritable(f: &mut File, inheritable: bool) -> io::Result<()> {
+        if inheritable {
+            // Unix pipes are inheritable by default.
+        } else {
+            let fd = f.as_raw_fd();
+            let old = try!(posix::fcntl(fd, posix::F_GETFD, None));
+            try!(posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC)));
+        }
         Ok(())
+    }
+
+    pub fn make_pipe() -> io::Result<(File, File)> {
+        posix::pipe()
     }
 }
 
@@ -358,7 +374,7 @@ mod os {
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> io::Result<()> {
             let (child_stdin, child_stdout, child_stderr)
-                = try!(self.setup_pipes(stdin, stdout, stderr));
+                = try!(self.make_child_streams(stdin, stdout, stderr));
             let cmdline = get_cmdline(args);
             let (handle, pid)
                 = try!(win32::CreateProcess(&cmdline, child_stdin, child_stdout, child_stderr,
@@ -386,62 +402,10 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                       -> io::Result<(Option<File>, Option<File>, Option<File>)>;
         fn _wait(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>>;
     }
 
     impl PopenOsImpl for Popen {
-        fn setup_pipes(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                       -> io::Result<(Option<File>, Option<File>, Option<File>)> {
-            let child_stdin = match stdin {
-                Redirection::Pipe => {
-                    let (read, mut write) = try!(win32::CreatePipe(true));
-                    try!(win32::SetHandleInformation(
-                         &mut write, win32::HANDLE_FLAG_INHERIT, 0));
-                    self.stdin = Some(write);
-                    Some(read)
-                }
-                Redirection::File(mut file) => {
-                    try!(win32::SetHandleInformation(
-                         &mut file, win32::HANDLE_FLAG_INHERIT, 1));
-                    Some(file)
-                }
-                Redirection::None => None,
-            };
-            let child_stdout = match stdout {
-                Redirection::Pipe => {
-                    let (mut read, write) = try!(win32::CreatePipe(true));
-                    try!(win32::SetHandleInformation(
-                         &mut read, win32::HANDLE_FLAG_INHERIT, 0));
-                    self.stdout = Some(read);
-                    Some(write)
-                }
-                Redirection::File(mut file) => {
-                    try!(win32::SetHandleInformation(
-                         &mut file, win32::HANDLE_FLAG_INHERIT, 1));
-                    Some(file)
-                }
-                Redirection::None => None
-            };
-            let child_stderr = match stderr {
-                Redirection::Pipe => {
-                    let (mut read, write) = try!(win32::CreatePipe(true));
-                    try!(win32::SetHandleInformation(
-                         &mut read, win32::HANDLE_FLAG_INHERIT, 0));
-                    self.stderr = Some(read);
-                    Some(write)
-                }
-                Redirection::File(mut file) => {
-                    try!(win32::SetHandleInformation(
-                         &mut file, win32::HANDLE_FLAG_INHERIT, 1));
-                    Some(file)
-                }
-                Redirection::None => None
-            };
-            Ok((child_stdin, child_stdout, child_stderr))
-        }
-
         fn _wait(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>> {
             if self.ext_data.handle.is_some() {
                 let timeout = timeout.map(|t| (t * 1000.0) as u32);
@@ -468,6 +432,15 @@ mod os {
         cmdline
     }
 
+    pub fn set_inheritable(f: &mut File, inheritable: bool) -> io::Result<()> {
+        try!(win32::SetHandleInformation(f, win32::HANDLE_FLAG_INHERIT,
+                                         if inheritable {1} else {0}));
+        Ok(())
+    }
+
+    pub fn make_pipe() -> io::Result<(File, File)> {
+        win32::CreatePipe(true)
+    }
 }
 
 
