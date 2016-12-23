@@ -1,4 +1,4 @@
-#![allow(non_snake_case)]
+#![allow(non_snake_case, non_camel_case_types)]
 
 use std::io::{Result, Error};
 use std::fs::File;
@@ -115,13 +115,14 @@ pub fn CreateProcess(cmdline: &OsStr,
     }
 }
 
-pub enum Wait {
-    Finished,
-    Abandoned,
-    TimedOut,
+pub enum WaitEvent {
+    OBJECT_0,
+    ABANDONED,
+    TIMEOUT,
 }
 
-pub fn WaitForSingleObject(handle: &Handle, duration: Option<u32>) -> Result<Wait> {
+pub fn WaitForSingleObject(handle: &Handle, duration: Option<u32>)
+                           -> Result<WaitEvent> {
     const WAIT_ABANDONED: u32 = 0x80;
     const WAIT_OBJECT_0: u32 = 0x0;
     const WAIT_FAILED: u32 = 0xFFFFFFFF;
@@ -132,9 +133,9 @@ pub fn WaitForSingleObject(handle: &Handle, duration: Option<u32>) -> Result<Wai
         kernel32::WaitForSingleObject(handle.as_raw_handle(),
                                       duration.unwrap_or(INFINITE))
     };
-    if result == WAIT_OBJECT_0 { Ok(Wait::Finished) }
-    else if result == WAIT_ABANDONED { Ok(Wait::Abandoned) }
-    else if result == WAIT_TIMEOUT { Ok(Wait::TimedOut) }
+    if result == WAIT_OBJECT_0 { Ok(WaitEvent::OBJECT_0) }
+    else if result == WAIT_ABANDONED { Ok(WaitEvent::ABANDONED) }
+    else if result == WAIT_TIMEOUT { Ok(WaitEvent::TIMEOUT) }
     else if result == WAIT_FAILED { Err(Error::last_os_error()) }
     else {
         panic!(format!("WaitForSingleObject returned {}", result));

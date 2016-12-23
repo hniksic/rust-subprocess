@@ -410,7 +410,7 @@ mod os {
             if self.ext_data.handle.is_some() {
                 let timeout = timeout.map(|t| (t * 1000.0) as u32);
                 let waited = try!(win32::WaitForSingleObject(self.ext_data.handle.as_ref().unwrap(), timeout));
-                if let win32::Wait::Finished = waited {
+                if let win32::WaitEvent::OBJECT_0 = waited {
                     self.pid = None;
                     let handle = self.ext_data.handle.take().unwrap();
                     let exit_code = try!(win32::GetExitCodeProcess(&handle));
