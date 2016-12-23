@@ -77,38 +77,6 @@ pub fn SetHandleInformation(handle: &mut File, dwMask: u32, dwFlags: u32) -> Res
     Ok(())
 }
 
-pub fn empty_startupinfo() -> STARTUPINFOW {
-    STARTUPINFOW {
-        cb: mem::size_of::<STARTUPINFOW>() as DWORD,
-        lpReserved: ptr::null_mut(),
-        lpDesktop: ptr::null_mut(),
-        lpTitle: ptr::null_mut(),
-        dwX: 0,
-        dwY: 0,
-        dwXSize: 0,
-        dwYSize: 0,
-        dwXCountChars: 0,
-        dwYCountChars: 0,
-        dwFillAttribute: 0,
-        dwFlags: 0,
-        wShowWindow: 0,
-        cbReserved2: 0,
-        lpReserved2: ptr::null_mut(),
-        hStdInput: ptr::null_mut(),
-        hStdOutput: ptr::null_mut(),
-        hStdError: ptr::null_mut(),
-    }
-}
-
-fn empty_processinfo() -> PROCESS_INFORMATION {
-    PROCESS_INFORMATION {
-        hProcess: ptr::null_mut(),
-        hThread: ptr::null_mut(),
-        dwProcessId: 0,
-        dwThreadId: 0,
-    }
-}
-
 fn handle_of(opt_handle: &Option<File>) -> RawHandle {
     match opt_handle.as_ref() {
         Some(ref handle) => handle.as_raw_handle(),
@@ -121,12 +89,13 @@ pub fn CreateProcess(cmdline: &OsStr,
         stdout: Option<File>,
         stderr: Option<File>,
         flags: u32) -> Result<(Handle, u64)> {
-    let mut sinfo = empty_startupinfo();
+    let mut sinfo: STARTUPINFOW = unsafe { mem::zeroed() };
+    sinfo.cb = mem::size_of::<STARTUPINFOW>() as DWORD;
     sinfo.hStdInput = handle_of(&stdin);
     sinfo.hStdOutput = handle_of(&stdout);
     sinfo.hStdError = handle_of(&stderr);
     sinfo.dwFlags = flags;
-    let mut pinfo = empty_processinfo();
+    let mut pinfo: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let mut cmdline = to_nullterm(OsStr::new(cmdline));
     try!(check(unsafe {
         kernel32::CreateProcessW(ptr::null_mut(),
