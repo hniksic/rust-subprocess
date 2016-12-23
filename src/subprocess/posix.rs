@@ -16,16 +16,6 @@ fn check_err<T: Ord + Default>(num: T) -> Result<T> {
     Ok(num)
 }
 
-fn path_to_cstring(p: &Path) -> (CString, *const libc::c_char) {
-    let holder = CString::new(p.as_os_str().as_bytes()).unwrap();
-    let ptr;
-    {
-        let c_bytes = holder.as_bytes_with_nul();
-        ptr = &c_bytes[0] as *const u8 as *const libc::c_char;
-    }
-    (holder, ptr)
-}
-
 pub fn pipe() -> Result<(File, File)> {
     let mut fds = [0 as libc::c_int; 2];
     check_err(unsafe { libc::pipe(&mut fds[0]) })?;
@@ -38,19 +28,32 @@ pub fn fork() -> Result<u32> {
     check_err(unsafe { libc::fork() }).map(|pid| pid as u32)
 }
 
-use std::fmt::Debug;
+fn path_to_cstring(p: &Path) -> Result<CString> {
+    let bytes = p.as_os_str().as_bytes();
+    if bytes.iter().any(|&b| b == 0) {
+        return Err(Error::from_raw_os_error(libc::EINVAL));
+    }
+    Ok(CString::new(bytes)
+       // not expected to fail on Unix, as Unix paths *are* C strings
+       .expect("converting Unix path to C string"))
+}
+
+fn cstring_ptr(s: &CString) -> *const libc::c_char {
+    &s.as_bytes_with_nul()[0] as *const u8 as _
+}
 
 pub fn execvp<P1, P2>(cmd: P1, args: &[P2]) -> Result<()>
-    where P1: AsRef<Path> + Debug, P2: AsRef<Path> {
-    let cstrings: Vec<_> = args.iter()
+    where P1: AsRef<Path>, P2: AsRef<Path> {
+    let try_args_cstring: Result<Vec<CString>> = args.iter()
         .map(|x| path_to_cstring(x.as_ref())).collect();
-    let mut args_os: Vec<_> = cstrings.iter().map(|&(_, ptr)| ptr).collect();
-    args_os.push(ptr::null());
-    let argv = &args_os[0] as *const *const libc::c_char;
+    let args_cstring: Vec<CString> = try_args_cstring?;
+    let mut args_ptr: Vec<*const libc::c_char> = args_cstring.iter()
+        .map(cstring_ptr).collect();
+    args_ptr.push(ptr::null());
+    let c_argv = &args_ptr[0] as *const *const libc::c_char;
+    let cmd_cstring = path_to_cstring(cmd.as_ref())?;
 
-    let cmd = path_to_cstring(cmd.as_ref());
-
-    check_err(unsafe { libc::execvp(cmd.1, argv) })?;
+    check_err(unsafe { libc::execvp(cstring_ptr(&cmd_cstring), c_argv) })?;
     Ok(())
 }
 

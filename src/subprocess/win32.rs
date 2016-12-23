@@ -17,6 +17,8 @@ use winapi::minwinbase::{SECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES};
 use winapi::processthreadsapi::*;
 use winapi::winnt::PHANDLE;
 
+pub use winapi::winerror::ERROR_BAD_PATHNAME;
+
 #[derive(Debug)]
 pub struct Handle(RawHandle);
 
@@ -85,27 +87,30 @@ fn handle_of(opt_handle: &Option<File>) -> RawHandle {
 }
 
 pub fn CreateProcess(cmdline: &OsStr,
-        stdin: Option<File>,
-        stdout: Option<File>,
-        stderr: Option<File>,
-        flags: u32) -> Result<(Handle, u64)> {
+                     inherit_handles: bool,
+                     creation_flags: u32,
+                     stdin: Option<File>,
+                     stdout: Option<File>,
+                     stderr: Option<File>,
+                     sinfo_flags: u32) -> Result<(Handle, u64)> {
     let mut sinfo: STARTUPINFOW = unsafe { mem::zeroed() };
     sinfo.cb = mem::size_of::<STARTUPINFOW>() as DWORD;
     sinfo.hStdInput = handle_of(&stdin);
     sinfo.hStdOutput = handle_of(&stdout);
     sinfo.hStdError = handle_of(&stderr);
-    sinfo.dwFlags = flags;
+    sinfo.dwFlags = sinfo_flags;
     let mut pinfo: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let mut cmdline = to_nullterm(OsStr::new(cmdline));
     check(unsafe {
         kernel32::CreateProcessW(ptr::null_mut(),
                                  &mut cmdline[0] as winapi::LPWSTR,
-                                 ptr::null_mut(), // lpProcessAttributes
-                                 ptr::null_mut(), // lpThreadAttributes
-                                 1,               // bInheritHandles
-                                 0,               // dwCreationFlags
-                                 ptr::null_mut(), // lpEnvironment
-                                 ptr::null_mut(), // lpCurrentDirectory
+                                 ptr::null_mut(),   // lpProcessAttributes
+                                 ptr::null_mut(),   // lpThreadAttributes
+                                 if inherit_handles
+                                 { 1 } else { 0 },  // bInheritHandles
+                                 creation_flags,    // dwCreationFlags
+                                 ptr::null_mut(),   // lpEnvironment
+                                 ptr::null_mut(),   // lpCurrentDirectory
                                  &mut sinfo as LPSTARTUPINFOW,
                                  &mut pinfo as LPPROCESS_INFORMATION)
     })?;

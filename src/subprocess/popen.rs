@@ -382,10 +382,11 @@ mod os {
                  -> io::Result<()> {
             let (child_stdin, child_stdout, child_stderr)
                 = self.make_child_streams(stdin, stdout, stderr)?;
-            let cmdline = assemble_cmdline(args);
+            let cmdline = assemble_cmdline(args)?;
             let (handle, pid)
-                = win32::CreateProcess(&cmdline, child_stdin, child_stdout, child_stderr,
-                                            win32::STARTF_USESTDHANDLES)?;
+                = win32::CreateProcess(&cmdline, true, 0,
+                                       child_stdin, child_stdout, child_stderr,
+                                       win32::STARTF_USESTDHANDLES)?;
             self.pid = Some(pid as u32);
             self.ext_data.handle = Some(handle);
             Ok(())
@@ -450,13 +451,16 @@ mod os {
         win32::CreatePipe(true)
     }
 
-    fn assemble_cmdline(args: Vec<PathBuf>) -> OsString {
+    fn assemble_cmdline(args: Vec<PathBuf>) -> io::Result<OsString> {
         let mut cmdline = Vec::<u16>::new();
         for arg in args {
+            if arg.as_os_str().encode_wide().any(|c| c == 0) {
+                return Err(io::Error::from_raw_os_error(win32::ERROR_BAD_PATHNAME as i32));
+            }
             append_quoted(arg.as_os_str(), &mut cmdline);
             cmdline.push(' ' as u16);
         }
-        OsString::from_wide(&cmdline)
+        Ok(OsString::from_wide(&cmdline))
     }
 
     // Translated from ArgvQuote at http://tinyurl.com/zmgtnls

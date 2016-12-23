@@ -168,3 +168,10 @@ fn communicate_input_output_str() {
     }
     assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
+
+#[test]
+fn null_byte_in_cmd() {
+    let try_p = Popen::create_full(
+        &["echo\0foo"], Redirection::None, Redirection::None, Redirection::None);
+    assert!(try_p.is_err());
+}
