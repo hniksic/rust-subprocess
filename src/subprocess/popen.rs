@@ -190,7 +190,7 @@ impl Popen {
         (self as &mut PopenOs).start(args, stdin, stdout, stderr)
     }
 
-    pub fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
+    pub fn wait(&mut self) -> Result<ExitStatus, PopenError> {
         (self as &mut PopenOs).wait()
     }
 
@@ -212,7 +212,7 @@ trait PopenOs {
     fn start(&mut self, args: Vec<PathBuf>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
              -> io::Result<()>;
-    fn wait(&mut self) -> io::Result<Option<ExitStatus>>;
+    fn wait(&mut self) -> Result<ExitStatus, PopenError>;
     fn poll(&mut self) -> Option<ExitStatus>;
     fn terminate(&self) -> io::Result<()>;
     fn kill(&self) -> io::Result<()>;
@@ -271,12 +271,18 @@ mod os {
             }
         }
 
-        fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
-            self.wait_with(0)
+        fn wait(&mut self) -> Result<ExitStatus, PopenError> {
+            while let None = self.exit_status {
+                self.waitpid(0)?;
+            }
+            Ok(self.exit_status.unwrap())
         }
 
         fn poll(&mut self) -> Option<ExitStatus> {
-            self.wait_with(posix::WNOHANG).unwrap_or(None)
+            match self.waitpid(posix::WNOHANG) {
+                Ok(_) => self.exit_status,
+                Err(_) => None
+            }
         }
 
         fn terminate(&self) -> io::Result<()> {
@@ -291,7 +297,7 @@ mod os {
     trait PopenOsImpl: super::PopenOs {
         fn do_exec(&self, args: Vec<PathBuf>,
                    child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()>;
-        fn wait_with(&mut self, wait_flags: i32) -> io::Result<Option<ExitStatus>>;
+        fn waitpid(&mut self, flags: i32) -> io::Result<()>;
         fn send_signal(&self, signal: u8) -> io::Result<()>;
     }
 
@@ -311,11 +317,11 @@ mod os {
             posix::execvp(&args[0], &args)
         }
 
-        fn wait_with(&mut self, wait_flags: i32) -> io::Result<Option<ExitStatus>> {
+        fn waitpid(&mut self, flags: i32) -> io::Result<()> {
             match self.pid {
                 Some(pid) => {
                     // XXX handle some kinds of error - at least ECHILD and EINTR
-                    let (pid_out, exit_status) = posix::waitpid(pid, wait_flags)?;
+                    let (pid_out, exit_status) = posix::waitpid(pid, flags)?;
                     if pid_out == pid {
                         self.pid = None;
                         self.exit_status = Some(exit_status);
@@ -323,7 +329,7 @@ mod os {
                 },
                 None => (),
             }
-            Ok(self.exit_status)
+            Ok(())
         }
 
         fn send_signal(&self, signal: u8) -> io::Result<()> {
@@ -385,12 +391,23 @@ mod os {
             Ok(())
         }
 
-        fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
-            self._wait(None)
+        fn wait(&mut self) -> Result<ExitStatus, PopenError> {
+            self.wait_handle(None)?;
+            match self.exit_status {
+                Some(exit_status) => Ok(exit_status),
+                // Since we invoked wait_handle without timeout, exit status should
+                // exist at this point.  The only way for it not to exist would be if
+                // something strange happened, like WaitForSingleObject returneing
+                // something other than OBJECT_0.
+                None => Err(PopenError::LogicError("Failed to obtain exit status"))
+            }
         }
 
         fn poll(&mut self) -> Option<ExitStatus> {
-            self._wait(Some(0.0)).unwrap_or(None)
+            match self.wait_handle(Some(0.0)) {
+                Ok(_) => self.exit_status,
+                Err(_) => None
+            }
         }
 
         fn terminate(&self) -> io::Result<()> {
@@ -403,15 +420,16 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn _wait(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>>;
+        fn wait_handle(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>>;
     }
 
     impl PopenOsImpl for Popen {
-        fn _wait(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>> {
+        fn wait_handle(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>> {
             if self.ext_data.handle.is_some() {
                 let timeout = timeout.map(|t| (t * 1000.0) as u32);
-                let waited = win32::WaitForSingleObject(self.ext_data.handle.as_ref().unwrap(), timeout)?;
-                if let win32::WaitEvent::OBJECT_0 = waited {
+                let event = win32::WaitForSingleObject(
+                    self.ext_data.handle.as_ref().unwrap(), timeout)?;
+                if let win32::WaitEvent::OBJECT_0 = event {
                     self.pid = None;
                     let handle = self.ext_data.handle.take().unwrap();
                     let exit_code = win32::GetExitCodeProcess(&handle)?;
@@ -484,11 +502,15 @@ mod os {
 
 
 impl Drop for Popen {
+    // Wait for the process to exit.  To avoid the wait, call
+    // detach().
     fn drop(&mut self) {
-        // Wait for the process to exit.  To avoid this, call
-        // detach().
-        // XXX Log error occurred during wait()?
-        self.wait().ok();
+        // drop() is invoked if a try! fails during construction, in which
+        // case wait() would panic because an exit status cannot be obtained.
+        if self.exit_status.is_some() {
+            // XXX Log error occurred during wait()?
+            self.wait().ok();
+        }
     }
 }
 
@@ -497,6 +519,7 @@ impl Drop for Popen {
 pub enum PopenError {
     UtfError(FromUtf8Error),
     IoError(io::Error),
+    LogicError(&'static str),
 }
 
 impl From<FromUtf8Error> for PopenError {
@@ -516,14 +539,16 @@ impl Error for PopenError {
         match *self {
             PopenError::UtfError(ref err) => err.description(),
             PopenError::IoError(ref err) => err.description(),
+            PopenError::LogicError(description) => description,
         }
     }
 
     fn cause(&self) -> Option<&Error> {
-        Some(match *self {
-            PopenError::UtfError(ref err) => err as &Error,
-            PopenError::IoError(ref err) => err as &Error,
-        })
+        match *self {
+            PopenError::UtfError(ref err) => Some(err as &Error),
+            PopenError::IoError(ref err) => Some(err as &Error),
+            PopenError::LogicError(_) => None,
+        }
     }
 }
 
@@ -532,6 +557,7 @@ impl fmt::Display for PopenError {
         match *self {
             PopenError::UtfError(ref err) => fmt::Display::fmt(err, f),
             PopenError::IoError(ref err) => fmt::Display::fmt(err, f),
+            PopenError::LogicError(desc) => f.write_str(desc)
         }
     }
 }

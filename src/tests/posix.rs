@@ -15,7 +15,7 @@ fn err_signal() {
     let mut p = Popen::create(&["sleep", "5"]).unwrap();
     assert!(p.poll().is_none());
     p.terminate().unwrap();
-    assert!(p.wait().unwrap() == Some(ExitStatus::Signaled(SIGTERM as u8)));
+    assert!(p.wait().unwrap() == ExitStatus::Signaled(SIGTERM as u8));
 }
 
 #[test]
@@ -28,6 +28,6 @@ fn write_to_subprocess() {
         .unwrap();
     p.stdin.as_mut().unwrap().write_all(b"foo").unwrap();
     mem::drop(p.stdin.take());
-    assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
     assert!(read_whole_file(File::open(tmpname).unwrap()) == "foo");
 }

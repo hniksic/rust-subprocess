@@ -17,7 +17,7 @@ pub fn read_whole_file(mut f: File) -> String {
 #[test]
 fn good_cmd() {
     let mut p = Popen::create(&["true"]).unwrap();
-    assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn bad_cmd() {
 #[test]
 fn err_exit() {
     let mut p = Popen::create(&["sh", "-c", "exit 13"]).unwrap();
-    assert!(p.wait().unwrap() == Some(ExitStatus::Exited(13)));
+    assert!(p.wait().unwrap() == ExitStatus::Exited(13));
 }
 
 #[test]
@@ -38,7 +38,7 @@ fn read_from_stdout() {
         &["echo", "foo"], Redirection::None, Redirection::Pipe, Redirection::None)
         .unwrap();
     assert!(read_whole_file(p.stdout.take().unwrap()) == "foo\n");
-    assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn input_from_file() {
         Redirection::Pipe, Redirection::None)
         .unwrap();
     assert!(read_whole_file(p.stdout.take().unwrap()) == "foo");
-    assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
 
 #[test]
@@ -67,7 +67,7 @@ fn output_to_file() {
         &["printf", "foo"],
         Redirection::None, Redirection::File(outfile), Redirection::None)
         .unwrap();
-    assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
     assert!(read_whole_file(File::open(&tmpname).unwrap()) == "foo");
 }
 
@@ -86,7 +86,7 @@ fn input_output_from_file() {
         Redirection::File(File::create(&tmpname_out).unwrap()),
         Redirection::None)
         .unwrap();
-    assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
     assert!(read_whole_file(File::open(&tmpname_out).unwrap()) == "foo");
 }
 
@@ -104,7 +104,7 @@ fn communicate_input() {
     } else {
         assert!(false);
     }
-    assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
     assert!(read_whole_file(File::open(&tmpname).unwrap()) == "hello world");
 }
 
@@ -120,7 +120,7 @@ fn communicate_output() {
     } else {
         assert!(false);
     }
-    assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn communicate_input_output() {
     } else {
         assert!(false);
     }
-    assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
 
 #[test]
@@ -151,7 +151,7 @@ fn communicate_input_output_long() {
     } else {
         assert!(false);
     }
-    assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
 
 #[test]
@@ -166,5 +166,5 @@ fn communicate_input_output_str() {
     } else {
         assert!(false);
     }
-    assert!(p.wait().unwrap() == Some(ExitStatus::Exited(0)));
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
