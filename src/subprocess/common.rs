@@ -5,3 +5,8 @@ pub enum ExitStatus {
     Other(i32),
 }
 
+pub enum StandardStream {
+    Input,
+    Output,
+    Error,
+}

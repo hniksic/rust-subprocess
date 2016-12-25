@@ -175,3 +175,31 @@ fn null_byte_in_cmd() {
         &["echo\0foo"], Redirection::None, Redirection::None, Redirection::None);
     assert!(try_p.is_err());
 }
+
+#[test]
+fn err_to_out() {
+    let mut p = Popen::create_full(
+        &["sh", "-c", "echo foo; echo bar >&2"],
+        Redirection::None, Redirection::Pipe, Redirection::Merge)
+        .unwrap();
+    if let (Some(out), None) = p.communicate_bytes(None).unwrap() {
+        assert_eq!(out, b"foo\nbar\n");
+    } else {
+        assert!(false);
+    }
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+}
+
+#[test]
+fn out_to_err() {
+    let mut p = Popen::create_full(
+        &["sh", "-c", "echo foo; echo bar >&2"],
+        Redirection::None, Redirection::Merge, Redirection::Pipe)
+        .unwrap();
+    if let (None, Some(err)) = p.communicate_bytes(None).unwrap() {
+        assert_eq!(err, b"foo\nbar\n");
+    } else {
+        assert!(false);
+    }
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+}

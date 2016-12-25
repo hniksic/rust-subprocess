@@ -8,7 +8,7 @@ use std::fs::File;
 use std::string::FromUtf8Error;
 use std::fmt;
 
-use subprocess::common::ExitStatus;
+use subprocess::common::{ExitStatus, StandardStream};
 
 #[derive(Debug)]
 pub struct Popen {
@@ -26,12 +26,13 @@ pub enum Redirection {
     None,
     File(File),
     Pipe,
+    Merge,
 }
 
 impl Popen {
     pub fn create_full<P: AsRef<Path>>(
         args: &[P], stdin: Redirection, stdout: Redirection, stderr: Redirection)
-        -> io::Result<Popen>
+        -> Result<Popen, PopenError>
     {
         let args: Vec<PathBuf> = args.iter()
             .map(|p| p.as_ref().to_owned()).collect();
@@ -47,7 +48,7 @@ impl Popen {
         Ok(inst)
     }
 
-    pub fn create<P: AsRef<Path>>(args: &[P]) -> io::Result<Popen> {
+    pub fn create<P: AsRef<Path>>(args: &[P]) -> Result<Popen, PopenError> {
         Popen::create_full(args, Redirection::None, Redirection::None, Redirection::None)
     }
 
@@ -56,8 +57,8 @@ impl Popen {
     }
 
     fn make_child_streams(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                          -> io::Result<(Option<File>, Option<File>, Option<File>)> {
-        fn prepare_pipe(for_write: bool, store_parent_end: &mut Option<File>) -> io::Result<File> {
+                          -> Result<(Option<File>, Option<File>, Option<File>), PopenError> {
+        fn prepare_pipe(for_write: bool, store_parent_end: &mut Option<File>) -> Result<File, PopenError> {
             let (read, write) = os::make_pipe()?;
             let (mut parent_end, child_end) =
                 if for_write {(write, read)} else {(read, write)};
@@ -69,22 +70,53 @@ impl Popen {
             os::set_inheritable(&mut file, true)?;
             Ok(file)
         }
+        enum MergeKind {
+            OutToErr, // 1>&2
+            ErrToOut, // 2>&1
+            None,
+        }
+        let mut merge: MergeKind = MergeKind::None;
 
         let child_stdin = match stdin {
             Redirection::Pipe => Some(prepare_pipe(true, &mut self.stdin)?),
             Redirection::File(file) => Some(prepare_file(file)?),
+            Redirection::Merge => {
+                return Err(PopenError::LogicError("Redirection::Merge not valid for stdin"));
+            }
             Redirection::None => None,
         };
-        let child_stdout = match stdout {
+        let mut child_stdout = match stdout {
             Redirection::Pipe => Some(prepare_pipe(false, &mut self.stdout)?),
             Redirection::File(file) => Some(prepare_file(file)?),
-            Redirection::None => None
+            Redirection::Merge => { merge = MergeKind::ErrToOut; None },
+            Redirection::None => None,
         };
-        let child_stderr = match stderr {
+        let mut child_stderr = match stderr {
             Redirection::Pipe => Some(prepare_pipe(false, &mut self.stderr)?),
             Redirection::File(file) => Some(prepare_file(file)?),
-            Redirection::None => None
+            Redirection::Merge => { merge = MergeKind::OutToErr; None },
+            Redirection::None => None,
         };
+
+        fn dup_file(src: &Option<File>, which_stream: StandardStream) -> io::Result<File> {
+            match src.as_ref() {
+                Some(src_file) => {
+                    src_file.try_clone()
+                }
+                None => Ok(os::get_standard_stream(which_stream))
+            }
+        }
+
+        match merge {
+            MergeKind::OutToErr => {
+                child_stderr = Some(dup_file(&child_stdout, StandardStream::Output)?);
+            }
+            MergeKind::ErrToOut => {
+                child_stdout = Some(dup_file(&child_stderr, StandardStream::Error)?);
+            }
+            MergeKind::None => ()
+        }
+
         Ok((child_stdin, child_stdout, child_stderr))
     }
 
@@ -175,7 +207,7 @@ impl Popen {
     fn start(&mut self,
              args: Vec<PathBuf>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
-             -> io::Result<()> {
+             -> Result<(), PopenError> {
         (self as &mut PopenOs).start(args, stdin, stdout, stderr)
     }
 
@@ -200,7 +232,7 @@ impl Popen {
 trait PopenOs {
     fn start(&mut self, args: Vec<PathBuf>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
-             -> io::Result<()>;
+             -> Result<(), PopenError>;
     fn wait(&mut self) -> Result<ExitStatus, PopenError>;
     fn poll(&mut self) -> Option<ExitStatus>;
     fn terminate(&self) -> io::Result<()>;
@@ -226,7 +258,7 @@ mod os {
         fn start(&mut self,
                  args: Vec<PathBuf>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                 -> io::Result<()> {
+                 -> Result<(), PopenError> {
             let mut exec_fail_pipe = posix::pipe()?;
             set_inheritable(&mut exec_fail_pipe.0, false)?;
             set_inheritable(&mut exec_fail_pipe.1, false)?;
@@ -254,7 +286,7 @@ mod os {
             if error_string.len() != 0 {
                 let error_code: i32 = error_string.parse()
                     .expect("parse child error code");
-                Err(io::Error::from_raw_os_error(error_code))
+                Err(PopenError::from(io::Error::from_raw_os_error(error_code)))
             } else {
                 Ok(())
             }
@@ -345,6 +377,8 @@ mod os {
     pub fn make_pipe() -> io::Result<(File, File)> {
         posix::pipe()
     }
+
+    pub use subprocess::posix::get_standard_stream;
 }
 
 
@@ -368,7 +402,7 @@ mod os {
         fn start(&mut self,
                  args: Vec<PathBuf>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                 -> io::Result<()> {
+                 -> Result<(), PopenError> {
             let (child_stdin, child_stdout, child_stderr)
                 = self.make_child_streams(stdin, stdout, stderr)?;
             let cmdline = assemble_cmdline(args)?;
@@ -491,6 +525,8 @@ mod os {
         }
         cmdline.push('"' as u16);
     }
+
+    pub use subprocess::win32::get_standard_stream;
 }
 
 

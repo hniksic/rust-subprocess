@@ -7,7 +7,7 @@ use std::os::unix::io::FromRawFd;
 use std::ptr;
 use std::ffi::CString;
 
-use subprocess::common::ExitStatus;
+use subprocess::common::{ExitStatus, StandardStream};
 
 fn check_err<T: Ord + Default>(num: T) -> Result<T> {
     if num < T::default() {
@@ -112,4 +112,13 @@ pub fn dup2(oldfd: i32, newfd: i32) -> Result<()> {
         libc::dup2(oldfd, newfd)
     })?;
     Ok(())
+}
+
+pub fn get_standard_stream(which: StandardStream) -> File {
+    let fd = match which {
+        StandardStream::Input => 0,
+        StandardStream::Output => 1,
+        StandardStream::Error => 2,
+    };
+    unsafe { File::from_raw_fd(fd) }
 }
