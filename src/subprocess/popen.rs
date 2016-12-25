@@ -135,7 +135,7 @@ impl Popen {
             (&mut None, &mut None, mut stderr_ref @ &mut Some(_)) => {
                 assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
                 let err = Popen::comm_read(stderr_ref)?;
-                Ok((Some(err), None))
+                Ok((None, Some(err)))
             }
             (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) =>
                 crossbeam::scope(move |scope| {
