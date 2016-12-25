@@ -57,43 +57,32 @@ impl Popen {
 
     fn make_child_streams(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
                           -> io::Result<(Option<File>, Option<File>, Option<File>)> {
+        fn prepare_pipe(for_write: bool, store_parent_end: &mut Option<File>) -> io::Result<File> {
+            let (read, write) = os::make_pipe()?;
+            let (mut parent_end, child_end) =
+                if for_write {(write, read)} else {(read, write)};
+            os::set_inheritable(&mut parent_end, false)?;
+            *store_parent_end = Some(parent_end);
+            Ok(child_end)
+        }
+        fn prepare_file(mut file: File) -> io::Result<File> {
+            os::set_inheritable(&mut file, true)?;
+            Ok(file)
+        }
+
         let child_stdin = match stdin {
-            Redirection::Pipe => {
-                let (read, mut write) = os::make_pipe()?;
-                os::set_inheritable(&mut write, false)?;
-                self.stdin = Some(write);
-                Some(read)
-            }
-            Redirection::File(mut file) => {
-                os::set_inheritable(&mut file, true)?;
-                Some(file)
-            }
+            Redirection::Pipe => Some(prepare_pipe(true, &mut self.stdin)?),
+            Redirection::File(file) => Some(prepare_file(file)?),
             Redirection::None => None,
         };
         let child_stdout = match stdout {
-            Redirection::Pipe => {
-                let (mut read, write) = os::make_pipe()?;
-                os::set_inheritable(&mut read, false)?;
-                self.stdout = Some(read);
-                Some(write)
-            }
-            Redirection::File(mut file) => {
-                os::set_inheritable(&mut file, true)?;
-                Some(file)
-            }
+            Redirection::Pipe => Some(prepare_pipe(false, &mut self.stdout)?),
+            Redirection::File(file) => Some(prepare_file(file)?),
             Redirection::None => None
         };
         let child_stderr = match stderr {
-            Redirection::Pipe => {
-                let (mut read, write) = os::make_pipe()?;
-                os::set_inheritable(&mut read, false)?;
-                self.stderr = Some(read);
-                Some(write)
-            }
-            Redirection::File(mut file) => {
-                os::set_inheritable(&mut file, true)?;
-                Some(file)
-            }
+            Redirection::Pipe => Some(prepare_pipe(false, &mut self.stderr)?),
+            Redirection::File(file) => Some(prepare_file(file)?),
             Redirection::None => None
         };
         Ok((child_stdin, child_stdout, child_stderr))
