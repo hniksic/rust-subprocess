@@ -203,3 +203,21 @@ fn out_to_err() {
     }
     assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
+
+#[test]
+fn out_to_err_no_redirection() {
+    {
+        let mut p = Popen::create_full(
+            &["sh", "-c", "echo foo; echo bar >&2"],
+            Redirection::None, Redirection::Merge, Redirection::None)
+            .unwrap();
+        assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    }
+    {
+        let mut p = Popen::create_full(
+            &["sh", "-c", "echo foo; echo bar >&2"],
+            Redirection::None, Redirection::None, Redirection::Merge)
+            .unwrap();
+        assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    }
+}

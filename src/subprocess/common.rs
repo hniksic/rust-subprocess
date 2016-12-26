@@ -5,6 +5,7 @@ pub enum ExitStatus {
     Other(i32),
 }
 
+#[derive(Debug, Copy, Clone)]
 pub enum StandardStream {
     Input,
     Output,

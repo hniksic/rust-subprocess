@@ -99,12 +99,14 @@ impl Popen {
         };
 
         fn dup_file(src: &Option<File>, which_stream: StandardStream) -> io::Result<File> {
-            match src.as_ref() {
+            let mut ret = match src.as_ref() {
                 Some(src_file) => {
-                    src_file.try_clone()
+                    src_file.try_clone()?
                 }
-                None => Ok(os::get_standard_stream(which_stream))
-            }
+                None => os::get_standard_stream(which_stream)?
+            };
+            os::set_inheritable(&mut ret, true)?;
+            Ok(ret)
         }
 
         match merge {
