@@ -19,7 +19,7 @@ use winapi::winnt::PHANDLE;
 
 pub use winapi::winerror::ERROR_BAD_PATHNAME;
 
-use subprocess::common::StandardStream;
+use common::StandardStream;
 
 #[derive(Debug)]
 pub struct Handle(RawHandle);

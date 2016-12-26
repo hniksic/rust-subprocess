@@ -8,7 +8,7 @@ use std::fs::File;
 use std::string::FromUtf8Error;
 use std::fmt;
 
-use subprocess::common::{ExitStatus, StandardStream};
+use common::{ExitStatus, StandardStream};
 
 #[derive(Debug)]
 pub struct Popen {
@@ -249,10 +249,10 @@ mod os {
     use std::io::{Read, Write};
     use std::fs::File;
     use std::path::PathBuf;
-    use subprocess::posix;
+    use posix;
     use std::mem;
     use std::os::unix::io::AsRawFd;
-    use subprocess::common::ExitStatus;
+    use common::ExitStatus;
 
     pub type ExtPopenData = ();
 
@@ -380,7 +380,7 @@ mod os {
         posix::pipe()
     }
 
-    pub use subprocess::posix::get_standard_stream;
+    pub use posix::get_standard_stream;
 }
 
 
@@ -390,8 +390,8 @@ mod os {
     use std::io;
     use std::fs::File;
     use std::path::PathBuf;
-    use subprocess::win32;
-    use subprocess::common::ExitStatus;
+    use win32;
+    use common::ExitStatus;
     use std::ffi::{OsStr, OsString};
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
@@ -528,7 +528,7 @@ mod os {
         cmdline.push('"' as u16);
     }
 
-    pub use subprocess::win32::get_standard_stream;
+    pub use win32::get_standard_stream;
 }
 
 

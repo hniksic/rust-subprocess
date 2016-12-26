@@ -1,6 +1,6 @@
 extern crate tempdir;
 
-use subprocess::{Popen, ExitStatus, Redirection};
+use super::super::{Popen, ExitStatus, Redirection};
 use std::fs::File;
 use std::io::Write;
 use std::mem;

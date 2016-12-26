@@ -5,17 +5,19 @@ extern crate kernel32;
 #[cfg(windows)]
 extern crate winapi;
 
-pub mod subprocess {
-    mod popen;
-    #[cfg(unix)]
-    mod posix;
-    #[cfg(windows)]
-    mod win32;
-    mod common;
+pub mod popen;
 
-    pub use self::common::ExitStatus;
-    pub use self::popen::{Popen, Redirection};
-}
+#[cfg(unix)]
+mod posix;
+
+#[cfg(windows)]
+mod win32;
+
+mod common;
+
+pub use self::common::ExitStatus;
+pub use self::popen::{Popen, Redirection};
+
 
 #[cfg(test)]
 mod tests {

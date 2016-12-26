@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::Read;
 use std::io::Write;
 
-use subprocess::{Popen, ExitStatus, Redirection};
+use super::super::{Popen, ExitStatus, Redirection};
 
 pub fn read_whole_file(mut f: File) -> String {
     let mut content = String::new();

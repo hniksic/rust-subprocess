@@ -8,7 +8,7 @@ use std::ptr;
 use std::ffi::CString;
 use std::mem;
 
-use subprocess::common::{ExitStatus, StandardStream};
+use common::{ExitStatus, StandardStream};
 
 fn check_err<T: Ord + Default>(num: T) -> Result<T> {
     if num < T::default() {
