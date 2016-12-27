@@ -178,3 +178,10 @@ pub fn GetExitCodeProcess(handle: &Handle) -> Result<u32> {
 //     mem::forget(f);
 //     Ok(cloned)
 // }
+
+pub fn TerminateProcess(handle: &Handle, exit_code: u32) -> Result<()> {
+    check(unsafe {
+        kernel32::TerminateProcess(handle.as_raw_handle(),
+                                   exit_code)
+    })
+}

@@ -11,7 +11,7 @@ use self::tempdir::TempDir;
 use tests::common::read_whole_file;
 
 #[test]
-fn err_signal() {
+fn err_terminate() {
     let mut p = Popen::create(&["sleep", "5"]).unwrap();
     assert!(p.poll().is_none());
     p.terminate().unwrap();

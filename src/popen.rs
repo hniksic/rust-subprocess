@@ -431,11 +431,16 @@ mod os {
         }
 
         fn terminate(&self) -> io::Result<()> {
-            panic!();
+            if let Some(handle_ref) = self.ext_data.handle.as_ref() {
+                win32::TerminateProcess(handle_ref, 1)?;
+                // XXX subprocess.py checks whether the process is
+                // still alive and, if not, ignores ERROR_ACCESS_DENIED
+            }
+            Ok(())
         }
 
         fn kill(&self) -> io::Result<()> {
-            panic!();
+            self.terminate()
         }
     }
 
