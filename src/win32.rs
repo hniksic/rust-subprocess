@@ -19,7 +19,7 @@ use winapi::winnt::PHANDLE;
 
 pub use winapi::winerror::ERROR_BAD_PATHNAME;
 
-use common::StandardStream;
+//use common::StandardStream;
 
 #[derive(Debug)]
 pub struct Handle(RawHandle);
@@ -158,23 +158,23 @@ pub fn GetExitCodeProcess(handle: &Handle) -> Result<u32> {
     Ok(exit_code)
 }
 
-pub fn GetStdHandle(which: StandardStream) -> Result<File> {
-    use winapi::winbase::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
-    let id = match which {
-        StandardStream::Input => STD_INPUT_HANDLE,
-        StandardStream::Output => STD_OUTPUT_HANDLE,
-        StandardStream::Error => STD_ERROR_HANDLE,
-    };
-    let raw_handle = unsafe { kernel32::GetStdHandle(id) };
-    if raw_handle == winapi::INVALID_HANDLE_VALUE {
-        return Err(Error::last_os_error());
-    }
-    Ok(unsafe { File::from_raw_handle(raw_handle) })
-}
+// pub fn GetStdHandle(which: StandardStream) -> Result<File> {
+//     use winapi::winbase::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+//     let id = match which {
+//         StandardStream::Input => STD_INPUT_HANDLE,
+//         StandardStream::Output => STD_OUTPUT_HANDLE,
+//         StandardStream::Error => STD_ERROR_HANDLE,
+//     };
+//     let raw_handle = unsafe { kernel32::GetStdHandle(id) };
+//     if raw_handle == winapi::INVALID_HANDLE_VALUE {
+//         return Err(Error::last_os_error());
+//     }
+//     Ok(unsafe { File::from_raw_handle(raw_handle) })
+// }
 
-pub fn get_standard_stream(which: StandardStream) -> Result<File> {
-    let f = GetStdHandle(which)?;
-    let cloned = f.try_clone()?;
-    mem::forget(f);
-    Ok(cloned)
-}
+// pub fn get_standard_stream(which: StandardStream) -> Result<File> {
+//     let f = GetStdHandle(which)?;
+//     let cloned = f.try_clone()?;
+//     mem::forget(f);
+//     Ok(cloned)
+// }

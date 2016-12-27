@@ -177,7 +177,7 @@ fn null_byte_in_cmd() {
 }
 
 #[test]
-fn err_to_out() {
+fn merge_err_to_out_pipe() {
     let mut p = Popen::create_full(
         &["sh", "-c", "echo foo; echo bar >&2"],
         Redirection::None, Redirection::Pipe, Redirection::Merge)
@@ -191,7 +191,7 @@ fn err_to_out() {
 }
 
 #[test]
-fn out_to_err() {
+fn merge_out_to_err_pipe() {
     let mut p = Popen::create_full(
         &["sh", "-c", "echo foo; echo bar >&2"],
         Redirection::None, Redirection::Merge, Redirection::Pipe)
@@ -205,19 +205,14 @@ fn out_to_err() {
 }
 
 #[test]
-fn out_to_err_no_redirection() {
-    {
-        let mut p = Popen::create_full(
-            &["sh", "-c", "echo foo; echo bar >&2"],
-            Redirection::None, Redirection::Merge, Redirection::None)
-            .unwrap();
-        assert!(p.wait().unwrap() == ExitStatus::Exited(0));
-    }
-    {
-        let mut p = Popen::create_full(
-            &["sh", "-c", "echo foo; echo bar >&2"],
-            Redirection::None, Redirection::None, Redirection::Merge)
-            .unwrap();
-        assert!(p.wait().unwrap() == ExitStatus::Exited(0));
-    }
+fn merge_err_to_out_file() {
+    let tmpdir = TempDir::new("test").unwrap();
+    let tmpname = tmpdir.path().join("output");
+    let mut p = Popen::create_full(
+        &["sh", "-c", "echo -n foo; echo -n bar >&2"],
+        Redirection::None,
+        Redirection::File(File::create(&tmpname).unwrap()),
+        Redirection::Merge).unwrap();
+    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(read_whole_file(File::open(&tmpname).unwrap()) == "foobar");
 }

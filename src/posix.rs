@@ -6,9 +6,8 @@ use std::fs::File;
 use std::os::unix::io::FromRawFd;
 use std::ptr;
 use std::ffi::CString;
-use std::mem;
 
-use common::{ExitStatus, StandardStream};
+use common::ExitStatus;
 
 fn check_err<T: Ord + Default>(num: T) -> Result<T> {
     if num < T::default() {
@@ -115,14 +114,14 @@ pub fn dup2(oldfd: i32, newfd: i32) -> Result<()> {
     Ok(())
 }
 
-pub fn get_standard_stream(which: StandardStream) -> Result<File> {
-    let fd = match which {
-        StandardStream::Input => 0,
-        StandardStream::Output => 1,
-        StandardStream::Error => 2,
-    };
-    let f = unsafe { File::from_raw_fd(fd) };
-    let cloned = f.try_clone()?;
-    mem::forget(f);
-    Ok(cloned)
-}
+// pub fn get_standard_stream(which: StandardStream) -> Result<File> {
+//     let fd = match which {
+//         StandardStream::Input => 0,
+//         StandardStream::Output => 1,
+//         StandardStream::Error => 2,
+//     };
+//     let f = unsafe { File::from_raw_fd(fd) };
+//     let cloned = f.try_clone()?;
+//     mem::forget(f);
+//     Ok(cloned)
+// }

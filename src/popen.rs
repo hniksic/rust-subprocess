@@ -8,7 +8,7 @@ use std::fs::File;
 use std::string::FromUtf8Error;
 use std::fmt;
 
-use common::{ExitStatus, StandardStream};
+use common::ExitStatus;
 
 #[derive(Debug)]
 pub struct Popen {
@@ -98,25 +98,21 @@ impl Popen {
             Redirection::None => None,
         };
 
-        fn dup_file(src: &Option<File>, which_stream: StandardStream) -> io::Result<File> {
-            let mut ret = match src.as_ref() {
-                Some(src_file) => {
-                    src_file.try_clone()?
-                }
-                None => os::get_standard_stream(which_stream)?
-            };
-            os::set_inheritable(&mut ret, true)?;
-            Ok(ret)
+        fn dup_child_stream(child_stream: &Option<File>) -> Result<File, PopenError> {
+            if let Some(child_stream) = child_stream.as_ref() {
+                let mut clone = child_stream.try_clone()?;
+                os::set_inheritable(&mut clone, true)?;
+                Ok(clone)
+            } else {
+                Err(PopenError::LogicError(
+                    "Redirection::Merge not supported with non-redirected streams"))
+            }
         }
 
         match merge {
-            MergeKind::OutToErr => {
-                child_stderr = Some(dup_file(&child_stdout, StandardStream::Output)?);
-            }
-            MergeKind::ErrToOut => {
-                child_stdout = Some(dup_file(&child_stderr, StandardStream::Error)?);
-            }
-            MergeKind::None => ()
+            MergeKind::OutToErr => child_stderr = Some(dup_child_stream(&child_stdout)?),
+            MergeKind::ErrToOut => child_stdout = Some(dup_child_stream(&child_stderr)?),
+            MergeKind::None => (),
         }
 
         Ok((child_stdin, child_stdout, child_stderr))
@@ -379,8 +375,6 @@ mod os {
     pub fn make_pipe() -> io::Result<(File, File)> {
         posix::pipe()
     }
-
-    pub use posix::get_standard_stream;
 }
 
 
@@ -527,8 +521,6 @@ mod os {
         }
         cmdline.push('"' as u16);
     }
-
-    pub use win32::get_standard_stream;
 }
 
 
