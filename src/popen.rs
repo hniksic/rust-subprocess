@@ -1,12 +1,12 @@
 extern crate crossbeam;
 
 use std::error::Error;
-use std::path::{PathBuf, Path};
 use std::io;
 use std::io::{Read, Write};
 use std::fs::File;
 use std::string::FromUtf8Error;
 use std::fmt;
+use std::ffi::{OsStr, OsString};
 
 use common::ExitStatus;
 
@@ -30,11 +30,11 @@ pub enum Redirection {
 }
 
 impl Popen {
-    pub fn create_full<P: AsRef<Path>>(
+    pub fn create_full<P: AsRef<OsStr>>(
         args: &[P], stdin: Redirection, stdout: Redirection, stderr: Redirection)
         -> Result<Popen, PopenError>
     {
-        let args: Vec<PathBuf> = args.iter()
+        let args: Vec<OsString> = args.iter()
             .map(|p| p.as_ref().to_owned()).collect();
         let mut inst = Popen {
             pid: None,
@@ -48,7 +48,7 @@ impl Popen {
         Ok(inst)
     }
 
-    pub fn create<P: AsRef<Path>>(args: &[P]) -> Result<Popen, PopenError> {
+    pub fn create<P: AsRef<OsStr>>(args: &[P]) -> Result<Popen, PopenError> {
         Popen::create_full(args, Redirection::None, Redirection::None, Redirection::None)
     }
 
@@ -203,7 +203,7 @@ impl Popen {
     }
 
     fn start(&mut self,
-             args: Vec<PathBuf>,
+             args: Vec<OsString>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
              -> Result<(), PopenError> {
         (self as &mut PopenOs).start(args, stdin, stdout, stderr)
@@ -228,7 +228,7 @@ impl Popen {
 
 
 trait PopenOs {
-    fn start(&mut self, args: Vec<PathBuf>,
+    fn start(&mut self, args: Vec<OsString>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
              -> Result<(), PopenError>;
     fn wait(&mut self) -> Result<ExitStatus, PopenError>;
@@ -244,17 +244,17 @@ mod os {
     use std::io;
     use std::io::{Read, Write};
     use std::fs::File;
-    use std::path::PathBuf;
     use posix;
     use std::mem;
     use std::os::unix::io::AsRawFd;
     use common::ExitStatus;
+    use std::ffi::OsString;
 
     pub type ExtPopenData = ();
 
     impl super::PopenOs for Popen {
         fn start(&mut self,
-                 args: Vec<PathBuf>,
+                 args: Vec<OsString>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> Result<(), PopenError> {
             let mut exec_fail_pipe = posix::pipe()?;
@@ -314,14 +314,14 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn do_exec(&self, args: Vec<PathBuf>,
+        fn do_exec(&self, args: Vec<OsString>,
                    child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()>;
         fn waitpid(&mut self, flags: i32) -> io::Result<()>;
         fn send_signal(&self, signal: u8) -> io::Result<()>;
     }
 
     impl PopenOsImpl for Popen {
-        fn do_exec(&self, args: Vec<PathBuf>,
+        fn do_exec(&self, args: Vec<OsString>,
                    child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()> {
             let (stdin, stdout, stderr) = child_ends;
             if let Some(stdin) = stdin {
@@ -383,7 +383,6 @@ mod os {
     use super::*;
     use std::io;
     use std::fs::File;
-    use std::path::PathBuf;
     use win32;
     use common::ExitStatus;
     use std::ffi::{OsStr, OsString};
@@ -396,7 +395,7 @@ mod os {
 
     impl super::PopenOs for Popen {
         fn start(&mut self,
-                 args: Vec<PathBuf>,
+                 args: Vec<OsString>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> Result<(), PopenError> {
             let (child_stdin, child_stdout, child_stderr)
@@ -475,13 +474,13 @@ mod os {
         win32::CreatePipe(true)
     }
 
-    fn assemble_cmdline(args: Vec<PathBuf>) -> io::Result<OsString> {
+    fn assemble_cmdline(args: Vec<OsString>) -> io::Result<OsString> {
         let mut cmdline = Vec::<u16>::new();
         for arg in args {
-            if arg.as_os_str().encode_wide().any(|c| c == 0) {
+            if arg.encode_wide().any(|c| c == 0) {
                 return Err(io::Error::from_raw_os_error(win32::ERROR_BAD_PATHNAME as i32));
             }
-            append_quoted(arg.as_os_str(), &mut cmdline);
+            append_quoted(&arg, &mut cmdline);
             cmdline.push(' ' as u16);
         }
         Ok(OsString::from_wide(&cmdline))

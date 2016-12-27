@@ -1,6 +1,6 @@
 use std::io::{Result, Error};
-use std::path::Path;
 use libc;
+use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::fs::File;
 use std::os::unix::io::FromRawFd;
@@ -28,8 +28,8 @@ pub fn fork() -> Result<u32> {
     check_err(unsafe { libc::fork() }).map(|pid| pid as u32)
 }
 
-fn path_to_cstring(p: &Path) -> Result<CString> {
-    let bytes = p.as_os_str().as_bytes();
+fn os_to_cstring(s: &OsStr) -> Result<CString> {
+    let bytes = s.as_bytes();
     if bytes.iter().any(|&b| b == 0) {
         return Err(Error::from_raw_os_error(libc::EINVAL));
     }
@@ -42,16 +42,16 @@ fn cstring_ptr(s: &CString) -> *const libc::c_char {
     &s.as_bytes_with_nul()[0] as *const u8 as _
 }
 
-pub fn execvp<P1, P2>(cmd: P1, args: &[P2]) -> Result<()>
-    where P1: AsRef<Path>, P2: AsRef<Path> {
+pub fn execvp<S1, S2>(cmd: S1, args: &[S2]) -> Result<()>
+    where S1: AsRef<OsStr>, S2: AsRef<OsStr> {
     let try_args_cstring: Result<Vec<CString>> = args.iter()
-        .map(|x| path_to_cstring(x.as_ref())).collect();
+        .map(|x| os_to_cstring(x.as_ref())).collect();
     let args_cstring: Vec<CString> = try_args_cstring?;
     let mut args_ptr: Vec<*const libc::c_char> = args_cstring.iter()
         .map(cstring_ptr).collect();
     args_ptr.push(ptr::null());
     let c_argv = &args_ptr[0] as *const *const libc::c_char;
-    let cmd_cstring = path_to_cstring(cmd.as_ref())?;
+    let cmd_cstring = os_to_cstring(cmd.as_ref())?;
 
     check_err(unsafe { libc::execvp(cstring_ptr(&cmd_cstring), c_argv) })?;
     Ok(())
