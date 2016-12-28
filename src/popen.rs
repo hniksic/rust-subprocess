@@ -8,7 +8,7 @@ use std::string::FromUtf8Error;
 use std::fmt;
 use std::ffi::{OsStr, OsString};
 
-use common::ExitStatus;
+use common::{ExitStatus, StandardStream};
 
 #[derive(Debug)]
 pub struct Popen {
@@ -98,20 +98,16 @@ impl Popen {
             Redirection::None => None,
         };
 
-        fn dup_child_stream(child_stream: &Option<File>) -> Result<File, PopenError> {
-            if let Some(child_stream) = child_stream.as_ref() {
-                let mut clone = child_stream.try_clone()?;
-                os::set_inheritable(&mut clone, true)?;
-                Ok(clone)
-            } else {
-                Err(PopenError::LogicError(
-                    "Redirection::Merge not supported with non-redirected streams"))
+        fn dup_child_stream(child_stream: &mut Option<File>, s: StandardStream) -> io::Result<File> {
+            if child_stream.is_none() {
+                *child_stream = Some(os::clone_standard_stream(s)?);
             }
+            child_stream.as_ref().unwrap().try_clone()
         }
 
         match merge {
-            MergeKind::OutToErr => child_stderr = Some(dup_child_stream(&child_stdout)?),
-            MergeKind::ErrToOut => child_stdout = Some(dup_child_stream(&child_stderr)?),
+            MergeKind::OutToErr => child_stderr = Some(dup_child_stream(&mut child_stdout, StandardStream::Output)?),
+            MergeKind::ErrToOut => child_stdout = Some(dup_child_stream(&mut child_stderr, StandardStream::Error)?),
             MergeKind::None => (),
         }
 
@@ -375,6 +371,8 @@ mod os {
     pub fn make_pipe() -> io::Result<(File, File)> {
         posix::pipe()
     }
+
+    pub use posix::clone_standard_stream;
 }
 
 
@@ -525,6 +523,8 @@ mod os {
         }
         cmdline.push('"' as u16);
     }
+
+    pub use win32::clone_standard_stream;
 }
 
 

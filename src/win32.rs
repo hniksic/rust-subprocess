@@ -19,7 +19,7 @@ use winapi::winnt::PHANDLE;
 
 pub use winapi::winerror::ERROR_BAD_PATHNAME;
 
-//use common::StandardStream;
+use common::StandardStream;
 
 #[derive(Debug)]
 pub struct Handle(RawHandle);
@@ -53,6 +53,14 @@ fn check(status: BOOL) -> Result<()> {
     }
 }
 
+fn check_handle(raw_handle: RawHandle) -> Result<RawHandle> {
+    if raw_handle != winapi::INVALID_HANDLE_VALUE {
+        Ok(raw_handle)
+    } else {
+        Err(Error::last_os_error())
+    }
+}
+
 // OsStr to zero-terminated owned vector
 fn to_nullterm(s: &OsStr) -> Vec<u16> {
     let mut vec: Vec<_> = s.encode_wide().collect();
@@ -64,7 +72,7 @@ pub fn CreatePipe(inherit_handle: bool) -> Result<(File, File)> {
     let mut attributes = SECURITY_ATTRIBUTES {
         nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as DWORD,
         lpSecurityDescriptor: ptr::null_mut(),
-        bInheritHandle: if inherit_handle { 1 } else { 0 },
+        bInheritHandle: inherit_handle as BOOL,
     };
     let (mut r, mut w) = (ptr::null_mut(), ptr::null_mut()); 
     check(unsafe {
@@ -108,8 +116,7 @@ pub fn CreateProcess(cmdline: &OsStr,
                                  &mut cmdline[0] as winapi::LPWSTR,
                                  ptr::null_mut(),   // lpProcessAttributes
                                  ptr::null_mut(),   // lpThreadAttributes
-                                 if inherit_handles
-                                 { 1 } else { 0 },  // bInheritHandles
+                                 inherit_handles as BOOL,  // bInheritHandles
                                  creation_flags,    // dwCreationFlags
                                  ptr::null_mut(),   // lpEnvironment
                                  ptr::null_mut(),   // lpCurrentDirectory
@@ -158,30 +165,35 @@ pub fn GetExitCodeProcess(handle: &Handle) -> Result<u32> {
     Ok(exit_code)
 }
 
-// pub fn GetStdHandle(which: StandardStream) -> Result<File> {
-//     use winapi::winbase::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
-//     let id = match which {
-//         StandardStream::Input => STD_INPUT_HANDLE,
-//         StandardStream::Output => STD_OUTPUT_HANDLE,
-//         StandardStream::Error => STD_ERROR_HANDLE,
-//     };
-//     let raw_handle = unsafe { kernel32::GetStdHandle(id) };
-//     if raw_handle == winapi::INVALID_HANDLE_VALUE {
-//         return Err(Error::last_os_error());
-//     }
-//     Ok(unsafe { File::from_raw_handle(raw_handle) })
-// }
-
-// pub fn get_standard_stream(which: StandardStream) -> Result<File> {
-//     let f = GetStdHandle(which)?;
-//     let cloned = f.try_clone()?;
-//     mem::forget(f);
-//     Ok(cloned)
-// }
-
 pub fn TerminateProcess(handle: &Handle, exit_code: u32) -> Result<()> {
     check(unsafe {
         kernel32::TerminateProcess(handle.as_raw_handle(),
                                    exit_code)
     })
+}
+
+unsafe fn GetStdHandle(which: StandardStream) -> Result<RawHandle> {
+    // private/unsafe because the raw handle it returns must be
+    // duplicated before converting to an owned Handle.
+    use winapi::winbase::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    let id = match which {
+        StandardStream::Input => STD_INPUT_HANDLE,
+        StandardStream::Output => STD_OUTPUT_HANDLE,
+        StandardStream::Error => STD_ERROR_HANDLE,
+    };
+    let raw_handle = check_handle(kernel32::GetStdHandle(id))?;
+    Ok(raw_handle)
+}
+
+pub fn clone_standard_stream(which: StandardStream) -> Result<File> {
+    unsafe {
+        let raw = GetStdHandle(which)?;
+        let mut new_raw = ptr::null_mut();
+        let cur_proc = kernel32::GetCurrentProcess();
+        check(kernel32::DuplicateHandle(cur_proc, raw, cur_proc, &mut
+                                        new_raw, 0,
+                                        true as BOOL,
+                                        winapi::winnt::DUPLICATE_SAME_ACCESS))?;
+        Ok(File::from_raw_handle(new_raw))
+    }
 }
