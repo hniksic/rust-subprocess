@@ -12,7 +12,7 @@ use common::ExitStatus;
 
 #[derive(Debug)]
 pub struct Popen {
-    pid: Option<u32>,
+    _pid: Option<u32>,
     exit_status: Option<ExitStatus>,
     pub stdin: Option<File>,
     pub stdout: Option<File>,
@@ -37,7 +37,7 @@ impl Popen {
         let args: Vec<OsString> = args.iter()
             .map(|p| p.as_ref().to_owned()).collect();
         let mut inst = Popen {
-            pid: None,
+            _pid: None,
             exit_status: None,
             stdin: None,
             stdout: None,
@@ -53,7 +53,7 @@ impl Popen {
     }
 
     pub fn detach(&mut self) {
-        self.pid = None;
+        self._pid = None;
     }
 
     fn make_child_streams(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
@@ -198,8 +198,8 @@ impl Popen {
         Ok((out_str, err_str))
     }
 
-    pub fn get_pid(&self) -> Option<u32> {
-        self.pid
+    pub fn pid(&self) -> Option<u32> {
+        self._pid
     }
 
     fn start(&mut self,
@@ -276,7 +276,7 @@ mod os {
                         .expect("write to error pipe");
                     posix::_exit(127);
                 }
-                self.pid = Some(child_pid as u32);
+                self._pid = Some(child_pid as u32);
             }
             mem::drop(exec_fail_pipe.1);
             let mut error_string = String::new();
@@ -337,12 +337,12 @@ mod os {
         }
 
         fn waitpid(&mut self, flags: i32) -> io::Result<()> {
-            match self.pid {
+            match self._pid {
                 Some(pid) => {
                     // XXX handle some kinds of error - at least ECHILD and EINTR
                     let (pid_out, exit_status) = posix::waitpid(pid, flags)?;
                     if pid_out == pid {
-                        self.pid = None;
+                        self._pid = None;
                         self.exit_status = Some(exit_status);
                     }
                 },
@@ -352,7 +352,7 @@ mod os {
         }
 
         fn send_signal(&self, signal: u8) -> io::Result<()> {
-            match self.pid {
+            match self._pid {
                 Some(pid) => {
                     posix::kill(pid, signal)
                 },
@@ -405,7 +405,7 @@ mod os {
                 = win32::CreateProcess(&cmdline, true, 0,
                                        child_stdin, child_stdout, child_stderr,
                                        win32::STARTF_USESTDHANDLES)?;
-            self.pid = Some(pid as u32);
+            self._pid = Some(pid as u32);
             self.ext_data.handle = Some(handle);
             Ok(())
         }
@@ -454,7 +454,7 @@ mod os {
                 let event = win32::WaitForSingleObject(
                     self.ext_data.handle.as_ref().unwrap(), timeout)?;
                 if let win32::WaitEvent::OBJECT_0 = event {
-                    self.pid = None;
+                    self._pid = None;
                     let handle = self.ext_data.handle.take().unwrap();
                     let exit_code = win32::GetExitCodeProcess(&handle)?;
                     self.exit_status = Some(ExitStatus::Exited(exit_code));
