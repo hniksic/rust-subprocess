@@ -1,12 +1,11 @@
 extern crate tempdir;
 use self::tempdir::TempDir;
 
-use std::path::Path;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
 
-use super::super::{Popen, PopenConfig, ExitStatus, Redirection};
+use super::super::{Popen, PopenConfig, ExitStatus, Redirection, Popt};
 
 pub fn read_whole_file(mut f: File) -> String {
     let mut content = String::new();
@@ -68,11 +67,11 @@ fn input_from_file() {
         let mut outfile = File::create(&tmpname).unwrap();
         outfile.write_all(b"foo").unwrap();
     }
-    let mut p = Popen::create(
-        &[Path::new("cat"), &tmpname], PopenConfig {
-            stdin: Redirection::File(File::open(&tmpname).unwrap()),
-            stdout: Redirection::Pipe, ..Default::default()
-        }).unwrap();
+    let mut p = Popt::new("cat").arg(&tmpname)
+        .stdin(Redirection::File(File::open(&tmpname).unwrap()))
+        .stdout(Redirection::Pipe)
+        .spawn()
+        .unwrap();
     assert!(read_whole_file(p.stdout.take().unwrap()) == "foo");
     assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
