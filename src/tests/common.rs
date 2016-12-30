@@ -34,6 +34,24 @@ fn err_exit() {
 }
 
 #[test]
+fn terminate() {
+    let mut p = Popt::new("sleep").arg("1000").spawn().unwrap();
+    p.terminate().unwrap();
+    p.wait().unwrap();
+}
+
+#[test]
+fn terminate_twice() {
+    use std::thread;
+    use std::time::Duration;
+
+    let p = Popt::new("sleep").arg("1000").spawn().unwrap();
+    p.terminate().unwrap();
+    thread::sleep(Duration::from_millis(100));
+    p.terminate().unwrap();
+}
+
+#[test]
 fn read_from_stdout() {
     let mut p = Popen::create(&["echo", "foo"], PopenConfig {
         stdout: Redirection::Pipe, ..Default::default()
