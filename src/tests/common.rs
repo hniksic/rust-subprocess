@@ -44,7 +44,7 @@ fn terminate_twice() {
     use std::thread;
     use std::time::Duration;
 
-    let p = Popt::new("sleep").arg("1000").spawn().unwrap();
+    let mut p = Popt::new("sleep").arg("1000").spawn().unwrap();
     p.terminate().unwrap();
     thread::sleep(Duration::from_millis(100));
     p.terminate().unwrap();

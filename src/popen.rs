@@ -222,12 +222,12 @@ impl Popen {
         (self as &mut PopenOs).poll()
     }
 
-    pub fn terminate(&self) -> io::Result<()> {
-        (self as &PopenOs).terminate()
+    pub fn terminate(&mut self) -> io::Result<()> {
+        (self as &mut PopenOs).terminate()
     }
 
-    pub fn kill(&self) -> io::Result<()> {
-        (self as &PopenOs).kill()
+    pub fn kill(&mut self) -> io::Result<()> {
+        (self as &mut PopenOs).kill()
     }
 }
 
@@ -238,8 +238,8 @@ trait PopenOs {
              -> Result<(), PopenError>;
     fn wait(&mut self) -> Result<ExitStatus, PopenError>;
     fn poll(&mut self) -> Option<ExitStatus>;
-    fn terminate(&self) -> io::Result<()>;
-    fn kill(&self) -> io::Result<()>;
+    fn terminate(&mut self) -> io::Result<()>;
+    fn kill(&mut self) -> io::Result<()>;
 
 }
 
@@ -309,11 +309,11 @@ mod os {
             }
         }
 
-        fn terminate(&self) -> io::Result<()> {
+        fn terminate(&mut self) -> io::Result<()> {
             self.send_signal(posix::SIGTERM)
         }
 
-        fn kill(&self) -> io::Result<()> {
+        fn kill(&mut self) -> io::Result<()> {
             self.send_signal(posix::SIGKILL)
         }
     }
@@ -436,16 +436,28 @@ mod os {
             }
         }
 
-        fn terminate(&self) -> io::Result<()> {
-            if let Some(handle_ref) = self.ext_data.handle.as_ref() {
-                win32::TerminateProcess(handle_ref, 1)?;
-                // XXX subprocess.py checks whether the process is
-                // still alive and, if not, ignores ERROR_ACCESS_DENIED
+        fn terminate(&mut self) -> io::Result<()> {
+            if self.ext_data.handle.is_some() {
+                match win32::TerminateProcess(self.ext_data.handle.as_ref().unwrap(), 1) {
+                    Err(err) => {
+                        if err.raw_os_error() != Some(win32::ERROR_ACCESS_DENIED as i32) {
+                            return Err(err);
+                        }
+                        let rc = win32::GetExitCodeProcess(self.ext_data.handle.as_ref().unwrap())?;
+                        if rc == win32::STILL_ACTIVE {
+                            return Err(err);
+                        }
+                        self.exit_status = Some(ExitStatus::Exited(rc));
+                        self._pid = None;
+                        self.ext_data.handle = None;
+                    }
+                    Ok(_) => ()
+                }
             }
             Ok(())
         }
 
-        fn kill(&self) -> io::Result<()> {
+        fn kill(&mut self) -> io::Result<()> {
             self.terminate()
         }
     }

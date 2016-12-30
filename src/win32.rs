@@ -17,7 +17,8 @@ use winapi::minwinbase::{SECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES};
 use winapi::processthreadsapi::*;
 use winapi::winnt::PHANDLE;
 
-pub use winapi::winerror::ERROR_BAD_PATHNAME;
+pub use winapi::winerror::{ERROR_BAD_PATHNAME, ERROR_ACCESS_DENIED};
+pub const STILL_ACTIVE: u32 = 259;
 
 use common::StandardStream;
 
