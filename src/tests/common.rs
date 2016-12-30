@@ -232,3 +232,19 @@ fn merge_err_to_out_file() {
     assert!(p.wait().unwrap() == ExitStatus::Exited(0));
     assert!(read_whole_file(File::open(&tmpname).unwrap()) == "foobar");
 }
+
+#[test]
+fn pipe_1() {
+    let mut c1 = Popen::create(
+        &["printf", "foo\\nbar\\nbaz\\n"], PopenConfig {
+            stdout: Redirection::Pipe, ..Default::default()
+        }).unwrap();
+    let mut c2 = Popen::create(
+        &["wc", "-l"], PopenConfig {
+            stdin: Redirection::File(c1.stdout.take().unwrap()),
+            stdout: Redirection::Pipe,
+            ..Default::default()
+        }).unwrap();
+    let (wcout, _) = c2.communicate(None).unwrap();
+    assert_eq!(wcout.unwrap().trim(), "3");
+}
