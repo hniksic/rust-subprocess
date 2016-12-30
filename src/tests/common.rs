@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::Read;
 use std::io::Write;
 
-use super::super::{Popen, ExitStatus, Redirection};
+use super::super::{Popen, PopenConfig, ExitStatus, Redirection};
 
 pub fn read_whole_file(mut f: File) -> String {
     let mut content = String::new();
@@ -16,27 +16,28 @@ pub fn read_whole_file(mut f: File) -> String {
 
 #[test]
 fn good_cmd() {
-    let mut p = Popen::create(&["true"]).unwrap();
+    let mut p = Popen::create(&["true"], PopenConfig::default()).unwrap();
     assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
 
 #[test]
 fn bad_cmd() {
-    let result = Popen::create(&["nosuchcommand"]);
+    let result = Popen::create(&["nosuchcommand"], PopenConfig::default());
     assert!(result.is_err());
 }
 
 #[test]
 fn err_exit() {
-    let mut p = Popen::create(&["sh", "-c", "exit 13"]).unwrap();
+    let mut p = Popen::create(&["sh", "-c", "exit 13"], PopenConfig::default())
+        .unwrap();
     assert!(p.wait().unwrap() == ExitStatus::Exited(13));
 }
 
 #[test]
 fn read_from_stdout() {
-    let mut p = Popen::create_full(
-        &["echo", "foo"], Redirection::None, Redirection::Pipe, Redirection::None)
-        .unwrap();
+    let mut p = Popen::create(&["echo", "foo"], PopenConfig {
+        stdout: Redirection::Pipe, ..Default::default()
+    }).unwrap();
     assert!(read_whole_file(p.stdout.take().unwrap()) == "foo\n");
     assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
@@ -49,11 +50,11 @@ fn input_from_file() {
         let mut outfile = File::create(&tmpname).unwrap();
         outfile.write_all(b"foo").unwrap();
     }
-    let mut p = Popen::create_full(
-        &[Path::new("cat"), &tmpname],
-        Redirection::File(File::open(&tmpname).unwrap()),
-        Redirection::Pipe, Redirection::None)
-        .unwrap();
+    let mut p = Popen::create(
+        &[Path::new("cat"), &tmpname], PopenConfig {
+            stdin: Redirection::File(File::open(&tmpname).unwrap()),
+            stdout: Redirection::Pipe, ..Default::default()
+        }).unwrap();
     assert!(read_whole_file(p.stdout.take().unwrap()) == "foo");
     assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
@@ -63,10 +64,10 @@ fn output_to_file() {
     let tmpdir = TempDir::new("test").unwrap();
     let tmpname = tmpdir.path().join("output");
     let outfile = File::create(&tmpname).unwrap();
-    let mut p = Popen::create_full(
-        &["printf", "foo"],
-        Redirection::None, Redirection::File(outfile), Redirection::None)
-        .unwrap();
+    let mut p = Popen::create(
+        &["printf", "foo"], PopenConfig {
+            stdout: Redirection::File(outfile), ..Default::default()
+        }).unwrap();
     assert!(p.wait().unwrap() == ExitStatus::Exited(0));
     assert!(read_whole_file(File::open(&tmpname).unwrap()) == "foo");
 }
@@ -80,12 +81,12 @@ fn input_output_from_file() {
         let mut f = File::create(&tmpname_in).unwrap();
         f.write_all(b"foo").unwrap();
     }
-    let mut p = Popen::create_full(
-        &["cat"],
-        Redirection::File(File::open(&tmpname_in).unwrap()),
-        Redirection::File(File::create(&tmpname_out).unwrap()),
-        Redirection::None)
-        .unwrap();
+    let mut p = Popen::create(
+        &["cat"], PopenConfig {
+            stdin: Redirection::File(File::open(&tmpname_in).unwrap()),
+            stdout: Redirection::File(File::create(&tmpname_out).unwrap()),
+            ..Default::default()
+        }).unwrap();
     assert!(p.wait().unwrap() == ExitStatus::Exited(0));
     assert!(read_whole_file(File::open(&tmpname_out).unwrap()) == "foo");
 }
@@ -94,12 +95,12 @@ fn input_output_from_file() {
 fn communicate_input() {
     let tmpdir = TempDir::new("test").unwrap();
     let tmpname = tmpdir.path().join("input");
-    let mut p = Popen::create_full(
-        &["cat"],
-        Redirection::Pipe,
-        Redirection::File(File::create(&tmpname).unwrap()),
-        Redirection::None)
-        .unwrap();
+    let mut p = Popen::create(
+        &["cat"], PopenConfig {
+            stdin: Redirection::Pipe,
+            stdout: Redirection::File(File::create(&tmpname).unwrap()),
+            ..Default::default()
+        }).unwrap();
     if let (None, None) = p.communicate_bytes(Some(b"hello world")).unwrap() {
     } else {
         assert!(false);
@@ -110,10 +111,12 @@ fn communicate_input() {
 
 #[test]
 fn communicate_output() {
-    let mut p = Popen::create_full(
-        &["sh", "-c", "echo foo; echo bar >&2"],
-        Redirection::None, Redirection::Pipe, Redirection::Pipe)
-        .unwrap();
+    let mut p = Popen::create(
+        &["sh", "-c", "echo foo; echo bar >&2"], PopenConfig {
+            stdout: Redirection::Pipe,
+            stderr: Redirection::Pipe,
+            ..Default::default()
+        }).unwrap();
     if let (Some(out), Some(err)) = p.communicate_bytes(None).unwrap() {
         assert_eq!(out, b"foo\n");
         assert_eq!(err, b"bar\n");
@@ -125,10 +128,13 @@ fn communicate_output() {
 
 #[test]
 fn communicate_input_output() {
-    let mut p = Popen::create_full(
-        &["sh", "-c", "cat; echo foo >&2"],
-        Redirection::Pipe, Redirection::Pipe, Redirection::Pipe)
-        .unwrap();
+    let mut p = Popen::create(
+        &["sh", "-c", "cat; echo foo >&2"], PopenConfig {
+            stdin: Redirection::Pipe,
+            stdout: Redirection::Pipe,
+            stderr: Redirection::Pipe,
+            ..Default::default()
+        }).unwrap();
     if let (Some(out), Some(err)) = p.communicate_bytes(Some(b"hello world")).unwrap() {
         assert!(out == b"hello world");
         assert!(err == b"foo\n");
@@ -140,10 +146,13 @@ fn communicate_input_output() {
 
 #[test]
 fn communicate_input_output_long() {
-    let mut p = Popen::create_full(
-        &["sh", "-c", "cat; printf '%100000s' '' >&2"],
-        Redirection::Pipe, Redirection::Pipe, Redirection::Pipe)
-        .unwrap();
+    let mut p = Popen::create(
+        &["sh", "-c", "cat; printf '%100000s' '' >&2"], PopenConfig {
+            stdin: Redirection::Pipe,
+            stdout: Redirection::Pipe,
+            stderr: Redirection::Pipe,
+            ..Default::default()
+        }).unwrap();
     let input = [65u8; 1_000_000];
     if let (Some(out), Some(err)) = p.communicate_bytes(Some(&input)).unwrap() {
         assert!(&out[..] == &input[..]);
@@ -156,10 +165,13 @@ fn communicate_input_output_long() {
 
 #[test]
 fn communicate_input_output_str() {
-    let mut p = Popen::create_full(
-        &["sh", "-c", "cat; echo foo >&2"],
-        Redirection::Pipe, Redirection::Pipe, Redirection::Pipe)
-        .unwrap();
+    let mut p = Popen::create(
+        &["sh", "-c", "cat; echo foo >&2"], PopenConfig {
+            stdin: Redirection::Pipe,
+            stdout: Redirection::Pipe,
+            stderr: Redirection::Pipe,
+            ..Default::default()
+        }).unwrap();
     if let (Some(out), Some(err)) = p.communicate(Some("hello world")).unwrap() {
         assert!(out == "hello world");
         assert!(err == "foo\n");
@@ -171,17 +183,18 @@ fn communicate_input_output_str() {
 
 #[test]
 fn null_byte_in_cmd() {
-    let try_p = Popen::create_full(
-        &["echo\0foo"], Redirection::None, Redirection::None, Redirection::None);
+    let try_p = Popen::create(&["echo\0foo"], PopenConfig::default());
     assert!(try_p.is_err());
 }
 
 #[test]
 fn merge_err_to_out_pipe() {
-    let mut p = Popen::create_full(
-        &["sh", "-c", "echo foo; echo bar >&2"],
-        Redirection::None, Redirection::Pipe, Redirection::Merge)
-        .unwrap();
+    let mut p = Popen::create(
+        &["sh", "-c", "echo foo; echo bar >&2"], PopenConfig {
+            stdout: Redirection::Pipe,
+            stderr: Redirection::Merge,
+            ..Default::default()
+        }).unwrap();
     if let (Some(out), None) = p.communicate_bytes(None).unwrap() {
         assert_eq!(out, b"foo\nbar\n");
     } else {
@@ -192,10 +205,12 @@ fn merge_err_to_out_pipe() {
 
 #[test]
 fn merge_out_to_err_pipe() {
-    let mut p = Popen::create_full(
-        &["sh", "-c", "echo foo; echo bar >&2"],
-        Redirection::None, Redirection::Merge, Redirection::Pipe)
-        .unwrap();
+    let mut p = Popen::create(
+        &["sh", "-c", "echo foo; echo bar >&2"], PopenConfig {
+            stdout: Redirection::Merge,
+            stderr: Redirection::Pipe,
+            ..Default::default()
+        }).unwrap();
     if let (None, Some(err)) = p.communicate_bytes(None).unwrap() {
         assert_eq!(err, b"foo\nbar\n");
     } else {
@@ -208,11 +223,12 @@ fn merge_out_to_err_pipe() {
 fn merge_err_to_out_file() {
     let tmpdir = TempDir::new("test").unwrap();
     let tmpname = tmpdir.path().join("output");
-    let mut p = Popen::create_full(
-        &["sh", "-c", "echo -n foo; echo -n bar >&2"],
-        Redirection::None,
-        Redirection::File(File::create(&tmpname).unwrap()),
-        Redirection::Merge).unwrap();
+    let mut p = Popen::create(
+        &["sh", "-c", "echo -n foo; echo -n bar >&2"], PopenConfig {
+            stdout: Redirection::File(File::create(&tmpname).unwrap()),
+            stderr: Redirection::Merge,
+            ..Default::default()
+        }).unwrap();
     assert!(p.wait().unwrap() == ExitStatus::Exited(0));
     assert!(read_whole_file(File::open(&tmpname).unwrap()) == "foobar");
 }

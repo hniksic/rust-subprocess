@@ -29,12 +29,25 @@ pub enum Redirection {
     Merge,
 }
 
+impl Default for Redirection {
+    fn default() -> Redirection {
+        Redirection::None
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct PopenConfig {
+    pub stdin: Redirection,
+    pub stdout: Redirection,
+    pub stderr: Redirection,
+    // executable, cwd, env, preexec_fn, close_fds...
+}
+
 impl Popen {
-    pub fn create_full<P: AsRef<OsStr>>(
-        args: &[P], stdin: Redirection, stdout: Redirection, stderr: Redirection)
+    pub fn create<S: AsRef<OsStr>>(argv: &[S], config: PopenConfig)
         -> Result<Popen, PopenError>
     {
-        let args: Vec<OsString> = args.iter()
+        let argv: Vec<OsString> = argv.iter()
             .map(|p| p.as_ref().to_owned()).collect();
         let mut inst = Popen {
             _pid: None,
@@ -44,12 +57,8 @@ impl Popen {
             stderr: None,
             ext_data: os::ExtPopenData::default(),
         };
-        inst.start(args, stdin, stdout, stderr)?;
+        inst.start(argv, config.stdin, config.stdout, config.stderr)?;
         Ok(inst)
-    }
-
-    pub fn create<P: AsRef<OsStr>>(args: &[P]) -> Result<Popen, PopenError> {
-        Popen::create_full(args, Redirection::None, Redirection::None, Redirection::None)
     }
 
     pub fn detach(&mut self) {
@@ -199,10 +208,10 @@ impl Popen {
     }
 
     fn start(&mut self,
-             args: Vec<OsString>,
+             argv: Vec<OsString>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
              -> Result<(), PopenError> {
-        (self as &mut PopenOs).start(args, stdin, stdout, stderr)
+        (self as &mut PopenOs).start(argv, stdin, stdout, stderr)
     }
 
     pub fn wait(&mut self) -> Result<ExitStatus, PopenError> {
@@ -224,7 +233,7 @@ impl Popen {
 
 
 trait PopenOs {
-    fn start(&mut self, args: Vec<OsString>,
+    fn start(&mut self, argv: Vec<OsString>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
              -> Result<(), PopenError>;
     fn wait(&mut self) -> Result<ExitStatus, PopenError>;
@@ -250,7 +259,7 @@ mod os {
 
     impl super::PopenOs for Popen {
         fn start(&mut self,
-                 args: Vec<OsString>,
+                 argv: Vec<OsString>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> Result<(), PopenError> {
             let mut exec_fail_pipe = posix::pipe()?;
@@ -261,7 +270,7 @@ mod os {
                 let child_pid = posix::fork()?;
                 if child_pid == 0 {
                     mem::drop(exec_fail_pipe.0);
-                    let result: io::Result<()> = self.do_exec(args, child_ends);
+                    let result: io::Result<()> = self.do_exec(argv, child_ends);
                     // Notify the parent process that exec has failed, and exit.
                     let error_code: i32 = match result {
                         Ok(()) => unreachable!(),
@@ -310,14 +319,14 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn do_exec(&self, args: Vec<OsString>,
+        fn do_exec(&self, argv: Vec<OsString>,
                    child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()>;
         fn waitpid(&mut self, flags: i32) -> io::Result<()>;
         fn send_signal(&self, signal: u8) -> io::Result<()>;
     }
 
     impl PopenOsImpl for Popen {
-        fn do_exec(&self, args: Vec<OsString>,
+        fn do_exec(&self, argv: Vec<OsString>,
                    child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()> {
             let (stdin, stdout, stderr) = child_ends;
             if let Some(stdin) = stdin {
@@ -329,7 +338,7 @@ mod os {
             if let Some(stderr) = stderr {
                 posix::dup2(stderr.as_raw_fd(), 2)?;
             }
-            posix::execvp(&args[0], &args)
+            posix::execvp(&argv[0], &argv)
         }
 
         fn waitpid(&mut self, flags: i32) -> io::Result<()> {
@@ -393,12 +402,12 @@ mod os {
 
     impl super::PopenOs for Popen {
         fn start(&mut self,
-                 args: Vec<OsString>,
+                 argv: Vec<OsString>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> Result<(), PopenError> {
             let (child_stdin, child_stdout, child_stderr)
                 = self.make_child_streams(stdin, stdout, stderr)?;
-            let cmdline = assemble_cmdline(args)?;
+            let cmdline = assemble_cmdline(argv)?;
             let (handle, pid)
                 = win32::CreateProcess(&cmdline, true, 0,
                                        child_stdin, child_stdout, child_stderr,
@@ -472,9 +481,9 @@ mod os {
         win32::CreatePipe(true)
     }
 
-    fn assemble_cmdline(args: Vec<OsString>) -> io::Result<OsString> {
+    fn assemble_cmdline(argv: Vec<OsString>) -> io::Result<OsString> {
         let mut cmdline = Vec::<u16>::new();
-        for arg in args {
+        for arg in argv {
             if arg.encode_wide().any(|c| c == 0) {
                 return Err(io::Error::from_raw_os_error(win32::ERROR_BAD_PATHNAME as i32));
             }

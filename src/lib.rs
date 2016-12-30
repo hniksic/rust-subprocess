@@ -16,7 +16,7 @@ mod win32;
 mod common;
 
 pub use self::common::ExitStatus;
-pub use self::popen::{Popen, Redirection};
+pub use self::popen::{Popen, PopenConfig, Redirection};
 
 
 #[cfg(test)]

@@ -1,10 +1,10 @@
 extern crate subprocess;
 
-use subprocess::{Popen, Redirection};
+use subprocess::{Popen, PopenConfig, Redirection};
 
 fn main() {
-    let mut p = Popen::create_full(&["sh", "-c", "echo foo; echo bar >&2"],
-                               Redirection::None, Redirection::None, Redirection::Merge)
-        .unwrap();
+    let mut p = Popen::create(&["sh", "-c", "echo foo; echo bar >&2"], PopenConfig {
+        stderr: Redirection::Merge, ..Default::default()
+    }).unwrap();
     p.wait().unwrap();
 }
