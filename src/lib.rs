@@ -18,7 +18,7 @@ mod common;
 
 pub use self::common::ExitStatus;
 pub use self::popen::{Popen, PopenConfig, Redirection, PopenError};
-pub use self::popt::Popt;
+pub use self::popt::{Popt, NullFile};
 
 
 #[cfg(test)]

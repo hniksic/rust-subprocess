@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::Read;
 use std::io::Write;
 
-use super::super::{Popen, PopenConfig, ExitStatus, Redirection, Popt};
+use super::super::{Popen, PopenConfig, ExitStatus, Redirection, Popt, NullFile};
 
 pub fn read_whole_file(mut f: File) -> String {
     let mut content = String::new();
@@ -68,7 +68,7 @@ fn input_from_file() {
         outfile.write_all(b"foo").unwrap();
     }
     let mut p = Popt::new("cat").arg(&tmpname)
-        .stdin(Redirection::File(File::open(&tmpname).unwrap()))
+        .stdin(File::open(&tmpname).unwrap())
         .stdout(Redirection::Pipe)
         .spawn()
         .unwrap();
@@ -251,7 +251,7 @@ fn merge_err_to_out_file() {
 }
 
 #[test]
-fn pipe_1() {
+fn simple_pipe() {
     let mut c1 = Popen::create(
         &["printf", "foo\\nbar\\nbaz\\n"], PopenConfig {
             stdout: Redirection::Pipe, ..Default::default()
@@ -264,4 +264,13 @@ fn pipe_1() {
         }).unwrap();
     let (wcout, _) = c2.communicate(None).unwrap();
     assert_eq!(wcout.unwrap().trim(), "3");
+}
+
+#[test]
+fn null_file() {
+    let mut p = Popt::new("cat")
+        .stdin(NullFile).stdout(Redirection::Pipe)
+        .spawn().unwrap();
+    let (out, _) = p.communicate(None).unwrap();
+    assert!(out.unwrap() == "");
 }
