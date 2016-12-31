@@ -4,6 +4,7 @@ use self::tempdir::TempDir;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
+use std::time::Duration;
 
 use super::super::{Popen, PopenConfig, ExitStatus, Redirection, Run, NullFile};
 
@@ -273,4 +274,13 @@ fn null_file() {
         .popen().unwrap();
     let (out, _) = p.communicate(None).unwrap();
     assert!(out.unwrap() == "");
+}
+
+#[test]
+fn wait_timeout() {
+    let mut p = Run::new("sleep").arg("0.5").popen().unwrap();
+    let ret = p.wait_timeout(Duration::from_millis(100)).unwrap();
+    assert!(ret.is_none());
+    let ret = p.wait_timeout(Duration::from_millis(450)).unwrap();
+    assert!(ret == Some(ExitStatus::Exited(0)));
 }

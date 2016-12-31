@@ -1,12 +1,14 @@
 extern crate crossbeam;
 
+use std::result;
 use std::error::Error;
 use std::io;
-use std::io::{Read, Write};
+use std::io::{Read, Write, Result as IoResult};
 use std::fs::File;
 use std::string::FromUtf8Error;
 use std::fmt;
 use std::ffi::{OsStr, OsString};
+use std::time::Duration;
 
 use common::{ExitStatus, StandardStream};
 
@@ -61,7 +63,7 @@ impl Default for PopenConfig {
 
 impl Popen {
     pub fn create<S: AsRef<OsStr>>(argv: &[S], config: PopenConfig)
-        -> Result<Popen, PopenError>
+        -> Result<Popen>
     {
         let argv: Vec<OsString> = argv.iter()
             .map(|p| p.as_ref().to_owned()).collect();
@@ -82,8 +84,8 @@ impl Popen {
     }
 
     fn make_child_streams(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                          -> Result<(Option<File>, Option<File>, Option<File>), PopenError> {
-        fn prepare_pipe(for_write: bool, store_parent_end: &mut Option<File>) -> Result<File, PopenError> {
+                          -> Result<(Option<File>, Option<File>, Option<File>)> {
+        fn prepare_pipe(for_write: bool, store_parent_end: &mut Option<File>) -> Result<File> {
             let (read, write) = os::make_pipe()?;
             let (mut parent_end, child_end) =
                 if for_write {(write, read)} else {(read, write)};
@@ -91,7 +93,7 @@ impl Popen {
             *store_parent_end = Some(parent_end);
             Ok(child_end)
         }
-        fn prepare_file(mut file: File) -> io::Result<File> {
+        fn prepare_file(mut file: File) -> IoResult<File> {
             os::set_inheritable(&mut file, true)?;
             Ok(file)
         }
@@ -123,7 +125,7 @@ impl Popen {
             Redirection::None => None,
         };
 
-        fn dup_child_stream(child_stream: &mut Option<File>, s: StandardStream) -> io::Result<File> {
+        fn dup_child_stream(child_stream: &mut Option<File>, s: StandardStream) -> IoResult<File> {
             if child_stream.is_none() {
                 *child_stream = Some(os::clone_standard_stream(s)?);
             }
@@ -139,21 +141,21 @@ impl Popen {
         Ok((child_stdin, child_stdout, child_stderr))
     }
 
-    fn comm_read(outfile: &mut Option<File>) -> io::Result<Vec<u8>> {
+    fn comm_read(outfile: &mut Option<File>) -> IoResult<Vec<u8>> {
         let mut contents = Vec::new();
         outfile.as_mut().expect("file missing").read_to_end(&mut contents)?;
         outfile.take();
         Ok(contents)
     }
 
-    fn comm_write(infile: &mut Option<File>, input_data: &[u8]) -> io::Result<()> {
+    fn comm_write(infile: &mut Option<File>, input_data: &[u8]) -> IoResult<()> {
         infile.as_mut().expect("file missing").write_all(input_data)?;
         infile.take();
         Ok(())
     }
 
     pub fn communicate_bytes(&mut self, input_data: Option<&[u8]>)
-                             -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+                             -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         match (&mut self.stdin, &mut self.stdout, &mut self.stderr) {
             (mut stdin_ref @ &mut Some(_), &mut None, &mut None) => {
                 let input_data = input_data.expect("must provide input to redirected stdin");
@@ -190,7 +192,7 @@ impl Popen {
     }
 
     pub fn communicate(&mut self, input_data: Option<&str>)
-                       -> Result<(Option<String>, Option<String>), PopenError> {
+                       -> Result<(Option<String>, Option<String>)> {
         let (out, err) = self.communicate_bytes(input_data.map(|s| s.as_bytes()))?;
         let out_str = if let Some(out_vec) = out {
             Some(String::from_utf8(out_vec)?)
@@ -208,23 +210,27 @@ impl Popen {
     fn start(&mut self,
              argv: Vec<OsString>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
-             -> Result<(), PopenError> {
+             -> Result<()> {
         (self as &mut PopenOs).start(argv, stdin, stdout, stderr)
     }
 
-    pub fn wait(&mut self) -> Result<ExitStatus, PopenError> {
+    pub fn wait(&mut self) -> Result<ExitStatus> {
         (self as &mut PopenOs).wait()
+    }
+
+    pub fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
+        (self as &mut PopenOs).wait_timeout(dur)
     }
 
     pub fn poll(&mut self) -> Option<ExitStatus> {
         (self as &mut PopenOs).poll()
     }
 
-    pub fn terminate(&mut self) -> io::Result<()> {
+    pub fn terminate(&mut self) -> IoResult<()> {
         (self as &mut PopenOs).terminate()
     }
 
-    pub fn kill(&mut self) -> io::Result<()> {
+    pub fn kill(&mut self) -> IoResult<()> {
         (self as &mut PopenOs).kill()
     }
 }
@@ -233,11 +239,12 @@ impl Popen {
 trait PopenOs {
     fn start(&mut self, argv: Vec<OsString>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
-             -> Result<(), PopenError>;
-    fn wait(&mut self) -> Result<ExitStatus, PopenError>;
+             -> Result<()>;
+    fn wait(&mut self) -> Result<ExitStatus>;
+    fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>>;
     fn poll(&mut self) -> Option<ExitStatus>;
-    fn terminate(&mut self) -> io::Result<()>;
-    fn kill(&mut self) -> io::Result<()>;
+    fn terminate(&mut self) -> IoResult<()>;
+    fn kill(&mut self) -> IoResult<()>;
 
 }
 
@@ -245,13 +252,14 @@ trait PopenOs {
 mod os {
     use super::*;
     use std::io;
-    use std::io::{Read, Write};
+    use std::io::{Read, Write, Result as IoResult};
     use std::fs::File;
     use posix;
     use std::mem;
     use std::os::unix::io::AsRawFd;
     use common::ExitStatus;
     use std::ffi::OsString;
+    use std::time::Duration;
 
     pub type ExtPopenData = ();
 
@@ -259,7 +267,7 @@ mod os {
         fn start(&mut self,
                  argv: Vec<OsString>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                 -> Result<(), PopenError> {
+                 -> Result<()> {
             let mut exec_fail_pipe = posix::pipe()?;
             set_inheritable(&mut exec_fail_pipe.0, false)?;
             set_inheritable(&mut exec_fail_pipe.1, false)?;
@@ -268,7 +276,7 @@ mod os {
                 let child_pid = posix::fork()?;
                 if child_pid == 0 {
                     mem::drop(exec_fail_pipe.0);
-                    let result: io::Result<()> = self.do_exec(argv, child_ends);
+                    let result: IoResult<()> = self.do_exec(argv, child_ends);
                     // Notify the parent process that exec has failed, and exit.
                     let error_code: i32 = match result {
                         Ok(()) => unreachable!(),
@@ -293,11 +301,38 @@ mod os {
             }
         }
 
-        fn wait(&mut self) -> Result<ExitStatus, PopenError> {
+        fn wait(&mut self) -> Result<ExitStatus> {
             while let None = self.exit_status {
                 self.waitpid(0)?;
             }
             Ok(self.exit_status.unwrap())
+        }
+
+        fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
+            use std::cmp::min;
+            use std::time::{Instant, Duration};
+            use std::thread;
+
+            if self.exit_status.is_some() {
+                return Ok(self.exit_status);
+            }
+
+            let deadline = Instant::now() + dur;
+            // delay doubles at every iteration, so initial delay will be 1ms
+            let mut delay = Duration::new(0, 500_000);
+            loop {
+                self.waitpid(posix::WNOHANG)?;
+                if self.exit_status.is_some() {
+                    return Ok(self.exit_status);
+                }
+                let now = Instant::now();
+                if now >= deadline {
+                    return Ok(None);
+                }
+                let remaining = deadline.duration_since(now);
+                delay = min(delay * 2, min(remaining, Duration::from_millis(100)));
+                thread::sleep(delay);
+            }
         }
 
         fn poll(&mut self) -> Option<ExitStatus> {
@@ -307,25 +342,25 @@ mod os {
             }
         }
 
-        fn terminate(&mut self) -> io::Result<()> {
+        fn terminate(&mut self) -> IoResult<()> {
             self.send_signal(posix::SIGTERM)
         }
 
-        fn kill(&mut self) -> io::Result<()> {
+        fn kill(&mut self) -> IoResult<()> {
             self.send_signal(posix::SIGKILL)
         }
     }
 
     trait PopenOsImpl: super::PopenOs {
         fn do_exec(&self, argv: Vec<OsString>,
-                   child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()>;
-        fn waitpid(&mut self, flags: i32) -> io::Result<()>;
-        fn send_signal(&self, signal: u8) -> io::Result<()>;
+                   child_ends: (Option<File>, Option<File>, Option<File>)) -> IoResult<()>;
+        fn waitpid(&mut self, flags: i32) -> IoResult<()>;
+        fn send_signal(&self, signal: u8) -> IoResult<()>;
     }
 
     impl PopenOsImpl for Popen {
         fn do_exec(&self, argv: Vec<OsString>,
-                   child_ends: (Option<File>, Option<File>, Option<File>)) -> io::Result<()> {
+                   child_ends: (Option<File>, Option<File>, Option<File>)) -> IoResult<()> {
             let (stdin, stdout, stderr) = child_ends;
             if let Some(stdin) = stdin {
                 posix::dup2(stdin.as_raw_fd(), 0)?;
@@ -339,7 +374,7 @@ mod os {
             posix::execvp(&argv[0], &argv)
         }
 
-        fn waitpid(&mut self, flags: i32) -> io::Result<()> {
+        fn waitpid(&mut self, flags: i32) -> IoResult<()> {
             match self._pid {
                 Some(pid) => {
                     // XXX handle some kinds of error - at least ECHILD and EINTR
@@ -354,7 +389,7 @@ mod os {
             Ok(())
         }
 
-        fn send_signal(&self, signal: u8) -> io::Result<()> {
+        fn send_signal(&self, signal: u8) -> IoResult<()> {
             match self._pid {
                 Some(pid) => {
                     posix::kill(pid, signal)
@@ -364,7 +399,7 @@ mod os {
         }
     }
 
-    pub fn set_inheritable(f: &mut File, inheritable: bool) -> io::Result<()> {
+    pub fn set_inheritable(f: &mut File, inheritable: bool) -> IoResult<()> {
         if inheritable {
             // Unix pipes are inheritable by default.
         } else {
@@ -375,7 +410,7 @@ mod os {
         Ok(())
     }
 
-    pub fn make_pipe() -> io::Result<(File, File)> {
+    pub fn make_pipe() -> IoResult<(File, File)> {
         posix::pipe()
     }
 
@@ -392,6 +427,8 @@ mod os {
     use common::{ExitStatus, StandardStream};
     use std::ffi::{OsStr, OsString};
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::time::Duration;
+    use std::io::Result as IoResult;
 
     #[derive(Debug, Default)]
     pub struct ExtPopenData {
@@ -402,7 +439,7 @@ mod os {
         fn start(&mut self,
                  argv: Vec<OsString>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                 -> Result<(), PopenError> {
+                 -> Result<()> {
             let (mut child_stdin, mut child_stdout, mut child_stderr)
                 = self.make_child_streams(stdin, stdout, stderr)?;
             ensure_child_stream(&mut child_stdin, StandardStream::Input)?;
@@ -418,7 +455,7 @@ mod os {
             Ok(())
         }
 
-        fn wait(&mut self) -> Result<ExitStatus, PopenError> {
+        fn wait(&mut self) -> Result<ExitStatus> {
             self.wait_handle(None)?;
             match self.exit_status {
                 Some(exit_status) => Ok(exit_status),
@@ -430,6 +467,15 @@ mod os {
             }
         }
 
+        fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
+            if self.exit_status.is_some() {
+                return Ok(self.exit_status);
+            }
+            self.wait_handle(Some(dur.as_secs() as f64
+                                  + dur.subsec_nanos() as f64 * 1e-9))?;
+            Ok(self.exit_status)
+        }
+
         fn poll(&mut self) -> Option<ExitStatus> {
             match self.wait_handle(Some(0.0)) {
                 Ok(_) => self.exit_status,
@@ -437,7 +483,7 @@ mod os {
             }
         }
 
-        fn terminate(&mut self) -> io::Result<()> {
+        fn terminate(&mut self) -> IoResult<()> {
             if self.ext_data.handle.is_some() {
                 match win32::TerminateProcess(self.ext_data.handle.as_ref().unwrap(), 1) {
                     Err(err) => {
@@ -458,17 +504,17 @@ mod os {
             Ok(())
         }
 
-        fn kill(&mut self) -> io::Result<()> {
+        fn kill(&mut self) -> IoResult<()> {
             self.terminate()
         }
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn wait_handle(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>>;
+        fn wait_handle(&mut self, timeout: Option<f64>) -> IoResult<Option<ExitStatus>>;
     }
 
     impl PopenOsImpl for Popen {
-        fn wait_handle(&mut self, timeout: Option<f64>) -> io::Result<Option<ExitStatus>> {
+        fn wait_handle(&mut self, timeout: Option<f64>) -> IoResult<Option<ExitStatus>> {
             if self.ext_data.handle.is_some() {
                 let timeout = timeout.map(|t| (t * 1000.0) as u32);
                 let event = win32::WaitForSingleObject(
@@ -485,7 +531,7 @@ mod os {
     }
 
     fn ensure_child_stream(stream: &mut Option<File>, which: StandardStream)
-                           -> io::Result<()> {
+                           -> IoResult<()> {
         // If no stream is sent to CreateProcess, the child doesn't
         // get a valid stream.  This results in
         // Run("sh").arg("-c").arg("echo foo >&2").stream_stderr()
@@ -497,17 +543,17 @@ mod os {
         Ok(())
     }
 
-    pub fn set_inheritable(f: &mut File, inheritable: bool) -> io::Result<()> {
+    pub fn set_inheritable(f: &mut File, inheritable: bool) -> IoResult<()> {
         win32::SetHandleInformation(f, win32::HANDLE_FLAG_INHERIT,
                                          if inheritable {1} else {0})?;
         Ok(())
     }
 
-    pub fn make_pipe() -> io::Result<(File, File)> {
+    pub fn make_pipe() -> IoResult<(File, File)> {
         win32::CreatePipe(true)
     }
 
-    fn assemble_cmdline(argv: Vec<OsString>) -> io::Result<OsString> {
+    fn assemble_cmdline(argv: Vec<OsString>) -> IoResult<OsString> {
         let mut cmdline = Vec::<u16>::new();
         for arg in argv {
             if arg.encode_wide().any(|c| c == 0) {
@@ -623,3 +669,5 @@ impl fmt::Display for PopenError {
         }
     }
 }
+
+pub type Result<T> = result::Result<T, PopenError>;
