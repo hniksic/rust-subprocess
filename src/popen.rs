@@ -553,7 +553,7 @@ impl Drop for Popen {
     fn drop(&mut self) {
         // drop() is invoked if a try! fails during construction, in which
         // case wait() would panic because an exit status cannot be obtained.
-        if self.exit_status.is_some() {
+        if self.exit_status.is_none() {
             // XXX Log error occurred during wait()?
             self.wait().ok();
         }
