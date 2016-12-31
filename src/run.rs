@@ -1,5 +1,6 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
+use std::io::{Result as IoResult, Read, Write};
 
 use popen::{PopenConfig, Popen, PopenError, Redirection};
 
@@ -90,6 +91,8 @@ impl Run {
         self
     }
 
+    // Terminators
+
     pub fn popen(mut self) -> Result<Popen, PopenError> {
         self.args.insert(0, self.command);
         let mut p = Popen::create(&self.args, self.config)?;
@@ -97,5 +100,71 @@ impl Run {
             p.detach();
         }
         Ok(p)
+    }
+
+    pub fn stream_stdout(self) -> Result<Box<Read>, PopenError> {
+        if let Redirection::Pipe = self.config.stdout {}
+        else {
+            panic!("cannot read from non-redirected stdout");
+        }
+        let p = self.popen()?;
+        Ok(Box::new(ReadOutAdapter(p)))
+    }
+
+    pub fn stream_stderr(self) -> Result<Box<Read>, PopenError> {
+        if let Redirection::Pipe = self.config.stderr {}
+        else {
+            panic!("cannot read from non-redirected stderr");
+        }
+        let p = self.popen()?;
+        Ok(Box::new(ReadErrAdapter(p)))
+    }
+
+    pub fn stream_stdin(self) -> Result<Box<Write>, PopenError> {
+        if let Redirection::Pipe = self.config.stdin {}
+        else {
+            panic!("cannot write to non-redirected stdin");
+        }
+        let p = self.popen()?;
+        Ok(Box::new(WriteAdapter(p)))
+    }
+}
+
+struct ReadOutAdapter(Popen);
+
+impl Read for ReadOutAdapter {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+        self.0.stdout.as_mut().unwrap().read(buf)
+    }
+}
+
+struct ReadErrAdapter(Popen);
+
+impl Read for ReadErrAdapter {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+        self.0.stderr.as_mut().unwrap().read(buf)
+    }
+}
+
+struct WriteAdapter(Popen);
+
+impl Write for WriteAdapter {
+    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+        self.0.stdin.as_mut().unwrap().write(buf)
+    }
+    fn flush(&mut self) -> IoResult<()> {
+        self.0.stdin.as_mut().unwrap().flush()
+    }
+}
+
+// We must implement Drop in order to close the stream.  The typical
+// use case for stream_stdin() is a process that reads something from
+// stdin.  WriteAdapter going out of scope invokes Popen::drop(),
+// which waits for the process to exit.  Without closing stdin, this
+// deadlocks because the child process hangs reading its stdin.
+
+impl Drop for WriteAdapter {
+    fn drop(&mut self) {
+        self.0.stdin.take();
     }
 }

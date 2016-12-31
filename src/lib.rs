@@ -28,4 +28,5 @@ mod tests {
     mod posix;
     #[cfg(windows)]
     mod win32;
+    mod run;
 }

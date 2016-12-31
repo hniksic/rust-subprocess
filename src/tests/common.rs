@@ -7,7 +7,7 @@ use std::io::Write;
 
 use super::super::{Popen, PopenConfig, ExitStatus, Redirection, Run, NullFile};
 
-pub fn read_whole_file(mut f: File) -> String {
+pub fn read_whole_file<T: Read>(mut f: T) -> String {
     let mut content = String::new();
     f.read_to_string(&mut content).unwrap();
     content
