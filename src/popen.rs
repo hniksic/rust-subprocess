@@ -389,7 +389,7 @@ mod os {
     use std::io;
     use std::fs::File;
     use win32;
-    use common::ExitStatus;
+    use common::{ExitStatus, StandardStream};
     use std::ffi::{OsStr, OsString};
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
@@ -403,8 +403,11 @@ mod os {
                  argv: Vec<OsString>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> Result<(), PopenError> {
-            let (child_stdin, child_stdout, child_stderr)
+            let (mut child_stdin, mut child_stdout, mut child_stderr)
                 = self.make_child_streams(stdin, stdout, stderr)?;
+            ensure_child_stream(&mut child_stdin, StandardStream::Input)?;
+            ensure_child_stream(&mut child_stdout, StandardStream::Output)?;
+            ensure_child_stream(&mut child_stderr, StandardStream::Error)?;
             let cmdline = assemble_cmdline(argv)?;
             let (handle, pid)
                 = win32::CreateProcess(&cmdline, true, 0,
@@ -479,6 +482,19 @@ mod os {
             }
             Ok(self.exit_status)
         }
+    }
+
+    fn ensure_child_stream(stream: &mut Option<File>, which: StandardStream)
+                           -> io::Result<()> {
+        // If no stream is sent to CreateProcess, the child doesn't
+        // get a valid stream.  This results in
+        // Run("sh").arg("-c").arg("echo foo >&2").stream_stderr()
+        // failing because the shell tries to redirect stdout to
+        // stderr, but fails because it didn't receive a valid stdout.
+        if stream.is_none() {
+            *stream = Some(clone_standard_stream(which)?);
+        }
+        Ok(())
     }
 
     pub fn set_inheritable(f: &mut File, inheritable: bool) -> io::Result<()> {
