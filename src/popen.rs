@@ -123,33 +123,15 @@ impl Popen {
         Ok((child_stdin, child_stdout, child_stderr))
     }
 
-    fn read_chunk(f: &mut File, append_to: &mut Vec<u8>) -> io::Result<bool> {
-        let mut buf = [0u8; 8192];
-        let cnt = f.read(&mut buf)?;
-        if cnt != 0 {
-            append_to.extend_from_slice(&buf[..cnt]);
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
     fn comm_read(outfile: &mut Option<File>) -> io::Result<Vec<u8>> {
         let mut contents = Vec::new();
-        {
-            let outfile = outfile.as_mut().expect("file missing");
-            while Popen::read_chunk(outfile, &mut contents)? {
-            }
-        }
+        outfile.as_mut().expect("file missing").read_to_end(&mut contents)?;
         outfile.take();
         Ok(contents)
     }
 
     fn comm_write(infile: &mut Option<File>, input_data: &[u8]) -> io::Result<()> {
-        {
-            let infile = infile.as_mut().expect("file missing");
-            infile.write_all(input_data)?;
-        }
+        infile.as_mut().expect("file missing").write_all(input_data)?;
         infile.take();
         Ok(())
     }
