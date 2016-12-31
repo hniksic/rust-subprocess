@@ -207,6 +207,14 @@ impl Popen {
         self._pid
     }
 
+    pub fn poll(&mut self) -> Option<ExitStatus> {
+        if self.wait_timeout(Duration::from_secs(0)).is_err() {
+            None
+        } else {
+            self.exit_status
+        }
+    }
+
     fn start(&mut self,
              argv: Vec<OsString>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
@@ -220,10 +228,6 @@ impl Popen {
 
     pub fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
         (self as &mut PopenOs).wait_timeout(dur)
-    }
-
-    pub fn poll(&mut self) -> Option<ExitStatus> {
-        (self as &mut PopenOs).poll()
     }
 
     pub fn terminate(&mut self) -> IoResult<()> {
@@ -242,7 +246,6 @@ trait PopenOs {
              -> Result<()>;
     fn wait(&mut self) -> Result<ExitStatus>;
     fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>>;
-    fn poll(&mut self) -> Option<ExitStatus>;
     fn terminate(&mut self) -> IoResult<()>;
     fn kill(&mut self) -> IoResult<()>;
 
@@ -332,13 +335,6 @@ mod os {
                 let remaining = deadline.duration_since(now);
                 delay = min(delay * 2, min(remaining, Duration::from_millis(100)));
                 thread::sleep(delay);
-            }
-        }
-
-        fn poll(&mut self) -> Option<ExitStatus> {
-            match self.waitpid(posix::WNOHANG) {
-                Ok(_) => self.exit_status,
-                Err(_) => None
             }
         }
 
@@ -474,13 +470,6 @@ mod os {
             self.wait_handle(Some(dur.as_secs() as f64
                                   + dur.subsec_nanos() as f64 * 1e-9))?;
             Ok(self.exit_status)
-        }
-
-        fn poll(&mut self) -> Option<ExitStatus> {
-            match self.wait_handle(Some(0.0)) {
-                Ok(_) => self.exit_status,
-                Err(_) => None
-            }
         }
 
         fn terminate(&mut self) -> IoResult<()> {
