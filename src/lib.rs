@@ -6,7 +6,7 @@ extern crate kernel32;
 extern crate winapi;
 
 mod popen;
-mod popt;
+mod run;
 
 #[cfg(unix)]
 mod posix;
@@ -18,7 +18,7 @@ mod common;
 
 pub use self::common::ExitStatus;
 pub use self::popen::{Popen, PopenConfig, Redirection, PopenError};
-pub use self::popt::{Popt, NullFile};
+pub use self::run::{Run, NullFile};
 
 
 #[cfg(test)]

@@ -3,7 +3,7 @@ use std::fs::{File, OpenOptions};
 
 use popen::{PopenConfig, Popen, PopenError, Redirection};
 
-pub struct Popt {
+pub struct Run {
     command: OsString,
     args: Vec<OsString>,
     config: PopenConfig,
@@ -50,9 +50,9 @@ impl IntoRedirection for NullFile {
     }
 }
 
-impl Popt {
-    pub fn new<S: AsRef<OsStr>>(command: S) -> Popt {
-        Popt {
+impl Run {
+    pub fn new<S: AsRef<OsStr>>(command: S) -> Run {
+        Run {
             command: command.as_ref().to_owned(),
             args: vec![],
             config: PopenConfig::default(),
@@ -60,37 +60,37 @@ impl Popt {
         }
     }
 
-    pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Popt {
+    pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Run {
         self.args.push(arg.as_ref().to_owned());
         self
     }
 
-    pub fn args<S: AsRef<OsStr>>(mut self, args: &[S]) -> Popt {
+    pub fn args<S: AsRef<OsStr>>(mut self, args: &[S]) -> Run {
         self.args.extend(args.iter().map(|x| x.as_ref().to_owned()));
         self
     }
 
-    pub fn detached(mut self) -> Popt {
+    pub fn detached(mut self) -> Run {
         self.detached = true;
         self
     }
 
-    pub fn stdin<T: IntoRedirection>(mut self, stdin: T) -> Popt {
+    pub fn stdin<T: IntoRedirection>(mut self, stdin: T) -> Run {
         self.config.stdin = stdin.into_redirection(false);
         self
     }
 
-    pub fn stdout<T: IntoRedirection>(mut self, stdout: T) -> Popt {
+    pub fn stdout<T: IntoRedirection>(mut self, stdout: T) -> Run {
         self.config.stdout = stdout.into_redirection(true);
         self
     }
 
-    pub fn stderr<T: IntoRedirection>(mut self, stderr: T) -> Popt {
+    pub fn stderr<T: IntoRedirection>(mut self, stderr: T) -> Run {
         self.config.stderr = stderr.into_redirection(true);
         self
     }
 
-    pub fn spawn(mut self) -> Result<Popen, PopenError> {
+    pub fn popen(mut self) -> Result<Popen, PopenError> {
         self.args.insert(0, self.command);
         let mut p = Popen::create(&self.args, self.config)?;
         if self.detached {

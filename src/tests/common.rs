@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::Read;
 use std::io::Write;
 
-use super::super::{Popen, PopenConfig, ExitStatus, Redirection, Popt, NullFile};
+use super::super::{Popen, PopenConfig, ExitStatus, Redirection, Run, NullFile};
 
 pub fn read_whole_file(mut f: File) -> String {
     let mut content = String::new();
@@ -34,7 +34,7 @@ fn err_exit() {
 
 #[test]
 fn terminate() {
-    let mut p = Popt::new("sleep").arg("1000").spawn().unwrap();
+    let mut p = Run::new("sleep").arg("1000").popen().unwrap();
     p.terminate().unwrap();
     p.wait().unwrap();
 }
@@ -44,7 +44,7 @@ fn terminate_twice() {
     use std::thread;
     use std::time::Duration;
 
-    let mut p = Popt::new("sleep").arg("1000").spawn().unwrap();
+    let mut p = Run::new("sleep").arg("1000").popen().unwrap();
     p.terminate().unwrap();
     thread::sleep(Duration::from_millis(100));
     p.terminate().unwrap();
@@ -67,10 +67,10 @@ fn input_from_file() {
         let mut outfile = File::create(&tmpname).unwrap();
         outfile.write_all(b"foo").unwrap();
     }
-    let mut p = Popt::new("cat").arg(&tmpname)
+    let mut p = Run::new("cat").arg(&tmpname)
         .stdin(File::open(&tmpname).unwrap())
         .stdout(Redirection::Pipe)
-        .spawn()
+        .popen()
         .unwrap();
     assert!(read_whole_file(p.stdout.take().unwrap()) == "foo");
     assert!(p.wait().unwrap() == ExitStatus::Exited(0));
@@ -268,9 +268,9 @@ fn simple_pipe() {
 
 #[test]
 fn null_file() {
-    let mut p = Popt::new("cat")
+    let mut p = Run::new("cat")
         .stdin(NullFile).stdout(Redirection::Pipe)
-        .spawn().unwrap();
+        .popen().unwrap();
     let (out, _) = p.communicate(None).unwrap();
     assert!(out.unwrap() == "");
 }
