@@ -35,12 +35,28 @@ impl Default for Redirection {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PopenConfig {
+    // Force construction using ..Default::default(), so we can add
+    // new public fields without breaking code
+    pub _use_default_to_construct: (),
+
     pub stdin: Redirection,
     pub stdout: Redirection,
     pub stderr: Redirection,
+
     // executable, cwd, env, preexec_fn, close_fds...
+}
+
+impl Default for PopenConfig {
+    fn default() -> PopenConfig {
+        PopenConfig {
+            _use_default_to_construct: (),
+            stdin: Redirection::None,
+            stdout: Redirection::None,
+            stderr: Redirection::None,
+        }
+    }
 }
 
 impl Popen {
