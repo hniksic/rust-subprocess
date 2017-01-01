@@ -51,9 +51,26 @@ fn pipeline_run() {
 }
 
 #[test]
-fn pipeline_stream() {
+fn pipeline_stream_out() {
     let stream = {
         Run::new("echo").arg("foo\nbar") | Run::new("wc").arg("-l")
     }.stdout(Redirection::Pipe).stream_stdout().unwrap();
     assert!(read_whole_file(stream).trim() == "2");
+}
+
+#[test]
+fn pipeline_stream_in() {
+    let tmpdir = TempDir::new("test").unwrap();
+    let tmpname = tmpdir.path().join("output");
+    {
+        let mut stream = {
+            Run::new("cat")
+          | Run::new("wc").arg("-l")
+        }
+        .stdout(File::create(&tmpname).unwrap())
+            .stdin(Redirection::Pipe)
+            .stream_stdin().unwrap();
+        stream.write_all(b"foo\nbar\nbaz\n").unwrap();
+    }
+    assert_eq!(read_whole_file(File::open(&tmpname).unwrap()).trim(), "3");
 }

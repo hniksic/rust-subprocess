@@ -77,16 +77,25 @@ impl Run {
     }
 
     pub fn stdin<T: IntoRedirection>(mut self, stdin: T) -> Run {
+        if let Redirection::None = self.config.stdin {} else {
+            panic!("stdin is already set");
+        }
         self.config.stdin = stdin.into_redirection(false);
         self
     }
 
     pub fn stdout<T: IntoRedirection>(mut self, stdout: T) -> Run {
+        if let Redirection::None = self.config.stdout {} else {
+            panic!("stdout is already set");
+        }
         self.config.stdout = stdout.into_redirection(true);
         self
     }
 
     pub fn stderr<T: IntoRedirection>(mut self, stderr: T) -> Run {
+        if let Redirection::None = self.config.stderr {} else {
+            panic!("stderr is already set");
+        }
         self.config.stderr = stderr.into_redirection(true);
         self
     }
@@ -254,10 +263,7 @@ impl Pipeline {
         else {
             panic!("cannot write to non-redirected stdin");
         }
-        let mut v = self.popen()?;
-        let vlen = v.len();
-        let last = v.drain(vlen - 1..).next().unwrap();
-        Ok(Box::new(WriteAdapter(last)))
+        Ok(Box::new(WritePipelineAdapter(self.popen()?)))
     }
 }
 
@@ -266,5 +272,32 @@ impl BitOr<Run> for Pipeline {
 
     fn bitor(self, rhs: Run) -> Pipeline {
         self.add(rhs)
+    }
+}
+
+#[derive(Debug)]
+struct WritePipelineAdapter(Vec<Popen>);
+
+impl WritePipelineAdapter {
+    fn stdin(&mut self) -> &mut File {
+        let ref mut first = self.0[0];
+        first.stdin.as_mut().unwrap()
+    }
+}
+
+impl Write for WritePipelineAdapter {
+    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+        self.stdin().write(buf)
+    }
+    fn flush(&mut self) -> IoResult<()> {
+        self.stdin().flush()
+    }
+}
+
+impl Drop for WritePipelineAdapter {
+    // the same rationale as Drop for WriteAdapter
+    fn drop(&mut self) {
+        let ref mut first = self.0[0];
+        first.stdin.take();
     }
 }
