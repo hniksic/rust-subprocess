@@ -8,7 +8,6 @@ pub struct Run {
     command: OsString,
     args: Vec<OsString>,
     config: PopenConfig,
-    detached: bool,
 }
 
 #[cfg(unix)]
@@ -57,7 +56,6 @@ impl Run {
             command: command.as_ref().to_owned(),
             args: vec![],
             config: PopenConfig::default(),
-            detached: false,
         }
     }
 
@@ -72,7 +70,7 @@ impl Run {
     }
 
     pub fn detached(mut self) -> Run {
-        self.detached = true;
+        self.config.detached = true;
         self
     }
 
@@ -95,10 +93,7 @@ impl Run {
 
     pub fn popen(mut self) -> Result<Popen, PopenError> {
         self.args.insert(0, self.command);
-        let mut p = Popen::create(&self.args, self.config)?;
-        if self.detached {
-            p.detach();
-        }
+        let p = Popen::create(&self.args, self.config)?;
         Ok(p)
     }
 
