@@ -261,10 +261,8 @@ impl Pipeline {
     }
 
     pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
-        let mut v = self.stdout(Redirection::Pipe).popen()?;
-        let vlen = v.len();
-        let last = v.drain(vlen - 1..).next().unwrap();
-        Ok(Box::new(ReadOutAdapter(last)))
+        let v = self.stdout(Redirection::Pipe).popen()?;
+        Ok(Box::new(ReadPipelineAdapter(v)))
     }
 
     pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
@@ -292,11 +290,21 @@ impl BitOr<Run> for Pipeline {
 }
 
 #[derive(Debug)]
+struct ReadPipelineAdapter(Vec<Popen>);
+
+impl Read for ReadPipelineAdapter {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+        let last = self.0.last_mut().unwrap();
+        last.stdout.as_mut().unwrap().read(buf)
+    }
+}
+
+#[derive(Debug)]
 struct WritePipelineAdapter(Vec<Popen>);
 
 impl WritePipelineAdapter {
     fn stdin(&mut self) -> &mut File {
-        let ref mut first = self.0[0];
+        let first = self.0.first_mut().unwrap();
         first.stdin.as_mut().unwrap()
     }
 }
