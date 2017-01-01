@@ -41,11 +41,19 @@ fn stream_stdin() {
 }
 
 #[test]
-fn pipeline_simple() {
+fn pipeline_run() {
     let mut processes = {
         Run::new("echo").arg("foo\nbar") | Run::new("wc").arg("-l")
     }
     .stdout(Redirection::Pipe).popen().unwrap();
     let (output, _) = processes[1].communicate(None).unwrap();
     assert!(output.unwrap().trim() == "2");
+}
+
+#[test]
+fn pipeline_stream() {
+    let stream = {
+        Run::new("echo").arg("foo\nbar") | Run::new("wc").arg("-l")
+    }.stdout(Redirection::Pipe).stream_stdout().unwrap();
+    assert!(read_whole_file(stream).trim() == "2");
 }

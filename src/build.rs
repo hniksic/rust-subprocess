@@ -209,6 +209,8 @@ impl Pipeline {
         self
     }
 
+    // Terminators:
+
     pub fn popen(mut self) -> PopenResult<Vec<Popen>> {
         if self.cmds.is_empty() {
             panic!("empty pipeline");
@@ -234,6 +236,28 @@ impl Pipeline {
             ret.push(runner.popen()?);
         }
         Ok(ret)
+    }
+
+    pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
+        if let Redirection::Pipe = self.stdout {}
+        else {
+            panic!("cannot read from non-redirected stdout");
+        }
+        let mut v = self.popen()?;
+        let vlen = v.len();
+        let last = v.drain(vlen - 1..).next().unwrap();
+        Ok(Box::new(ReadOutAdapter(last)))
+    }
+
+    pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
+        if let Redirection::Pipe = self.stdin {}
+        else {
+            panic!("cannot write to non-redirected stdin");
+        }
+        let mut v = self.popen()?;
+        let vlen = v.len();
+        let last = v.drain(vlen - 1..).next().unwrap();
+        Ok(Box::new(WriteAdapter(last)))
     }
 }
 
