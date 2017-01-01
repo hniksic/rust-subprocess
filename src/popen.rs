@@ -33,6 +33,17 @@ pub enum Redirection {
     Merge,
 }
 
+impl Redirection {
+    pub fn try_clone(&self) -> IoResult<Redirection> {
+        Ok(match self {
+            &Redirection::File(ref f) => Redirection::File(f.try_clone()?),
+            &Redirection::None => Redirection::None,
+            &Redirection::Pipe => Redirection::Pipe,
+            &Redirection::Merge => Redirection::Merge,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct PopenConfig {
     // Force construction using ..Default::default(), so we can add
@@ -45,6 +56,18 @@ pub struct PopenConfig {
     pub detached: bool,
 
     // executable, cwd, env, preexec_fn, close_fds...
+}
+
+impl PopenConfig {
+    pub fn try_clone(&self) -> IoResult<PopenConfig> {
+        Ok(PopenConfig {
+            _use_default_to_construct: (),
+            stdin: self.stdin.try_clone()?,
+            stdout: self.stdout.try_clone()?,
+            stderr: self.stderr.try_clone()?,
+            detached: self.detached,
+        })
+    }
 }
 
 impl Default for PopenConfig {

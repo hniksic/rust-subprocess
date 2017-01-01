@@ -139,6 +139,16 @@ impl Run {
     }
 }
 
+impl Clone for Run {
+    fn clone(&self) -> Run {
+        Run {
+            command: self.command.clone(),
+            args: self.args.clone(),
+            config: self.config.try_clone().unwrap(),
+        }
+    }
+}
+
 impl BitOr for Run {
     type Output = Pipeline;
 
@@ -260,6 +270,16 @@ impl Pipeline {
     pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
         let v = self.stdin(Redirection::Pipe).popen()?;
         Ok(Box::new(WritePipelineAdapter(v)))
+    }
+}
+
+impl Clone for Pipeline {
+    fn clone(&self) -> Pipeline {
+        Pipeline {
+            cmds: self.cmds.clone(),
+            stdin: self.stdin.try_clone().unwrap(),
+            stdout: self.stdout.try_clone().unwrap(),
+        }
     }
 }
 
