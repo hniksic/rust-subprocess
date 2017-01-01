@@ -289,6 +289,16 @@ impl BitOr<Run> for Pipeline {
     }
 }
 
+impl BitOr for Pipeline {
+    type Output = Pipeline;
+
+    fn bitor(mut self, rhs: Pipeline) -> Pipeline {
+        self.cmds.extend(rhs.cmds);
+        self.stdout = rhs.stdout;
+        self
+    }
+}
+
 #[derive(Debug)]
 struct ReadPipelineAdapter(Vec<Popen>);
 

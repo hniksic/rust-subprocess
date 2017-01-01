@@ -86,3 +86,12 @@ fn pipeline_stream_in() {
     }
     assert_eq!(read_whole_file(File::open(&tmpname).unwrap()).trim(), "3");
 }
+
+#[test]
+fn pipeline_compose_pipelines() {
+    let pipe1 = Run::cmd("echo").arg("foo\nbar\nfoo") | Run::cmd("sort");
+    let pipe2 = Run::cmd("uniq") | Run::cmd("wc").arg("-l");
+    let pipe = pipe1 | pipe2;
+    let stream = pipe.stream_stdout().unwrap();
+    assert_eq!(read_whole_file(stream).trim(), "2");
+}
