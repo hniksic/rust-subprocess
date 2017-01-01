@@ -12,7 +12,6 @@ use tests::common::read_whole_file;
 fn stream_stdout() {
     let stream = Run::new("echo")
         .args(&["-n", "foo"])
-        .stdout(Redirection::Pipe)
         .stream_stdout().unwrap();
     assert!(read_whole_file(stream) == "foo");
 }
@@ -21,7 +20,6 @@ fn stream_stdout() {
 fn stream_stderr() {
     let stream = Run::new("sh")
         .args(&["-c", "echo -n foo >&2"])
-        .stderr(Redirection::Pipe)
         .stream_stderr().unwrap();
     assert!(read_whole_file(stream) == "foo");
 }
@@ -32,7 +30,6 @@ fn stream_stdin() {
     let tmpname = tmpdir.path().join("output");
     {
         let mut stream = Run::new("cat")
-            .stdin(Redirection::Pipe)
             .stdout(File::create(&tmpname).unwrap())
             .stream_stdin().unwrap();
         stream.write_all(b"foo").unwrap();
@@ -54,7 +51,7 @@ fn pipeline_run() {
 fn pipeline_stream_out() {
     let stream = {
         Run::new("echo").arg("foo\nbar") | Run::new("wc").arg("-l")
-    }.stdout(Redirection::Pipe).stream_stdout().unwrap();
+    }.stream_stdout().unwrap();
     assert!(read_whole_file(stream).trim() == "2");
 }
 
@@ -66,10 +63,8 @@ fn pipeline_stream_in() {
         let mut stream = {
             Run::new("cat")
           | Run::new("wc").arg("-l")
-        }
-        .stdout(File::create(&tmpname).unwrap())
-            .stdin(Redirection::Pipe)
-            .stream_stdin().unwrap();
+        }.stdout(File::create(&tmpname).unwrap())
+         .stream_stdin().unwrap();
         stream.write_all(b"foo\nbar\nbaz\n").unwrap();
     }
     assert_eq!(read_whole_file(File::open(&tmpname).unwrap()).trim(), "3");

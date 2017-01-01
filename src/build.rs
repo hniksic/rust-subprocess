@@ -77,26 +77,29 @@ impl Run {
     }
 
     pub fn stdin<T: IntoRedirection>(mut self, stdin: T) -> Run {
-        if let Redirection::None = self.config.stdin {} else {
-            panic!("stdin is already set");
+        match (&self.config.stdin, stdin.into_redirection(false)) {
+            (&Redirection::None, new) => self.config.stdin = new,
+            (&Redirection::Pipe, Redirection::Pipe) => (),
+            (_, _) => panic!("stdin is already set"),
         }
-        self.config.stdin = stdin.into_redirection(false);
         self
     }
 
     pub fn stdout<T: IntoRedirection>(mut self, stdout: T) -> Run {
-        if let Redirection::None = self.config.stdout {} else {
-            panic!("stdout is already set");
+        match (&self.config.stdout, stdout.into_redirection(true)) {
+            (&Redirection::None, new) => self.config.stdout = new,
+            (&Redirection::Pipe, Redirection::Pipe) => (),
+            (_, _) => panic!("stdout is already set"),
         }
-        self.config.stdout = stdout.into_redirection(true);
         self
     }
 
     pub fn stderr<T: IntoRedirection>(mut self, stderr: T) -> Run {
-        if let Redirection::None = self.config.stderr {} else {
-            panic!("stderr is already set");
+        match (&self.config.stderr, stderr.into_redirection(true)) {
+            (&Redirection::None, new) => self.config.stderr = new,
+            (&Redirection::Pipe, Redirection::Pipe) => (),
+            (_, _) => panic!("stderr is already set"),
         }
-        self.config.stderr = stderr.into_redirection(true);
         self
     }
 
@@ -109,29 +112,17 @@ impl Run {
     }
 
     pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
-        if let Redirection::Pipe = self.config.stdout {}
-        else {
-            panic!("cannot read from non-redirected stdout");
-        }
-        let p = self.popen()?;
+        let p = self.stdout(Redirection::Pipe).popen()?;
         Ok(Box::new(ReadOutAdapter(p)))
     }
 
     pub fn stream_stderr(self) -> PopenResult<Box<Read>> {
-        if let Redirection::Pipe = self.config.stderr {}
-        else {
-            panic!("cannot read from non-redirected stderr");
-        }
-        let p = self.popen()?;
+        let p = self.stderr(Redirection::Pipe).popen()?;
         Ok(Box::new(ReadErrAdapter(p)))
     }
 
     pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
-        if let Redirection::Pipe = self.config.stdin {}
-        else {
-            panic!("cannot write to non-redirected stdin");
-        }
-        let p = self.popen()?;
+        let p = self.stdin(Redirection::Pipe).popen()?;
         Ok(Box::new(WriteAdapter(p)))
     }
 }
@@ -248,22 +239,15 @@ impl Pipeline {
     }
 
     pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
-        if let Redirection::Pipe = self.stdout {}
-        else {
-            panic!("cannot read from non-redirected stdout");
-        }
-        let mut v = self.popen()?;
+        let mut v = self.stdout(Redirection::Pipe).popen()?;
         let vlen = v.len();
         let last = v.drain(vlen - 1..).next().unwrap();
         Ok(Box::new(ReadOutAdapter(last)))
     }
 
     pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
-        if let Redirection::Pipe = self.stdin {}
-        else {
-            panic!("cannot write to non-redirected stdin");
-        }
-        Ok(Box::new(WritePipelineAdapter(self.popen()?)))
+        let v = self.stdin(Redirection::Pipe).popen()?;
+        Ok(Box::new(WritePipelineAdapter(v)))
     }
 }
 
