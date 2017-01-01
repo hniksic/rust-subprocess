@@ -2,7 +2,7 @@ extern crate tempdir;
 
 use std::fs::File;
 
-use super::super::{Run, Redirection, Pipeline};
+use super::super::{Run, Redirection};
 
 use self::tempdir::TempDir;
 
@@ -42,11 +42,10 @@ fn stream_stdin() {
 
 #[test]
 fn pipeline_simple() {
-    let mut processes = Pipeline::new()
-        .add(Run::new("echo").arg("foo\nbar"))
-        .add(Run::new("wc").arg("-l"))
-        .stdout(Redirection::Pipe)
-        .popen().unwrap();
+    let mut processes = {
+        Run::new("echo").arg("foo\nbar") | Run::new("wc").arg("-l")
+    }
+    .stdout(Redirection::Pipe).popen().unwrap();
     let (output, _) = processes[1].communicate(None).unwrap();
     assert!(output.unwrap().trim() == "2");
 }

@@ -3,6 +3,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Result as IoResult, Read, Write};
 
 use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
+use std::ops::BitOr;
 
 #[derive(Debug)]
 pub struct Run {
@@ -126,6 +127,14 @@ impl Run {
     }
 }
 
+impl BitOr for Run {
+    type Output = Pipeline;
+
+    fn bitor(self, rhs: Run) -> Pipeline {
+        Pipeline::new().add(self).add(rhs)
+    }
+}
+
 #[derive(Debug)]
 struct ReadOutAdapter(Popen);
 
@@ -225,5 +234,13 @@ impl Pipeline {
             ret.push(runner.popen()?);
         }
         Ok(ret)
+    }
+}
+
+impl BitOr<Run> for Pipeline {
+    type Output = Pipeline;
+
+    fn bitor(self, rhs: Run) -> Pipeline {
+        self.add(rhs)
     }
 }
