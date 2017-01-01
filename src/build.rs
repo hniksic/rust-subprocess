@@ -53,7 +53,7 @@ impl IntoRedirection for NullFile {
 }
 
 impl Run {
-    pub fn new<S: AsRef<OsStr>>(command: S) -> Run {
+    pub fn cmd<S: AsRef<OsStr>>(command: S) -> Run {
         Run {
             command: command.as_ref().to_owned(),
             args: vec![],
