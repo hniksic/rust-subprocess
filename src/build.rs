@@ -13,10 +13,18 @@ pub struct Run {
 }
 
 #[cfg(unix)]
-pub const NULL_DEVICE: &'static str = "/dev/null";
+mod os {
+    pub const NULL_DEVICE: &'static str = "/dev/null";
+    pub const SHELL: [&'static str; 2] = ["sh", "-c"];
+}
 
 #[cfg(windows)]
-pub const NULL_DEVICE: &'static str = "nul";
+mod os {
+    pub const NULL_DEVICE: &'static str = "nul";
+    pub const SHELL: [&'static str; 2] = ["cmd.exe", "/c"];
+}
+
+pub use self::os::*;
 
 pub trait IntoRedirection {
     fn into_redirection(self, bool) -> Redirection;
@@ -59,6 +67,10 @@ impl Run {
             args: vec![],
             config: PopenConfig::default(),
         }
+    }
+
+    pub fn shell<S: AsRef<OsStr>>(cmdstr: S) -> Run {
+        Run::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
     }
 
     pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Run {

@@ -47,6 +47,14 @@ fn stream_stdin() {
 }
 
 #[test]
+fn shell_exec() {
+    // note: this uses built-in echo on Windows, so don't try anything
+    // fancy like echo -n
+    let stream = Run::shell("echo foo").stream_stdout().unwrap();
+    assert_eq!(read_whole_file(stream).trim(), "foo");
+}
+
+#[test]
 fn pipeline_run() {
     let mut processes = {
         Run::cmd("echo").arg("foo\nbar") | Run::cmd("wc").arg("-l")
