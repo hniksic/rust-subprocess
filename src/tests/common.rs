@@ -6,7 +6,7 @@ use std::io::Read;
 use std::io::Write;
 use std::time::Duration;
 
-use super::super::{Popen, PopenConfig, ExitStatus, Redirection, Run, NullFile};
+use super::super::{Popen, PopenConfig, ExitStatus, Redirection};
 
 pub fn read_whole_file<T: Read>(mut f: T) -> String {
     let mut content = String::new();
@@ -35,7 +35,7 @@ fn err_exit() {
 
 #[test]
 fn terminate() {
-    let mut p = Run::new("sleep").arg("1000").popen().unwrap();
+    let mut p = Popen::create(&["sleep", "1000"], PopenConfig::default()).unwrap();
     p.terminate().unwrap();
     p.wait().unwrap();
 }
@@ -45,7 +45,7 @@ fn terminate_twice() {
     use std::thread;
     use std::time::Duration;
 
-    let mut p = Run::new("sleep").arg("1000").popen().unwrap();
+    let mut p = Popen::create(&["sleep", "1000"], PopenConfig::default()).unwrap();
     p.terminate().unwrap();
     thread::sleep(Duration::from_millis(100));
     p.terminate().unwrap();
@@ -68,11 +68,11 @@ fn input_from_file() {
         let mut outfile = File::create(&tmpname).unwrap();
         outfile.write_all(b"foo").unwrap();
     }
-    let mut p = Run::new("cat").arg(&tmpname)
-        .stdin(File::open(&tmpname).unwrap())
-        .stdout(Redirection::Pipe)
-        .popen()
-        .unwrap();
+    let mut p = Popen::create(&["cat", tmpname.to_str().unwrap()], PopenConfig {
+        stdin: Redirection::File(File::open(&tmpname).unwrap()),
+        stdout: Redirection::Pipe,
+        ..Default::default()
+    }).unwrap();
     assert!(read_whole_file(p.stdout.take().unwrap()) == "foo");
     assert!(p.wait().unwrap() == ExitStatus::Exited(0));
 }
@@ -268,17 +268,9 @@ fn simple_pipe() {
 }
 
 #[test]
-fn null_file() {
-    let mut p = Run::new("cat")
-        .stdin(NullFile).stdout(Redirection::Pipe)
-        .popen().unwrap();
-    let (out, _) = p.communicate(None).unwrap();
-    assert!(out.unwrap() == "");
-}
-
-#[test]
 fn wait_timeout() {
-    let mut p = Run::new("sleep").arg("0.5").popen().unwrap();
+    let mut p = Popen::create(&["sleep", "0.5"], PopenConfig::default())
+        .unwrap();
     let ret = p.wait_timeout(Duration::from_millis(100)).unwrap();
     assert!(ret.is_none());
     let ret = p.wait_timeout(Duration::from_millis(450)).unwrap();
