@@ -2,8 +2,9 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
 use std::io::{Result as IoResult, Read, Write};
 
-use popen::{PopenConfig, Popen, PopenError, Redirection};
+use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
 
+#[derive(Debug)]
 pub struct Run {
     command: OsString,
     args: Vec<OsString>,
@@ -91,13 +92,13 @@ impl Run {
 
     // Terminators
 
-    pub fn popen(mut self) -> Result<Popen, PopenError> {
+    pub fn popen(mut self) -> PopenResult<Popen> {
         self.args.insert(0, self.command);
         let p = Popen::create(&self.args, self.config)?;
         Ok(p)
     }
 
-    pub fn stream_stdout(self) -> Result<Box<Read>, PopenError> {
+    pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
         if let Redirection::Pipe = self.config.stdout {}
         else {
             panic!("cannot read from non-redirected stdout");
@@ -106,7 +107,7 @@ impl Run {
         Ok(Box::new(ReadOutAdapter(p)))
     }
 
-    pub fn stream_stderr(self) -> Result<Box<Read>, PopenError> {
+    pub fn stream_stderr(self) -> PopenResult<Box<Read>> {
         if let Redirection::Pipe = self.config.stderr {}
         else {
             panic!("cannot read from non-redirected stderr");
@@ -115,7 +116,7 @@ impl Run {
         Ok(Box::new(ReadErrAdapter(p)))
     }
 
-    pub fn stream_stdin(self) -> Result<Box<Write>, PopenError> {
+    pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
         if let Redirection::Pipe = self.config.stdin {}
         else {
             panic!("cannot write to non-redirected stdin");
@@ -125,6 +126,7 @@ impl Run {
     }
 }
 
+#[derive(Debug)]
 struct ReadOutAdapter(Popen);
 
 impl Read for ReadOutAdapter {
@@ -133,6 +135,7 @@ impl Read for ReadOutAdapter {
     }
 }
 
+#[derive(Debug)]
 struct ReadErrAdapter(Popen);
 
 impl Read for ReadErrAdapter {
@@ -141,6 +144,7 @@ impl Read for ReadErrAdapter {
     }
 }
 
+#[derive(Debug)]
 struct WriteAdapter(Popen);
 
 impl Write for WriteAdapter {
@@ -161,5 +165,65 @@ impl Write for WriteAdapter {
 impl Drop for WriteAdapter {
     fn drop(&mut self) {
         self.0.stdin.take();
+    }
+}
+
+
+#[derive(Debug)]
+pub struct Pipeline {
+    cmds: Vec<Run>,
+    stdin: Redirection,
+    stdout: Redirection,
+}
+
+impl Pipeline {
+    pub fn new() -> Pipeline {
+        Pipeline {
+            cmds: Vec::new(),
+            stdin: Redirection::None,
+            stdout: Redirection::None,
+        }
+    }
+
+    pub fn add(mut self, r: Run) -> Pipeline {
+        self.cmds.push(r);
+        self
+    }
+
+    pub fn stdin<T: IntoRedirection>(mut self, stdin: T) -> Pipeline {
+        self.stdin = stdin.into_redirection(false);
+        self
+    }
+
+    pub fn stdout<T: IntoRedirection>(mut self, stdout: T) -> Pipeline {
+        self.stdout = stdout.into_redirection(true);
+        self
+    }
+
+    pub fn popen(mut self) -> PopenResult<Vec<Popen>> {
+        if self.cmds.is_empty() {
+            panic!("empty pipeline");
+        }
+        let cnt = self.cmds.len();
+
+        let first_cmd = self.cmds.drain(..1).next().unwrap();
+        self.cmds.insert(0, first_cmd.stdin(self.stdin));
+
+        let last_cmd = self.cmds.drain(cnt - 1..).next().unwrap();
+        self.cmds.push(last_cmd.stdout(self.stdout));
+
+        let mut ret = Vec::<Popen>::new();
+
+        for (idx, mut runner) in self.cmds.into_iter().enumerate() {
+            if idx != 0 {
+                let prev_stdout = ret[idx - 1].stdout.take().unwrap();
+                runner = runner.stdin(prev_stdout);
+            }
+            if idx != cnt - 1 {
+                runner = runner.stdout(Redirection::Pipe);
+            }
+            ret.push(runner.popen()?);
+        }
+        Ok(ret)
     }
 }
