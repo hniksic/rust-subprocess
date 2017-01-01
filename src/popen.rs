@@ -549,12 +549,17 @@ mod os {
 
     fn assemble_cmdline(argv: Vec<OsString>) -> IoResult<OsString> {
         let mut cmdline = Vec::<u16>::new();
+        let mut is_first = true;
         for arg in argv {
+            if !is_first {
+                cmdline.push(' ' as u16);
+            } else {
+                is_first = false;
+            }
             if arg.encode_wide().any(|c| c == 0) {
                 return Err(io::Error::from_raw_os_error(win32::ERROR_BAD_PATHNAME as i32));
             }
             append_quoted(&arg, &mut cmdline);
-            cmdline.push(' ' as u16);
         }
         Ok(OsString::from_wide(&cmdline))
     }
