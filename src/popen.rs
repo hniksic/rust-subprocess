@@ -170,8 +170,8 @@ impl Popen {
 
     pub fn communicate_bytes(&mut self, input_data: Option<&[u8]>)
                              -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        communicate::communicate_bytes(&mut self.stdin, &mut self.stdout, &mut self.stderr,
-                                       input_data)
+        communicate_bytes(&mut self.stdin, &mut self.stdout, &mut self.stderr,
+                          input_data)
     }
 
     pub fn communicate(&mut self, input_data: Option<&str>)
@@ -721,3 +721,4 @@ mod communicate {
         }
     }
 }
+pub use self::communicate::communicate_bytes;

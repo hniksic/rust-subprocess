@@ -54,6 +54,13 @@ fn stream_capture_out() {
 }
 
 #[test]
+fn stream_capture_err() {
+    let c = Run::cmd("sh").arg("-c").arg("printf foo >&2")
+        .stderr(Redirection::Pipe).capture().unwrap();
+    assert_eq!(c.stderr_str(), "foo");
+}
+
+#[test]
 fn stream_capture_out_with_input_data() {
     let c = Run::cmd("cat")
         .stdin("foo")
@@ -110,4 +117,12 @@ fn pipeline_compose_pipelines() {
     let pipe = pipe1 | pipe2;
     let stream = pipe.stream_stdout().unwrap();
     assert_eq!(read_whole_file(stream).trim(), "2");
+}
+
+#[test]
+fn pipeline_capture() {
+    let c = {
+        Run::cmd("cat") | Run::shell("wc -l")
+    }.stdin("foo\nbar\nbaz\n").capture().unwrap();
+    assert_eq!(c.stdout_str().trim(), "3");
 }

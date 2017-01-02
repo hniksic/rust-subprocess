@@ -2,6 +2,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
 use std::io::{Result as IoResult, Read, Write};
 
+use popen;
 use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
 use std::ops::BitOr;
 
@@ -271,14 +272,16 @@ pub struct Pipeline {
     cmds: Vec<Run>,
     stdin: Redirection,
     stdout: Redirection,
+    stdin_data: Option<Vec<u8>>,
 }
 
 impl Pipeline {
-    pub fn new() -> Pipeline {
+    fn new() -> Pipeline {
         Pipeline {
             cmds: Vec::new(),
             stdin: Redirection::None,
             stdout: Redirection::None,
+            stdin_data: None,
         }
     }
 
@@ -288,9 +291,12 @@ impl Pipeline {
     }
 
     pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Pipeline {
-        self.stdin = match stdin.into_input_redirection() {
-            InputRedirection::Regular(x) => x,
-            InputRedirection::FeedData(..) => panic!(), // XXX
+        match stdin.into_input_redirection() {
+            InputRedirection::Regular(r) => self.stdin = r,
+            InputRedirection::FeedData(data) => {
+                self.stdin = Redirection::Pipe;
+                self.stdin_data = Some(data);
+            }
         };
         self
     }
@@ -338,6 +344,26 @@ impl Pipeline {
         let v = self.stdin(Redirection::Pipe).popen()?;
         Ok(Box::new(WritePipelineAdapter(v)))
     }
+
+    pub fn capture(mut self) -> PopenResult<CaptureOutput> {
+        // The public API doesn't support creation of single-command
+        // "pipelines"
+        //assert!(self.cmds.len() >= 2);
+
+        let stdin_data = self.stdin_data.take();
+        let mut v = self.stdout(Redirection::Pipe).popen()?;
+
+        let mut first = v.drain(..1).next().unwrap();
+        let vlen = v.len();
+        let mut last = v.drain(vlen - 1..).next().unwrap();
+
+        let (maybe_out, _) = popen::communicate_bytes(
+            &mut first.stdin, &mut last.stdout, &mut None,
+            stdin_data.as_ref().map(|v| &v[..]))?;
+        let out = maybe_out.unwrap_or_else(Vec::new);
+
+        Ok(CaptureOutput(out))
+    }
 }
 
 impl Clone for Pipeline {
@@ -346,6 +372,7 @@ impl Clone for Pipeline {
             cmds: self.cmds.clone(),
             stdin: self.stdin.try_clone().unwrap(),
             stdout: self.stdout.try_clone().unwrap(),
+            stdin_data: self.stdin_data.clone()
         }
     }
 }
@@ -402,5 +429,13 @@ impl Drop for WritePipelineAdapter {
     fn drop(&mut self) {
         let ref mut first = self.0[0];
         first.stdin.take();
+    }
+}
+
+pub struct CaptureOutput(Vec<u8>);
+
+impl CaptureOutput {
+    pub fn stdout_str(&self) -> String {
+        String::from_utf8_lossy(&self.0).into_owned()
     }
 }
