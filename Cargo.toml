@@ -17,5 +17,7 @@ name = "subprocess"
 path = "src/lib.rs"
 
 [[bin]]
-name = "debug"
-path = "src/debug.rs"
+name = "sample"
+
+[[bin]]
+name = "just-echo"
