@@ -1,9 +1,7 @@
-extern crate crossbeam;
-
 use std::result;
 use std::error::Error;
 use std::io;
-use std::io::{Read, Write, Result as IoResult};
+use std::io::Result as IoResult;
 use std::fs::File;
 use std::string::FromUtf8Error;
 use std::fmt;
@@ -170,54 +168,10 @@ impl Popen {
         Ok((child_stdin, child_stdout, child_stderr))
     }
 
-    fn comm_read(outfile: &mut Option<File>) -> IoResult<Vec<u8>> {
-        let mut outfile = outfile.take().expect("file missing");
-        let mut contents = Vec::new();
-        outfile.read_to_end(&mut contents)?;
-        Ok(contents)
-    }
-
-    fn comm_write(infile: &mut Option<File>, input_data: &[u8]) -> IoResult<()> {
-        let mut infile = infile.take().expect("file missing");
-        infile.write_all(input_data)?;
-        Ok(())
-    }
-
     pub fn communicate_bytes(&mut self, input_data: Option<&[u8]>)
                              -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        match (&mut self.stdin, &mut self.stdout, &mut self.stderr) {
-            (mut stdin_ref @ &mut Some(_), &mut None, &mut None) => {
-                let input_data = input_data.expect("must provide input to redirected stdin");
-                Popen::comm_write(stdin_ref, input_data)?;
-                Ok((None, None))
-            }
-            (&mut None, mut stdout_ref @ &mut Some(_), &mut None) => {
-                assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
-                let out = Popen::comm_read(stdout_ref)?;
-                Ok((Some(out), None))
-            }
-            (&mut None, &mut None, mut stderr_ref @ &mut Some(_)) => {
-                assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
-                let err = Popen::comm_read(stderr_ref)?;
-                Ok((None, Some(err)))
-            }
-            (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) =>
-                crossbeam::scope(move |scope| {
-                    let (mut out_thr, mut err_thr) = (None, None);
-                    if stdout_ref.is_some() {
-                        out_thr = Some(scope.spawn(move || Popen::comm_read(stdout_ref)))
-                    }
-                    if stderr_ref.is_some() {
-                        err_thr = Some(scope.spawn(move || Popen::comm_read(stderr_ref)))
-                    }
-                    if stdin_ref.is_some() {
-                        let input_data = input_data.expect("must provide input to redirected stdin");
-                        Popen::comm_write(stdin_ref, input_data)?;
-                    }
-                    Ok((if let Some(out_thr) = out_thr {Some(out_thr.join()?)} else {None},
-                        if let Some(err_thr) = err_thr {Some(err_thr.join()?)} else {None}))
-                })
-        }
+        communicate::communicate_bytes(&mut self.stdin, &mut self.stdout, &mut self.stderr,
+                                       input_data)
     }
 
     pub fn communicate(&mut self, input_data: Option<&str>)
@@ -707,3 +661,63 @@ impl fmt::Display for PopenError {
 }
 
 pub type Result<T> = result::Result<T, PopenError>;
+
+mod communicate {
+    extern crate crossbeam;
+
+    use std::fs::File;
+    use std::io::{Result as IoResult, Read, Write};
+
+    fn comm_read(outfile: &mut Option<File>) -> IoResult<Vec<u8>> {
+        let mut outfile = outfile.take().expect("file missing");
+        let mut contents = Vec::new();
+        outfile.read_to_end(&mut contents)?;
+        Ok(contents)
+    }
+
+    fn comm_write(infile: &mut Option<File>, input_data: &[u8]) -> IoResult<()> {
+        let mut infile = infile.take().expect("file missing");
+        infile.write_all(input_data)?;
+        Ok(())
+    }
+
+    pub fn communicate_bytes(stdin: &mut Option<File>,
+                             stdout: &mut Option<File>,
+                             stderr: &mut Option<File>,
+                             input_data: Option<&[u8]>)
+                             -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        match (stdin, stdout, stderr) {
+            (mut stdin_ref @ &mut Some(_), &mut None, &mut None) => {
+                let input_data = input_data.expect("must provide input to redirected stdin");
+                comm_write(stdin_ref, input_data)?;
+                Ok((None, None))
+            }
+            (&mut None, mut stdout_ref @ &mut Some(_), &mut None) => {
+                assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
+                let out = comm_read(stdout_ref)?;
+                Ok((Some(out), None))
+            }
+            (&mut None, &mut None, mut stderr_ref @ &mut Some(_)) => {
+                assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
+                let err = comm_read(stderr_ref)?;
+                Ok((None, Some(err)))
+            }
+            (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) =>
+                crossbeam::scope(move |scope| {
+                    let (mut out_thr, mut err_thr) = (None, None);
+                    if stdout_ref.is_some() {
+                        out_thr = Some(scope.spawn(move || comm_read(stdout_ref)))
+                    }
+                    if stderr_ref.is_some() {
+                        err_thr = Some(scope.spawn(move || comm_read(stderr_ref)))
+                    }
+                    if stdin_ref.is_some() {
+                        let input_data = input_data.expect("must provide input to redirected stdin");
+                        comm_write(stdin_ref, input_data)?;
+                    }
+                    Ok((if let Some(out_thr) = out_thr {Some(out_thr.join()?)} else {None},
+                        if let Some(err_thr) = err_thr {Some(err_thr.join()?)} else {None}))
+                })
+        }
+    }
+}
