@@ -12,36 +12,26 @@ use std::time::Duration;
 
 use common::{ExitStatus, StandardStream};
 
+use self::ChildState::*;
+
 #[derive(Debug)]
 pub struct Popen {
     pub stdin: Option<File>,
     pub stdout: Option<File>,
     pub stderr: Option<File>,
 
-    _pid: Option<u32>,
-    _exit_status: Option<ExitStatus>,
+    child_state: ChildState,
     detached: bool,
-
-    ext_data: os::ExtPopenData,
 }
 
 #[derive(Debug)]
-pub enum Redirection {
-    None,
-    File(File),
-    Pipe,
-    Merge,
-}
-
-impl Redirection {
-    pub fn try_clone(&self) -> IoResult<Redirection> {
-        Ok(match self {
-            &Redirection::File(ref f) => Redirection::File(f.try_clone()?),
-            &Redirection::None => Redirection::None,
-            &Redirection::Pipe => Redirection::Pipe,
-            &Redirection::Merge => Redirection::Merge,
-        })
-    }
+enum ChildState {
+    Preparing,                  // only during construction
+    Running {
+        pid: u32,
+        ext: os::ExtChildState,
+    },
+    Finished(ExitStatus),
 }
 
 #[derive(Debug)]
@@ -82,6 +72,25 @@ impl Default for PopenConfig {
     }
 }
 
+#[derive(Debug)]
+pub enum Redirection {
+    None,
+    File(File),
+    Pipe,
+    Merge,
+}
+
+impl Redirection {
+    pub fn try_clone(&self) -> IoResult<Redirection> {
+        Ok(match self {
+            &Redirection::File(ref f) => Redirection::File(f.try_clone()?),
+            &Redirection::None => Redirection::None,
+            &Redirection::Pipe => Redirection::Pipe,
+            &Redirection::Merge => Redirection::Merge,
+        })
+    }
+}
+
 impl Popen {
     pub fn create<S: AsRef<OsStr>>(argv: &[S], config: PopenConfig)
         -> Result<Popen>
@@ -92,10 +101,8 @@ impl Popen {
             stdin: None,
             stdout: None,
             stderr: None,
-            _pid: None,
-            _exit_status: None,
+            child_state: ChildState::Preparing,
             detached: config.detached,
-            ext_data: os::ExtPopenData::default(),
         };
         inst.start(argv, config.stdin, config.stdout, config.stderr)?;
         Ok(inst)
@@ -226,19 +233,22 @@ impl Popen {
     }
 
     pub fn pid(&self) -> Option<u32> {
-        self._pid
+        match self.child_state {
+            Running { pid, .. } => Some(pid),
+            _ => None
+        }
     }
 
     pub fn exit_status(&self) -> Option<ExitStatus> {
-        self._exit_status
+        match self.child_state {
+            Finished(exit_status) => Some(exit_status),
+            _ => None
+        }
     }
 
     pub fn poll(&mut self) -> Option<ExitStatus> {
-        if self.wait_timeout(Duration::from_secs(0)).is_err() {
-            None
-        } else {
-            self._exit_status
-        }
+        self.wait_timeout(Duration::from_secs(0)).ok(); // ignore errors
+        self.exit_status()
     }
 
     fn start(&mut self,
@@ -289,8 +299,9 @@ mod os {
     use common::ExitStatus;
     use std::ffi::OsString;
     use std::time::Duration;
+    use super::ChildState::*;
 
-    pub type ExtPopenData = ();
+    pub type ExtChildState = ();
 
     impl super::PopenOs for Popen {
         fn start(&mut self,
@@ -316,7 +327,7 @@ mod os {
                         .expect("write to error pipe");
                     posix::_exit(127);
                 }
-                self._pid = Some(child_pid as u32);
+                self.child_state = Running { pid: child_pid, ext: () };
             }
             mem::drop(exec_fail_pipe.1);
             let mut error_string = String::new();
@@ -331,10 +342,10 @@ mod os {
         }
 
         fn wait(&mut self) -> Result<ExitStatus> {
-            while let None = self._exit_status {
+            while let Running {..} = self.child_state {
                 self.waitpid(0)?;
             }
-            Ok(self._exit_status.unwrap())
+            Ok(self.exit_status().unwrap())
         }
 
         fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
@@ -342,8 +353,8 @@ mod os {
             use std::time::{Instant, Duration};
             use std::thread;
 
-            if self._exit_status.is_some() {
-                return Ok(self._exit_status);
+            if let Finished(exit_status) = self.child_state {
+                return Ok(Some(exit_status));
             }
 
             let deadline = Instant::now() + dur;
@@ -351,8 +362,8 @@ mod os {
             let mut delay = Duration::new(0, 500_000);
             loop {
                 self.waitpid(posix::WNOHANG)?;
-                if self._exit_status.is_some() {
-                    return Ok(self._exit_status);
+                if let Finished(exit_status) = self.child_state {
+                    return Ok(Some(exit_status));
                 }
                 let now = Instant::now();
                 if now >= deadline {
@@ -397,27 +408,27 @@ mod os {
         }
 
         fn waitpid(&mut self, flags: i32) -> IoResult<()> {
-            match self._exit_status {
-                None => {
-                    let pid = self._pid.unwrap();
+            match self.child_state {
+                Preparing => panic!("child_state == Preparing"),
+                Running { pid, .. } => {
                     // XXX handle ECHILD and EINTR
                     let (pid_out, exit_status) = posix::waitpid(pid, flags)?;
                     if pid_out == pid {
-                        self._pid = None;
-                        self._exit_status = Some(exit_status);
+                        self.child_state = Finished(exit_status);
                     }
                 },
-                Some(_) => (),
+                Finished(..) => (),
             }
             Ok(())
         }
 
         fn send_signal(&self, signal: u8) -> IoResult<()> {
-            match self._pid {
-                Some(pid) => {
+            match self.child_state {
+                Preparing => panic!("child_state == Preparing"),
+                Running { pid, .. } => {
                     posix::kill(pid, signal)
                 },
-                None => Ok(()),
+                Finished(..) => Ok(()),
             }
         }
     }
@@ -452,11 +463,10 @@ mod os {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::time::Duration;
     use std::io::Result as IoResult;
+    use super::ChildState::*;
 
-    #[derive(Debug, Default)]
-    pub struct ExtPopenData {
-        handle: Option<win32::Handle>,
-    }
+    #[derive(Debug)]
+    pub struct ExtChildState(win32::Handle);
 
     impl super::PopenOs for Popen {
         fn start(&mut self,
@@ -473,49 +483,55 @@ mod os {
                 = win32::CreateProcess(&cmdline, true, 0,
                                        child_stdin, child_stdout, child_stderr,
                                        win32::STARTF_USESTDHANDLES)?;
-            self._pid = Some(pid as u32);
-            self.ext_data.handle = Some(handle);
+            self.child_state = Running {
+                pid: pid as u32,
+                ext: ExtChildState(handle)
+            };
             Ok(())
         }
 
         fn wait(&mut self) -> Result<ExitStatus> {
             self.wait_handle(None)?;
-            match self._exit_status {
-                Some(exit_status) => Ok(exit_status),
+            match self.child_state {
+                Preparing => panic!("child_state == Preparing"),
+                Finished(exit_status) => Ok(exit_status),
                 // Since we invoked wait_handle without timeout, exit status should
                 // exist at this point.  The only way for it not to exist would be if
                 // something strange happened, like WaitForSingleObject returneing
                 // something other than OBJECT_0.
-                None => Err(PopenError::LogicError("Failed to obtain exit status"))
+                Running {..} => Err(
+                    PopenError::LogicError("Failed to obtain exit status"))
             }
         }
 
         fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
-            if self._exit_status.is_some() {
-                return Ok(self._exit_status);
+            if let Finished(exit_status) = self.child_state {
+                return Ok(Some(exit_status));
             }
             self.wait_handle(Some(dur.as_secs() as f64
                                   + dur.subsec_nanos() as f64 * 1e-9))?;
-            Ok(self._exit_status)
+            Ok(self.exit_status())
         }
 
         fn terminate(&mut self) -> IoResult<()> {
-            if self.ext_data.handle.is_some() {
-                match win32::TerminateProcess(self.ext_data.handle.as_ref().unwrap(), 1) {
+            let mut new_child_state = None;
+            if let Running { ext: ExtChildState(ref handle), .. } = self.child_state {
+                match win32::TerminateProcess(handle, 1) {
                     Err(err) => {
                         if err.raw_os_error() != Some(win32::ERROR_ACCESS_DENIED as i32) {
                             return Err(err);
                         }
-                        let rc = win32::GetExitCodeProcess(self.ext_data.handle.as_ref().unwrap())?;
+                        let rc = win32::GetExitCodeProcess(handle)?;
                         if rc == win32::STILL_ACTIVE {
                             return Err(err);
                         }
-                        self._pid = None;
-                        self._exit_status = Some(ExitStatus::Exited(rc));
-                        self.ext_data.handle = None;
+                        new_child_state = Some(Finished(ExitStatus::Exited(rc)));
                     }
                     Ok(_) => ()
                 }
+            }
+            if let Some(new_child_state) = new_child_state {
+                self.child_state = new_child_state;
             }
             Ok(())
         }
@@ -531,19 +547,19 @@ mod os {
 
     impl PopenOsImpl for Popen {
         fn wait_handle(&mut self, timeout: Option<f64>) -> IoResult<Option<ExitStatus>> {
-            if self.ext_data.handle.is_some() {
+            let mut new_child_state = None;
+            if let Running { ext: ExtChildState(ref handle), .. } = self.child_state {
                 let timeout = timeout.map(|t| (t * 1000.0) as u32);
-                let event = win32::WaitForSingleObject(
-                    self.ext_data.handle.as_ref().unwrap(), timeout)?;
+                let event = win32::WaitForSingleObject(handle, timeout)?;
                 if let win32::WaitEvent::OBJECT_0 = event {
-                    let exit_code = win32::GetExitCodeProcess(
-                        self.ext_data.handle.as_ref().unwrap())?;
-                    self._pid = None;
-                    self._exit_status = Some(ExitStatus::Exited(exit_code));
-                    self.ext_data.handle = None;
+                    let exit_code = win32::GetExitCodeProcess(handle)?;
+                    new_child_state = Some(Finished(ExitStatus::Exited(exit_code)));
                 }
             }
-            Ok(self._exit_status)
+            if let Some(new_child_state) = new_child_state {
+                self.child_state = new_child_state;
+            }
+            Ok(self.exit_status())
         }
     }
 
@@ -635,10 +651,7 @@ impl Drop for Popen {
     // Wait for the process to exit.  To avoid the wait, call
     // detach().
     fn drop(&mut self) {
-        // Explicitly check for PID rather than exit status to handle
-        // the case of drop() being invoked during failed
-        // construction.
-        if !self.detached && self._pid.is_some() {
+        if let (false, &Running {..}) = (self.detached, &self.child_state) {
             // Should we log error if one occurs during drop()?
             self.wait().ok();
         }
