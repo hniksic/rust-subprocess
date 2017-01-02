@@ -2,11 +2,17 @@ extern crate tempdir;
 
 use std::fs::File;
 
-use super::super::{Run, Redirection, NullFile};
+use super::super::{Run, Redirection, NullFile, ExitStatus};
 
 use self::tempdir::TempDir;
 
 use tests::common::read_whole_file;
+
+#[test]
+fn run_wait() {
+    let status = Run::cmd("true").wait().unwrap();
+    assert_eq!(status, ExitStatus::Exited(0));
+}
 
 #[test]
 fn null_file() {
@@ -125,4 +131,16 @@ fn pipeline_capture() {
         Run::cmd("cat") | Run::shell("wc -l")
     }.stdin("foo\nbar\nbaz\n").capture().unwrap();
     assert_eq!(c.stdout_str().trim(), "3");
+}
+
+#[test]
+fn pipeline_wait() {
+    let status = (Run::cmd("true") | Run::cmd("true")).wait().unwrap();
+    assert_eq!(status, ExitStatus::Exited(0));
+
+    let status = (Run::cmd("false") | Run::cmd("true")).wait().unwrap();
+    assert_eq!(status, ExitStatus::Exited(0));
+
+    let status = (Run::cmd("true") | Run::cmd("false")).wait().unwrap();
+    assert_eq!(status, ExitStatus::Exited(1));
 }

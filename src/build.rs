@@ -17,10 +17,12 @@ pub use self::pipeline::Pipeline;
 
 mod run {
     use std::ffi::{OsStr, OsString};
-    use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
     use std::io::{Result as IoResult, Read, Write};
     use std::fs::{File, OpenOptions};
     use std::ops::BitOr;
+
+    use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
+    use common::ExitStatus;
 
     use super::os::*;
     use super::Pipeline;
@@ -99,6 +101,10 @@ mod run {
             self.args.insert(0, self.command);
             let p = Popen::create(&self.args, self.config)?;
             Ok(p)
+        }
+
+        pub fn wait(self) -> PopenResult<ExitStatus> {
+            self.popen()?.wait()
         }
 
         pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
@@ -280,6 +286,7 @@ mod pipeline {
 
     use popen;
     use popen::{Popen, Redirection, Result as PopenResult};
+    use common::ExitStatus;
 
     use super::run::{Run, IntoInputRedirection, InputRedirection, IntoOutputRedirection};
 
@@ -347,6 +354,15 @@ mod pipeline {
                 ret.push(runner.popen()?);
             }
             Ok(ret)
+        }
+
+        pub fn wait(self) -> PopenResult<ExitStatus> {
+            let mut v = self.popen()?;
+            // Waiting on a pipeline waits for all commands, but
+            // returns the status of the last one.  This is how the
+            // shells do it.  If the caller needs more precise control
+            // over which status is returned, they can call popen().
+            v.last_mut().unwrap().wait()
         }
 
         pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
