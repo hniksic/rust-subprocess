@@ -1,19 +1,3 @@
-use std::ffi::{OsStr, OsString};
-use std::fs::{File, OpenOptions};
-use std::io::{Result as IoResult, Read, Write};
-
-use popen;
-use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
-use std::ops::BitOr;
-
-#[derive(Debug)]
-pub struct Run {
-    command: OsString,
-    args: Vec<OsString>,
-    config: PopenConfig,
-    stdin_data: Option<Vec<u8>>,
-}
-
 #[cfg(unix)]
 mod os {
     pub const NULL_DEVICE: &'static str = "/dev/null";
@@ -27,415 +11,444 @@ mod os {
 }
 
 pub use self::os::*;
+pub use self::run::{Run, NullFile};
+pub use self::pipeline::Pipeline;
 
-impl Run {
-    pub fn cmd<S: AsRef<OsStr>>(command: S) -> Run {
-        Run {
-            command: command.as_ref().to_owned(),
-            args: vec![],
-            config: PopenConfig::default(),
-            stdin_data: None,
-        }
+
+mod run {
+    use std::ffi::{OsStr, OsString};
+    use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
+    use std::io::{Result as IoResult, Read, Write};
+    use std::fs::{File, OpenOptions};
+    use std::ops::BitOr;
+
+    use super::os::*;
+    use super::Pipeline;
+
+    #[derive(Debug)]
+    pub struct Run {
+        command: OsString,
+        args: Vec<OsString>,
+        config: PopenConfig,
+        stdin_data: Option<Vec<u8>>,
     }
 
-    pub fn shell<S: AsRef<OsStr>>(cmdstr: S) -> Run {
-        Run::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
-    }
-
-    pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Run {
-        self.args.push(arg.as_ref().to_owned());
-        self
-    }
-
-    pub fn args<S: AsRef<OsStr>>(mut self, args: &[S]) -> Run {
-        self.args.extend(args.iter().map(|x| x.as_ref().to_owned()));
-        self
-    }
-
-    pub fn detached(mut self) -> Run {
-        self.config.detached = true;
-        self
-    }
-
-    pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Run {
-        match (&self.config.stdin, stdin.into_input_redirection()) {
-            (&Redirection::None, InputRedirection::Regular(new)) => self.config.stdin = new,
-            (&Redirection::Pipe, InputRedirection::Regular(Redirection::Pipe)) => (),
-            (&Redirection::None, InputRedirection::FeedData(data)) => {
-                self.config.stdin = Redirection::Pipe;
-                self.stdin_data = Some(data);
+    impl Run {
+        pub fn cmd<S: AsRef<OsStr>>(command: S) -> Run {
+            Run {
+                command: command.as_ref().to_owned(),
+                args: vec![],
+                config: PopenConfig::default(),
+                stdin_data: None,
             }
-            (_, _) => panic!("stdin is already set"),
         }
-        self
-    }
 
-    pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Run {
-        match (&self.config.stdout, stdout.into_output_redirection()) {
-            (&Redirection::None, new) => self.config.stdout = new,
-            (&Redirection::Pipe, Redirection::Pipe) => (),
-            (_, _) => panic!("stdout is already set"),
+        pub fn shell<S: AsRef<OsStr>>(cmdstr: S) -> Run {
+            Run::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
         }
-        self
-    }
 
-    pub fn stderr<T: IntoOutputRedirection>(mut self, stderr: T) -> Run {
-        match (&self.config.stderr, stderr.into_output_redirection()) {
-            (&Redirection::None, new) => self.config.stderr = new,
-            (&Redirection::Pipe, Redirection::Pipe) => (),
-            (_, _) => panic!("stderr is already set"),
+        pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Run {
+            self.args.push(arg.as_ref().to_owned());
+            self
         }
-        self
-    }
 
-    // Terminators
-
-    pub fn popen(mut self) -> PopenResult<Popen> {
-        self.args.insert(0, self.command);
-        let p = Popen::create(&self.args, self.config)?;
-        Ok(p)
-    }
-
-    pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
-        let p = self.stdout(Redirection::Pipe).popen()?;
-        Ok(Box::new(ReadOutAdapter(p)))
-    }
-
-    pub fn stream_stderr(self) -> PopenResult<Box<Read>> {
-        let p = self.stderr(Redirection::Pipe).popen()?;
-        Ok(Box::new(ReadErrAdapter(p)))
-    }
-
-    pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
-        let p = self.stdin(Redirection::Pipe).popen()?;
-        Ok(Box::new(WriteAdapter(p)))
-    }
-
-    pub fn capture(mut self) -> PopenResult<Capture> {
-        let stdin_data = self.stdin_data.take();
-        let mut p = self.popen()?;
-        let (maybe_out, maybe_err) = p.communicate_bytes(
-            stdin_data.as_ref().map(|v| &v[..]))?;
-        let out = maybe_out.unwrap_or_else(Vec::new);
-        let err = maybe_err.unwrap_or_else(Vec::new);
-        Ok(Capture { stdout: out, stderr: err })
-    }
-}
-
-impl Clone for Run {
-    fn clone(&self) -> Run {
-        Run {
-            command: self.command.clone(),
-            args: self.args.clone(),
-            config: self.config.try_clone().unwrap(),
-            stdin_data: self.stdin_data.as_ref().cloned(),
+        pub fn args<S: AsRef<OsStr>>(mut self, args: &[S]) -> Run {
+            self.args.extend(args.iter().map(|x| x.as_ref().to_owned()));
+            self
         }
-    }
-}
 
-impl BitOr for Run {
-    type Output = Pipeline;
-
-    fn bitor(self, rhs: Run) -> Pipeline {
-        Pipeline::new().add(self).add(rhs)
-    }
-}
-
-pub enum InputRedirection {
-    Regular(Redirection),
-    FeedData(Vec<u8>),
-}
-
-pub trait IntoInputRedirection {
-    fn into_input_redirection(self) -> InputRedirection;
-}
-
-impl IntoInputRedirection for Redirection {
-    fn into_input_redirection(self) -> InputRedirection {
-        if let Redirection::Merge = self {
-            panic!("Redirection::Merge is only allowed for output streams");
+        pub fn detached(mut self) -> Run {
+            self.config.detached = true;
+            self
         }
-        InputRedirection::Regular(self)
-    }
-}
 
-impl IntoInputRedirection for File {
-    fn into_input_redirection(self) -> InputRedirection {
-        InputRedirection::Regular(Redirection::File(self))
-    }
-}
-
-pub struct NullFile;
-
-impl IntoInputRedirection for NullFile {
-    fn into_input_redirection(self) -> InputRedirection {
-        let null_file = OpenOptions::new().read(true).open(NULL_DEVICE).unwrap();
-        InputRedirection::Regular(Redirection::File(null_file))
-    }
-}
-
-impl IntoInputRedirection for Vec<u8> {
-    fn into_input_redirection(self) -> InputRedirection {
-        InputRedirection::FeedData(self)
-    }
-}
-
-impl<'a> IntoInputRedirection for &'a str {
-    fn into_input_redirection(self) -> InputRedirection {
-        InputRedirection::FeedData(self.as_bytes().to_vec())
-    }
-}
-
-pub trait IntoOutputRedirection {
-    fn into_output_redirection(self) -> Redirection;
-}
-
-impl IntoOutputRedirection for Redirection {
-    fn into_output_redirection(self) -> Redirection {
-        self
-    }
-}
-
-impl IntoOutputRedirection for File {
-    fn into_output_redirection(self) -> Redirection {
-        Redirection::File(self)
-    }
-}
-
-impl IntoOutputRedirection for NullFile {
-    fn into_output_redirection(self) -> Redirection {
-        let null_file = OpenOptions::new().write(true).open(NULL_DEVICE).unwrap();
-        Redirection::File(null_file)
-    }
-}
-
-#[derive(Debug)]
-struct ReadOutAdapter(Popen);
-
-impl Read for ReadOutAdapter {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-        self.0.stdout.as_mut().unwrap().read(buf)
-    }
-}
-
-#[derive(Debug)]
-struct ReadErrAdapter(Popen);
-
-impl Read for ReadErrAdapter {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-        self.0.stderr.as_mut().unwrap().read(buf)
-    }
-}
-
-#[derive(Debug)]
-struct WriteAdapter(Popen);
-
-impl Write for WriteAdapter {
-    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
-        self.0.stdin.as_mut().unwrap().write(buf)
-    }
-    fn flush(&mut self) -> IoResult<()> {
-        self.0.stdin.as_mut().unwrap().flush()
-    }
-}
-
-// We must implement Drop in order to close the stream.  The typical
-// use case for stream_stdin() is a process that reads something from
-// stdin.  WriteAdapter going out of scope invokes Popen::drop(),
-// which waits for the process to exit.  Without closing stdin, this
-// deadlocks because the child process hangs reading its stdin.
-
-impl Drop for WriteAdapter {
-    fn drop(&mut self) {
-        self.0.stdin.take();
-    }
-}
-
-pub struct Capture {
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
-}
-
-impl Capture {
-    pub fn stdout_str(&self) -> String {
-        String::from_utf8_lossy(&self.stdout).into_owned()
-    }
-
-    pub fn stderr_str(&self) -> String {
-        String::from_utf8_lossy(&self.stderr).into_owned()
-    }
-}
-
-
-#[derive(Debug)]
-pub struct Pipeline {
-    cmds: Vec<Run>,
-    stdin: Redirection,
-    stdout: Redirection,
-    stdin_data: Option<Vec<u8>>,
-}
-
-impl Pipeline {
-    fn new() -> Pipeline {
-        Pipeline {
-            cmds: Vec::new(),
-            stdin: Redirection::None,
-            stdout: Redirection::None,
-            stdin_data: None,
-        }
-    }
-
-    pub fn add(mut self, r: Run) -> Pipeline {
-        self.cmds.push(r);
-        self
-    }
-
-    pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Pipeline {
-        match stdin.into_input_redirection() {
-            InputRedirection::Regular(r) => self.stdin = r,
-            InputRedirection::FeedData(data) => {
-                self.stdin = Redirection::Pipe;
-                self.stdin_data = Some(data);
+        pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Run {
+            match (&self.config.stdin, stdin.into_input_redirection()) {
+                (&Redirection::None, InputRedirection::NoAction(new)) => self.config.stdin = new,
+                (&Redirection::Pipe, InputRedirection::NoAction(Redirection::Pipe)) => (),
+                (&Redirection::None, InputRedirection::FeedData(data)) => {
+                    self.config.stdin = Redirection::Pipe;
+                    self.stdin_data = Some(data);
+                }
+                (_, _) => panic!("stdin is already set"),
             }
-        };
-        self
-    }
-
-    pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Pipeline {
-        self.stdout = stdout.into_output_redirection();
-        self
-    }
-
-    // Terminators:
-
-    pub fn popen(mut self) -> PopenResult<Vec<Popen>> {
-        if self.cmds.is_empty() {
-            panic!("empty pipeline");
+            self
         }
-        let cnt = self.cmds.len();
 
-        let first_cmd = self.cmds.drain(..1).next().unwrap();
-        self.cmds.insert(0, first_cmd.stdin(self.stdin));
-
-        let last_cmd = self.cmds.drain(cnt - 1..).next().unwrap();
-        self.cmds.push(last_cmd.stdout(self.stdout));
-
-        let mut ret = Vec::<Popen>::new();
-
-        for (idx, mut runner) in self.cmds.into_iter().enumerate() {
-            if idx != 0 {
-                let prev_stdout = ret[idx - 1].stdout.take().unwrap();
-                runner = runner.stdin(prev_stdout);
+        pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Run {
+            match (&self.config.stdout, stdout.into_output_redirection()) {
+                (&Redirection::None, new) => self.config.stdout = new,
+                (&Redirection::Pipe, Redirection::Pipe) => (),
+                (_, _) => panic!("stdout is already set"),
             }
-            if idx != cnt - 1 {
-                runner = runner.stdout(Redirection::Pipe);
+            self
+        }
+
+        pub fn stderr<T: IntoOutputRedirection>(mut self, stderr: T) -> Run {
+            match (&self.config.stderr, stderr.into_output_redirection()) {
+                (&Redirection::None, new) => self.config.stderr = new,
+                (&Redirection::Pipe, Redirection::Pipe) => (),
+                (_, _) => panic!("stderr is already set"),
             }
-            ret.push(runner.popen()?);
+            self
         }
-        Ok(ret)
-    }
 
-    pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
-        let v = self.stdout(Redirection::Pipe).popen()?;
-        Ok(Box::new(ReadPipelineAdapter(v)))
-    }
+        // Terminators
 
-    pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
-        let v = self.stdin(Redirection::Pipe).popen()?;
-        Ok(Box::new(WritePipelineAdapter(v)))
-    }
+        pub fn popen(mut self) -> PopenResult<Popen> {
+            self.args.insert(0, self.command);
+            let p = Popen::create(&self.args, self.config)?;
+            Ok(p)
+        }
 
-    pub fn capture(mut self) -> PopenResult<CaptureOutput> {
-        // The public API doesn't support creation of single-command
-        // "pipelines"
-        //assert!(self.cmds.len() >= 2);
+        pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
+            let p = self.stdout(Redirection::Pipe).popen()?;
+            Ok(Box::new(ReadOutAdapter(p)))
+        }
 
-        let stdin_data = self.stdin_data.take();
-        let mut v = self.stdout(Redirection::Pipe).popen()?;
+        pub fn stream_stderr(self) -> PopenResult<Box<Read>> {
+            let p = self.stderr(Redirection::Pipe).popen()?;
+            Ok(Box::new(ReadErrAdapter(p)))
+        }
 
-        let mut first = v.drain(..1).next().unwrap();
-        let vlen = v.len();
-        let mut last = v.drain(vlen - 1..).next().unwrap();
+        pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
+            let p = self.stdin(Redirection::Pipe).popen()?;
+            Ok(Box::new(WriteAdapter(p)))
+        }
 
-        let (maybe_out, _) = popen::communicate_bytes(
-            &mut first.stdin, &mut last.stdout, &mut None,
-            stdin_data.as_ref().map(|v| &v[..]))?;
-        let out = maybe_out.unwrap_or_else(Vec::new);
-
-        Ok(CaptureOutput(out))
-    }
-}
-
-impl Clone for Pipeline {
-    fn clone(&self) -> Pipeline {
-        Pipeline {
-            cmds: self.cmds.clone(),
-            stdin: self.stdin.try_clone().unwrap(),
-            stdout: self.stdout.try_clone().unwrap(),
-            stdin_data: self.stdin_data.clone()
+        pub fn capture(mut self) -> PopenResult<Capture> {
+            let stdin_data = self.stdin_data.take();
+            let mut p = self.popen()?;
+            let (maybe_out, maybe_err) = p.communicate_bytes(
+                stdin_data.as_ref().map(|v| &v[..]))?;
+            let out = maybe_out.unwrap_or_else(Vec::new);
+            let err = maybe_err.unwrap_or_else(Vec::new);
+            Ok(Capture { stdout: out, stderr: err })
         }
     }
-}
 
-impl BitOr<Run> for Pipeline {
-    type Output = Pipeline;
+    impl Clone for Run {
+        fn clone(&self) -> Run {
+            Run {
+                command: self.command.clone(),
+                args: self.args.clone(),
+                config: self.config.try_clone().unwrap(),
+                stdin_data: self.stdin_data.as_ref().cloned(),
+            }
+        }
+    }
 
-    fn bitor(self, rhs: Run) -> Pipeline {
-        self.add(rhs)
+    impl BitOr for Run {
+        type Output = Pipeline;
+
+        fn bitor(self, rhs: Run) -> Pipeline {
+            Pipeline::new(self, rhs)
+        }
+    }
+
+    #[derive(Debug)]
+    struct ReadOutAdapter(Popen);
+
+    impl Read for ReadOutAdapter {
+        fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+            self.0.stdout.as_mut().unwrap().read(buf)
+        }
+    }
+
+    #[derive(Debug)]
+    struct ReadErrAdapter(Popen);
+
+    impl Read for ReadErrAdapter {
+        fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+            self.0.stderr.as_mut().unwrap().read(buf)
+        }
+    }
+
+    #[derive(Debug)]
+    struct WriteAdapter(Popen);
+
+    impl Write for WriteAdapter {
+        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+            self.0.stdin.as_mut().unwrap().write(buf)
+        }
+        fn flush(&mut self) -> IoResult<()> {
+            self.0.stdin.as_mut().unwrap().flush()
+        }
+    }
+
+    // We must implement Drop in order to close the stream.  The typical
+    // use case for stream_stdin() is a process that reads something from
+    // stdin.  WriteAdapter going out of scope invokes Popen::drop(),
+    // which waits for the process to exit.  Without closing stdin, this
+    // deadlocks because the child process hangs reading its stdin.
+
+    impl Drop for WriteAdapter {
+        fn drop(&mut self) {
+            self.0.stdin.take();
+        }
+    }
+
+    pub struct Capture {
+        pub stdout: Vec<u8>,
+        pub stderr: Vec<u8>,
+    }
+
+    impl Capture {
+        pub fn stdout_str(&self) -> String {
+            String::from_utf8_lossy(&self.stdout).into_owned()
+        }
+
+        pub fn stderr_str(&self) -> String {
+            String::from_utf8_lossy(&self.stderr).into_owned()
+        }
+    }
+
+    pub enum InputRedirection {
+        NoAction(Redirection),
+        FeedData(Vec<u8>),
+    }
+
+    pub trait IntoInputRedirection {
+        fn into_input_redirection(self) -> InputRedirection;
+    }
+
+    impl IntoInputRedirection for Redirection {
+        fn into_input_redirection(self) -> InputRedirection {
+            if let Redirection::Merge = self {
+                panic!("Redirection::Merge is only allowed for output streams");
+            }
+            InputRedirection::NoAction(self)
+        }
+    }
+
+    impl IntoInputRedirection for File {
+        fn into_input_redirection(self) -> InputRedirection {
+            InputRedirection::NoAction(Redirection::File(self))
+        }
+    }
+
+    pub struct NullFile;
+
+    impl IntoInputRedirection for NullFile {
+        fn into_input_redirection(self) -> InputRedirection {
+            let null_file = OpenOptions::new().read(true).open(NULL_DEVICE).unwrap();
+            InputRedirection::NoAction(Redirection::File(null_file))
+        }
+    }
+
+    impl IntoInputRedirection for Vec<u8> {
+        fn into_input_redirection(self) -> InputRedirection {
+            InputRedirection::FeedData(self)
+        }
+    }
+
+    impl<'a> IntoInputRedirection for &'a str {
+        fn into_input_redirection(self) -> InputRedirection {
+            InputRedirection::FeedData(self.as_bytes().to_vec())
+        }
+    }
+
+    pub trait IntoOutputRedirection {
+        fn into_output_redirection(self) -> Redirection;
+    }
+
+    impl IntoOutputRedirection for Redirection {
+        fn into_output_redirection(self) -> Redirection {
+            self
+        }
+    }
+
+    impl IntoOutputRedirection for File {
+        fn into_output_redirection(self) -> Redirection {
+            Redirection::File(self)
+        }
+    }
+
+    impl IntoOutputRedirection for NullFile {
+        fn into_output_redirection(self) -> Redirection {
+            let null_file = OpenOptions::new().write(true).open(NULL_DEVICE).unwrap();
+            Redirection::File(null_file)
+        }
     }
 }
 
-impl BitOr for Pipeline {
-    type Output = Pipeline;
 
-    fn bitor(mut self, rhs: Pipeline) -> Pipeline {
-        self.cmds.extend(rhs.cmds);
-        self.stdout = rhs.stdout;
-        self
+mod pipeline {
+    use std::io::{Result as IoResult, Read, Write};
+    use std::ops::BitOr;
+    use std::fs::File;
+
+    use popen;
+    use popen::{Popen, Redirection, Result as PopenResult};
+
+    use super::run::{Run, IntoInputRedirection, InputRedirection, IntoOutputRedirection};
+
+    #[derive(Debug)]
+    pub struct Pipeline {
+        cmds: Vec<Run>,
+        stdin: Redirection,
+        stdout: Redirection,
+        stdin_data: Option<Vec<u8>>,
     }
-}
 
-#[derive(Debug)]
-struct ReadPipelineAdapter(Vec<Popen>);
+    impl Pipeline {
+        pub fn new(cmd1: Run, cmd2: Run) -> Pipeline {
+            Pipeline {
+                cmds: vec![cmd1, cmd2],
+                stdin: Redirection::None,
+                stdout: Redirection::None,
+                stdin_data: None,
+            }
+        }
 
-impl Read for ReadPipelineAdapter {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-        let last = self.0.last_mut().unwrap();
-        last.stdout.as_mut().unwrap().read(buf)
+        pub fn add(mut self, r: Run) -> Pipeline {
+            self.cmds.push(r);
+            self
+        }
+
+        pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Pipeline {
+            match stdin.into_input_redirection() {
+                InputRedirection::NoAction(r) => self.stdin = r,
+                InputRedirection::FeedData(data) => {
+                    self.stdin = Redirection::Pipe;
+                    self.stdin_data = Some(data);
+                }
+            };
+            self
+        }
+
+        pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Pipeline {
+            self.stdout = stdout.into_output_redirection();
+            self
+        }
+
+        // Terminators:
+
+        pub fn popen(mut self) -> PopenResult<Vec<Popen>> {
+            assert!(self.cmds.len() >= 2);
+            let cnt = self.cmds.len();
+
+            let first_cmd = self.cmds.drain(..1).next().unwrap();
+            self.cmds.insert(0, first_cmd.stdin(self.stdin));
+
+            let last_cmd = self.cmds.drain(cnt - 1..).next().unwrap();
+            self.cmds.push(last_cmd.stdout(self.stdout));
+
+            let mut ret = Vec::<Popen>::new();
+
+            for (idx, mut runner) in self.cmds.into_iter().enumerate() {
+                if idx != 0 {
+                    let prev_stdout = ret[idx - 1].stdout.take().unwrap();
+                    runner = runner.stdin(prev_stdout);
+                }
+                if idx != cnt - 1 {
+                    runner = runner.stdout(Redirection::Pipe);
+                }
+                ret.push(runner.popen()?);
+            }
+            Ok(ret)
+        }
+
+        pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
+            let v = self.stdout(Redirection::Pipe).popen()?;
+            Ok(Box::new(ReadPipelineAdapter(v)))
+        }
+
+        pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
+            let v = self.stdin(Redirection::Pipe).popen()?;
+            Ok(Box::new(WritePipelineAdapter(v)))
+        }
+
+        pub fn capture(mut self) -> PopenResult<CaptureOutput> {
+            assert!(self.cmds.len() >= 2);
+
+            let stdin_data = self.stdin_data.take();
+            let mut v = self.stdout(Redirection::Pipe).popen()?;
+
+            let mut first = v.drain(..1).next().unwrap();
+            let vlen = v.len();
+            let mut last = v.drain(vlen - 1..).next().unwrap();
+
+            let (maybe_out, _) = popen::communicate_bytes(
+                &mut first.stdin, &mut last.stdout, &mut None,
+                stdin_data.as_ref().map(|v| &v[..]))?;
+            let out = maybe_out.unwrap_or_else(Vec::new);
+
+            Ok(CaptureOutput(out))
+        }
     }
-}
 
-#[derive(Debug)]
-struct WritePipelineAdapter(Vec<Popen>);
-
-impl WritePipelineAdapter {
-    fn stdin(&mut self) -> &mut File {
-        let first = self.0.first_mut().unwrap();
-        first.stdin.as_mut().unwrap()
+    impl Clone for Pipeline {
+        fn clone(&self) -> Pipeline {
+            Pipeline {
+                cmds: self.cmds.clone(),
+                stdin: self.stdin.try_clone().unwrap(),
+                stdout: self.stdout.try_clone().unwrap(),
+                stdin_data: self.stdin_data.clone()
+            }
+        }
     }
-}
 
-impl Write for WritePipelineAdapter {
-    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
-        self.stdin().write(buf)
+    impl BitOr<Run> for Pipeline {
+        type Output = Pipeline;
+
+        fn bitor(self, rhs: Run) -> Pipeline {
+            self.add(rhs)
+        }
     }
-    fn flush(&mut self) -> IoResult<()> {
-        self.stdin().flush()
+
+    impl BitOr for Pipeline {
+        type Output = Pipeline;
+
+        fn bitor(mut self, rhs: Pipeline) -> Pipeline {
+            self.cmds.extend(rhs.cmds);
+            self.stdout = rhs.stdout;
+            self
+        }
     }
-}
 
-impl Drop for WritePipelineAdapter {
-    // the same rationale as Drop for WriteAdapter
-    fn drop(&mut self) {
-        let ref mut first = self.0[0];
-        first.stdin.take();
+    #[derive(Debug)]
+    struct ReadPipelineAdapter(Vec<Popen>);
+
+    impl Read for ReadPipelineAdapter {
+        fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+            let last = self.0.last_mut().unwrap();
+            last.stdout.as_mut().unwrap().read(buf)
+        }
     }
-}
 
-pub struct CaptureOutput(Vec<u8>);
+    #[derive(Debug)]
+    struct WritePipelineAdapter(Vec<Popen>);
 
-impl CaptureOutput {
-    pub fn stdout_str(&self) -> String {
-        String::from_utf8_lossy(&self.0).into_owned()
+    impl WritePipelineAdapter {
+        fn stdin(&mut self) -> &mut File {
+            let first = self.0.first_mut().unwrap();
+            first.stdin.as_mut().unwrap()
+        }
+    }
+
+    impl Write for WritePipelineAdapter {
+        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+            self.stdin().write(buf)
+        }
+        fn flush(&mut self) -> IoResult<()> {
+            self.stdin().flush()
+        }
+    }
+
+    impl Drop for WritePipelineAdapter {
+        // the same rationale as Drop for WriteAdapter
+        fn drop(&mut self) {
+            let ref mut first = self.0[0];
+            first.stdin.take();
+        }
+    }
+
+    pub struct CaptureOutput(Vec<u8>);
+
+    impl CaptureOutput {
+        pub fn stdout_str(&self) -> String {
+            String::from_utf8_lossy(&self.0).into_owned()
+        }
     }
 }
