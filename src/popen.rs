@@ -171,15 +171,15 @@ impl Popen {
     }
 
     fn comm_read(outfile: &mut Option<File>) -> IoResult<Vec<u8>> {
+        let mut outfile = outfile.take().expect("file missing");
         let mut contents = Vec::new();
-        outfile.as_mut().expect("file missing").read_to_end(&mut contents)?;
-        outfile.take();
+        outfile.read_to_end(&mut contents)?;
         Ok(contents)
     }
 
     fn comm_write(infile: &mut Option<File>, input_data: &[u8]) -> IoResult<()> {
-        infile.as_mut().expect("file missing").write_all(input_data)?;
-        infile.take();
+        let mut infile = infile.take().expect("file missing");
+        infile.write_all(input_data)?;
         Ok(())
     }
 
@@ -661,14 +661,14 @@ impl Drop for Popen {
 
 #[derive(Debug)]
 pub enum PopenError {
-    UtfError(FromUtf8Error),
+    Utf8Error(FromUtf8Error),
     IoError(io::Error),
     LogicError(&'static str),
 }
 
 impl From<FromUtf8Error> for PopenError {
     fn from(err: FromUtf8Error) -> PopenError {
-        PopenError::UtfError(err)
+        PopenError::Utf8Error(err)
     }
 }
 
@@ -681,7 +681,7 @@ impl From<io::Error> for PopenError {
 impl Error for PopenError {
     fn description(&self) -> &str {
         match *self {
-            PopenError::UtfError(ref err) => err.description(),
+            PopenError::Utf8Error(ref err) => err.description(),
             PopenError::IoError(ref err) => err.description(),
             PopenError::LogicError(description) => description,
         }
@@ -689,7 +689,7 @@ impl Error for PopenError {
 
     fn cause(&self) -> Option<&Error> {
         match *self {
-            PopenError::UtfError(ref err) => Some(err as &Error),
+            PopenError::Utf8Error(ref err) => Some(err as &Error),
             PopenError::IoError(ref err) => Some(err as &Error),
             PopenError::LogicError(_) => None,
         }
@@ -699,7 +699,7 @@ impl Error for PopenError {
 impl fmt::Display for PopenError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            PopenError::UtfError(ref err) => fmt::Display::fmt(err, f),
+            PopenError::Utf8Error(ref err) => fmt::Display::fmt(err, f),
             PopenError::IoError(ref err) => fmt::Display::fmt(err, f),
             PopenError::LogicError(desc) => f.write_str(desc)
         }

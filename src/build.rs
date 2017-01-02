@@ -10,6 +10,7 @@ pub struct Run {
     command: OsString,
     args: Vec<OsString>,
     config: PopenConfig,
+    stdin_data: Option<Vec<u8>>,
 }
 
 #[cfg(unix)]
@@ -26,46 +27,13 @@ mod os {
 
 pub use self::os::*;
 
-pub trait IntoRedirection {
-    fn into_redirection(self, bool) -> Redirection;
-}
-
-impl IntoRedirection for Redirection {
-    fn into_redirection(self, output: bool) -> Redirection {
-        if !output {
-            if let Redirection::Merge = self {
-                panic!("Redirection::Merge is only allowed for output streams");
-            }
-        }
-        self
-    }
-}
-
-impl IntoRedirection for File {
-    fn into_redirection(self, _output: bool) -> Redirection {
-        Redirection::File(self)
-    }
-}
-
-pub struct NullFile;
-
-impl IntoRedirection for NullFile {
-    fn into_redirection(self, output: bool) -> Redirection {
-        let null_file = if output {
-            OpenOptions::new().write(true).open(NULL_DEVICE)
-        } else {
-            OpenOptions::new().read(true).open(NULL_DEVICE)
-        }.unwrap();
-        Redirection::File(null_file)
-    }
-}
-
 impl Run {
     pub fn cmd<S: AsRef<OsStr>>(command: S) -> Run {
         Run {
             command: command.as_ref().to_owned(),
             args: vec![],
             config: PopenConfig::default(),
+            stdin_data: None,
         }
     }
 
@@ -88,17 +56,21 @@ impl Run {
         self
     }
 
-    pub fn stdin<T: IntoRedirection>(mut self, stdin: T) -> Run {
-        match (&self.config.stdin, stdin.into_redirection(false)) {
-            (&Redirection::None, new) => self.config.stdin = new,
-            (&Redirection::Pipe, Redirection::Pipe) => (),
+    pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Run {
+        match (&self.config.stdin, stdin.into_input_redirection()) {
+            (&Redirection::None, InputRedirection::Regular(new)) => self.config.stdin = new,
+            (&Redirection::Pipe, InputRedirection::Regular(Redirection::Pipe)) => (),
+            (&Redirection::None, InputRedirection::FeedData(data)) => {
+                self.config.stdin = Redirection::Pipe;
+                self.stdin_data = Some(data);
+            }
             (_, _) => panic!("stdin is already set"),
         }
         self
     }
 
-    pub fn stdout<T: IntoRedirection>(mut self, stdout: T) -> Run {
-        match (&self.config.stdout, stdout.into_redirection(true)) {
+    pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Run {
+        match (&self.config.stdout, stdout.into_output_redirection()) {
             (&Redirection::None, new) => self.config.stdout = new,
             (&Redirection::Pipe, Redirection::Pipe) => (),
             (_, _) => panic!("stdout is already set"),
@@ -106,8 +78,8 @@ impl Run {
         self
     }
 
-    pub fn stderr<T: IntoRedirection>(mut self, stderr: T) -> Run {
-        match (&self.config.stderr, stderr.into_redirection(true)) {
+    pub fn stderr<T: IntoOutputRedirection>(mut self, stderr: T) -> Run {
+        match (&self.config.stderr, stderr.into_output_redirection()) {
             (&Redirection::None, new) => self.config.stderr = new,
             (&Redirection::Pipe, Redirection::Pipe) => (),
             (_, _) => panic!("stderr is already set"),
@@ -137,6 +109,16 @@ impl Run {
         let p = self.stdin(Redirection::Pipe).popen()?;
         Ok(Box::new(WriteAdapter(p)))
     }
+
+    pub fn capture(mut self) -> PopenResult<Capture> {
+        let stdin_data = self.stdin_data.take();
+        let mut p = self.popen()?;
+        let (maybe_out, maybe_err) = p.communicate_bytes(
+            stdin_data.as_ref().map(|v| &v[..]))?;
+        let out = maybe_out.unwrap_or_else(Vec::new);
+        let err = maybe_err.unwrap_or_else(Vec::new);
+        Ok(Capture { stdout: out, stderr: err })
+    }
 }
 
 impl Clone for Run {
@@ -145,6 +127,7 @@ impl Clone for Run {
             command: self.command.clone(),
             args: self.args.clone(),
             config: self.config.try_clone().unwrap(),
+            stdin_data: self.stdin_data.as_ref().cloned(),
         }
     }
 }
@@ -154,6 +137,74 @@ impl BitOr for Run {
 
     fn bitor(self, rhs: Run) -> Pipeline {
         Pipeline::new().add(self).add(rhs)
+    }
+}
+
+pub enum InputRedirection {
+    Regular(Redirection),
+    FeedData(Vec<u8>),
+}
+
+pub trait IntoInputRedirection {
+    fn into_input_redirection(self) -> InputRedirection;
+}
+
+impl IntoInputRedirection for Redirection {
+    fn into_input_redirection(self) -> InputRedirection {
+        if let Redirection::Merge = self {
+            panic!("Redirection::Merge is only allowed for output streams");
+        }
+        InputRedirection::Regular(self)
+    }
+}
+
+impl IntoInputRedirection for File {
+    fn into_input_redirection(self) -> InputRedirection {
+        InputRedirection::Regular(Redirection::File(self))
+    }
+}
+
+pub struct NullFile;
+
+impl IntoInputRedirection for NullFile {
+    fn into_input_redirection(self) -> InputRedirection {
+        let null_file = OpenOptions::new().read(true).open(NULL_DEVICE).unwrap();
+        InputRedirection::Regular(Redirection::File(null_file))
+    }
+}
+
+impl IntoInputRedirection for Vec<u8> {
+    fn into_input_redirection(self) -> InputRedirection {
+        InputRedirection::FeedData(self)
+    }
+}
+
+impl<'a> IntoInputRedirection for &'a str {
+    fn into_input_redirection(self) -> InputRedirection {
+        InputRedirection::FeedData(self.as_bytes().to_vec())
+    }
+}
+
+pub trait IntoOutputRedirection {
+    fn into_output_redirection(self) -> Redirection;
+}
+
+impl IntoOutputRedirection for Redirection {
+    fn into_output_redirection(self) -> Redirection {
+        self
+    }
+}
+
+impl IntoOutputRedirection for File {
+    fn into_output_redirection(self) -> Redirection {
+        Redirection::File(self)
+    }
+}
+
+impl IntoOutputRedirection for NullFile {
+    fn into_output_redirection(self) -> Redirection {
+        let null_file = OpenOptions::new().write(true).open(NULL_DEVICE).unwrap();
+        Redirection::File(null_file)
     }
 }
 
@@ -199,6 +250,21 @@ impl Drop for WriteAdapter {
     }
 }
 
+pub struct Capture {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+impl Capture {
+    pub fn stdout_str(&self) -> String {
+        String::from_utf8_lossy(&self.stdout).into_owned()
+    }
+
+    pub fn stderr_str(&self) -> String {
+        String::from_utf8_lossy(&self.stderr).into_owned()
+    }
+}
+
 
 #[derive(Debug)]
 pub struct Pipeline {
@@ -221,13 +287,16 @@ impl Pipeline {
         self
     }
 
-    pub fn stdin<T: IntoRedirection>(mut self, stdin: T) -> Pipeline {
-        self.stdin = stdin.into_redirection(false);
+    pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Pipeline {
+        self.stdin = match stdin.into_input_redirection() {
+            InputRedirection::Regular(x) => x,
+            InputRedirection::FeedData(..) => panic!(), // XXX
+        };
         self
     }
 
-    pub fn stdout<T: IntoRedirection>(mut self, stdout: T) -> Pipeline {
-        self.stdout = stdout.into_redirection(true);
+    pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Pipeline {
+        self.stdout = stdout.into_output_redirection();
         self
     }
 

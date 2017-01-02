@@ -47,6 +47,22 @@ fn stream_stdin() {
 }
 
 #[test]
+fn stream_capture_out() {
+    let c = Run::cmd("printf").arg("foo")
+        .stdout(Redirection::Pipe).capture().unwrap();
+    assert_eq!(c.stdout_str(), "foo");
+}
+
+#[test]
+fn stream_capture_out_with_input_data() {
+    let c = Run::cmd("cat")
+        .stdin("foo")
+        .stdout(Redirection::Pipe)
+        .capture().unwrap();
+    assert_eq!(c.stdout_str(), "foo");
+}
+
+#[test]
 fn shell_exec() {
     // note: this uses built-in echo on Windows, so don't try anything
     // fancy like echo -n
