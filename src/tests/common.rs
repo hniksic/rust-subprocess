@@ -110,6 +110,22 @@ fn input_output_from_file() {
 }
 
 #[test]
+fn write_to_subprocess() {
+    let tmpdir = TempDir::new("test").unwrap();
+    let tmpname = tmpdir.path().join("output");
+    let mut p = Popen::create(
+        &[r"uniq", "-", tmpname.to_str().unwrap()],
+        PopenConfig {
+            stdin: Redirection::Pipe,
+            ..Default::default()
+        })
+        .unwrap();
+    p.stdin.take().unwrap().write_all(b"foo\nfoo\nbar\n").unwrap();
+    assert_eq!(p.wait().unwrap(), ExitStatus::Exited(0));
+    assert_eq!(read_whole_file(File::open(tmpname).unwrap()), "foo\nbar\n");
+}
+
+#[test]
 fn communicate_input() {
     let tmpdir = TempDir::new("test").unwrap();
     let tmpname = tmpdir.path().join("input");
