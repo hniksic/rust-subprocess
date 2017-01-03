@@ -144,3 +144,15 @@ fn pipeline_wait() {
     let status = (Run::cmd("true") | Run::cmd("false")).wait().unwrap();
     assert_eq!(status, ExitStatus::Exited(1));
 }
+
+#[test]
+fn pipeline_invalid_1() {
+    let try = (Run::cmd("echo").arg("foo") | Run::cmd("no-such-command")).wait();
+    assert!(try.is_err());
+}
+
+#[test]
+fn pipeline_invalid_2() {
+    let try = (Run::cmd("no-such-command") | Run::cmd("echo").arg("foo")).wait();
+    assert!(try.is_err());
+}
