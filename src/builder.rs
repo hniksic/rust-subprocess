@@ -22,7 +22,7 @@ mod run {
     use std::ops::BitOr;
 
     use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
-    use common::ExitStatus;
+    use os_common::ExitStatus;
 
     use super::os::*;
     use super::Pipeline;
@@ -286,7 +286,7 @@ mod pipeline {
 
     use popen;
     use popen::{Popen, Redirection, Result as PopenResult};
-    use common::ExitStatus;
+    use os_common::ExitStatus;
 
     use super::run::{Run, IntoInputRedirection, InputRedirection, IntoOutputRedirection};
 

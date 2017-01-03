@@ -8,7 +8,7 @@ use std::fmt;
 use std::ffi::{OsStr, OsString};
 use std::time::Duration;
 
-use common::{ExitStatus, StandardStream};
+use os_common::{ExitStatus, StandardStream};
 
 use self::ChildState::*;
 
@@ -249,7 +249,7 @@ mod os {
     use posix;
     use std::mem;
     use std::os::unix::io::AsRawFd;
-    use common::ExitStatus;
+    use os_common::ExitStatus;
     use std::ffi::OsString;
     use std::time::Duration;
     use super::ChildState::*;
@@ -426,7 +426,7 @@ mod os {
     use std::io;
     use std::fs::File;
     use win32;
-    use common::{ExitStatus, StandardStream};
+    use os_common::{ExitStatus, StandardStream};
     use std::ffi::{OsStr, OsString};
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::time::Duration;

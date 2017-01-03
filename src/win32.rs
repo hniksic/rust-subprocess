@@ -20,7 +20,7 @@ use winapi::winnt::PHANDLE;
 pub use winapi::winerror::{ERROR_BAD_PATHNAME, ERROR_ACCESS_DENIED};
 pub const STILL_ACTIVE: u32 = 259;
 
-use common::StandardStream;
+use os_common::StandardStream;
 
 #[derive(Debug)]
 pub struct Handle(RawHandle);

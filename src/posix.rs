@@ -7,7 +7,7 @@ use std::os::unix::io::FromRawFd;
 use std::ptr;
 use std::ffi::CString;
 
-use common::{ExitStatus, StandardStream};
+use os_common::{ExitStatus, StandardStream};
 
 pub use libc::ECHILD;
 
