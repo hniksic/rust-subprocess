@@ -91,8 +91,7 @@ impl Redirection {
 
 impl Popen {
     pub fn create<S: AsRef<OsStr>>(argv: &[S], config: PopenConfig)
-        -> Result<Popen>
-    {
+                                   -> Result<Popen> {
         let argv: Vec<OsString> = argv.iter()
             .map(|p| p.as_ref().to_owned()).collect();
         let mut inst = Popen {
@@ -297,7 +296,7 @@ mod os {
 
         fn wait(&mut self) -> Result<ExitStatus> {
             while let Running {..} = self.child_state {
-                self.waitpid(0)?;
+                self.waitpid(true)?;
             }
             Ok(self.exit_status().unwrap())
         }
@@ -315,7 +314,7 @@ mod os {
             // delay doubles at every iteration, so initial delay will be 1ms
             let mut delay = Duration::new(0, 500_000);
             loop {
-                self.waitpid(posix::WNOHANG)?;
+                self.waitpid(false)?;
                 if let Finished(exit_status) = self.child_state {
                     return Ok(Some(exit_status));
                 }
@@ -341,7 +340,7 @@ mod os {
     trait PopenOsImpl: super::PopenOs {
         fn do_exec(&self, argv: Vec<OsString>,
                    child_ends: (Option<File>, Option<File>, Option<File>)) -> IoResult<()>;
-        fn waitpid(&mut self, flags: i32) -> IoResult<()>;
+        fn waitpid(&mut self, block: bool) -> IoResult<()>;
         fn send_signal(&self, signal: u8) -> IoResult<()>;
     }
 
@@ -361,14 +360,29 @@ mod os {
             posix::execvp(&argv[0], &argv)
         }
 
-        fn waitpid(&mut self, flags: i32) -> IoResult<()> {
+        fn waitpid(&mut self, block: bool) -> IoResult<()> {
             match self.child_state {
                 Preparing => panic!("child_state == Preparing"),
                 Running { pid, .. } => {
-                    // XXX handle ECHILD and EINTR
-                    let (pid_out, exit_status) = posix::waitpid(pid, flags)?;
-                    if pid_out == pid {
-                        self.child_state = Finished(exit_status);
+                    match posix::waitpid(pid, if block { 0 } else { posix::WNOHANG }) {
+                        Err(e) => {
+                            if let Some(errno) = e.raw_os_error() {
+                                if errno == posix::ECHILD {
+                                    // Someone else has waited for the child
+                                    // (another thread, a signal handler...).
+                                    // The PID no longer exists and we cannot
+                                    // find its exit status.
+                                    self.child_state = Finished(ExitStatus::Undetermined);
+                                    return Ok(());
+                                }
+                            }
+                            return Err(e);
+                        }
+                        Ok((pid_out, exit_status)) => {
+                            if pid_out == pid {
+                                self.child_state = Finished(exit_status);
+                            }
+                        }
                     }
                 },
                 Finished(..) => (),
@@ -451,7 +465,7 @@ mod os {
                 Finished(exit_status) => Ok(exit_status),
                 // Since we invoked wait_handle without timeout, exit status should
                 // exist at this point.  The only way for it not to exist would be if
-                // something strange happened, like WaitForSingleObject returneing
+                // something strange happened, like WaitForSingleObject returning
                 // something other than OBJECT_0.
                 Running {..} => Err(
                     PopenError::LogicError("Failed to obtain exit status"))

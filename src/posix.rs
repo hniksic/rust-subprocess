@@ -9,6 +9,8 @@ use std::ffi::CString;
 
 use common::{ExitStatus, StandardStream};
 
+pub use libc::ECHILD;
+
 fn check_err<T: Ord + Default>(num: T) -> Result<T> {
     if num < T::default() {
         return Err(Error::last_os_error());
