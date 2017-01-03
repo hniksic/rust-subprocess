@@ -9,6 +9,16 @@ pub enum ExitStatus {
     Undetermined,
 }
 
+impl ExitStatus {
+    pub fn success(&self) -> bool {
+        if let &ExitStatus::Exited(0) = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 #[allow(dead_code)]
 pub enum StandardStream {

@@ -17,7 +17,7 @@ pub fn read_whole_file<T: Read>(mut f: T) -> String {
 #[test]
 fn good_cmd() {
     let mut p = Popen::create(&["true"], PopenConfig::default()).unwrap();
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn read_from_stdout() {
         stdout: Redirection::Pipe, ..Default::default()
     }).unwrap();
     assert!(read_whole_file(p.stdout.take().unwrap()) == "foo\n");
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn input_from_file() {
         ..Default::default()
     }).unwrap();
     assert!(read_whole_file(p.stdout.take().unwrap()) == "foo");
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn output_to_file() {
         &["printf", "foo"], PopenConfig {
             stdout: Redirection::File(outfile), ..Default::default()
         }).unwrap();
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
     assert!(read_whole_file(File::open(&tmpname).unwrap()) == "foo");
 }
 
@@ -105,7 +105,7 @@ fn input_output_from_file() {
             stdout: Redirection::File(File::create(&tmpname_out).unwrap()),
             ..Default::default()
         }).unwrap();
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
     assert!(read_whole_file(File::open(&tmpname_out).unwrap()) == "foo");
 }
 
@@ -139,7 +139,7 @@ fn communicate_input() {
     } else {
         assert!(false);
     }
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
     assert!(read_whole_file(File::open(&tmpname).unwrap()) == "hello world");
 }
 
@@ -157,7 +157,7 @@ fn communicate_output() {
     } else {
         assert!(false);
     }
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
 }
 
 #[test]
@@ -175,7 +175,7 @@ fn communicate_input_output() {
     } else {
         assert!(false);
     }
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn communicate_input_output_long() {
     } else {
         assert!(false);
     }
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
 }
 
 #[test]
@@ -212,7 +212,7 @@ fn communicate_input_output_str() {
     } else {
         assert!(false);
     }
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
 }
 
 #[test]
@@ -234,7 +234,7 @@ fn merge_err_to_out_pipe() {
     } else {
         assert!(false);
     }
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn merge_out_to_err_pipe() {
     } else {
         assert!(false);
     }
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
 }
 
 #[test]
@@ -263,7 +263,7 @@ fn merge_err_to_out_file() {
             stderr: Redirection::Merge,
             ..Default::default()
         }).unwrap();
-    assert!(p.wait().unwrap() == ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
     assert!(read_whole_file(File::open(&tmpname).unwrap()) == "foobar");
 }
 
