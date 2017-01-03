@@ -129,7 +129,10 @@ mod run {
                 stdin_data.as_ref().map(|v| &v[..]))?;
             let out = maybe_out.unwrap_or_else(Vec::new);
             let err = maybe_err.unwrap_or_else(Vec::new);
-            Ok(Capture { stdout: out, stderr: err })
+            let status = p.wait()?;
+            Ok(Capture {
+                stdout: out, stderr: err, exit_status: status
+            })
         }
     }
 
@@ -197,6 +200,7 @@ mod run {
     pub struct Capture {
         pub stdout: Vec<u8>,
         pub stderr: Vec<u8>,
+        pub exit_status: ExitStatus,
     }
 
     impl Capture {
@@ -390,7 +394,9 @@ mod pipeline {
                 stdin_data.as_ref().map(|v| &v[..]))?;
             let out = maybe_out.unwrap_or_else(Vec::new);
 
-            Ok(CaptureOutput(out))
+            let status = last.wait()?;
+
+            Ok(CaptureOutput { stdout: out, exit_status: status })
         }
     }
 
@@ -460,11 +466,14 @@ mod pipeline {
         }
     }
 
-    pub struct CaptureOutput(Vec<u8>);
+    pub struct CaptureOutput {
+        pub stdout: Vec<u8>,
+        pub exit_status: ExitStatus
+    }
 
     impl CaptureOutput {
         pub fn stdout_str(&self) -> String {
-            String::from_utf8_lossy(&self.0).into_owned()
+            String::from_utf8_lossy(&self.stdout).into_owned()
         }
     }
 }
