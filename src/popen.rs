@@ -270,27 +270,31 @@ mod os {
                 if child_pid == 0 {
                     mem::drop(exec_fail_pipe.0);
                     let result: IoResult<()> = self.do_exec(argv, child_ends);
-                    // Notify the parent process that exec has failed, and exit.
-                    let error_code: i32 = match result {
+                    // If we are here, it means that exec has failed.  Notify
+                    // the parent and exit.
+                    let error_code = match result {
                         Ok(()) => unreachable!(),
                         Err(e) => e.raw_os_error().unwrap_or(-1)
-                    };
-                    // XXX use the byteorder crate to serialize the error
-                    exec_fail_pipe.1.write_all(format!("{}", error_code).as_bytes())
-                        .expect("write to error pipe");
+                    } as u32;
+                    exec_fail_pipe.1.write_all(
+                        &[error_code as u8, (error_code >> 8) as u8,
+                          (error_code >> 16) as u8, (error_code >> 24) as u8]).ok();
                     posix::_exit(127);
                 }
                 self.child_state = Running { pid: child_pid, ext: () };
             }
             mem::drop(exec_fail_pipe.1);
-            let mut error_string = String::new();
-            exec_fail_pipe.0.read_to_string(&mut error_string)?;
-            if error_string.len() != 0 {
-                let error_code: i32 = error_string.parse()
-                    .expect("parse child error code");
-                Err(PopenError::from(io::Error::from_raw_os_error(error_code)))
-            } else {
+            let mut error_buf = [0u8; 4];
+            let read_cnt = exec_fail_pipe.0.read(&mut error_buf)?;
+            if read_cnt == 0 {
                 Ok(())
+            } else if read_cnt == 4 {
+                let error_code: u32 =
+                    error_buf[0] as u32 + (error_buf[1] as u32) << 8
+                    + (error_buf[2] as u32) << 16 + (error_buf[3] as u32) << 24;
+                Err(PopenError::from(io::Error::from_raw_os_error(error_code as i32)))
+            } else {
+                Err(PopenError::LogicError("invalid read_count from exec pipe"))
             }
         }
 
