@@ -8,6 +8,7 @@ use std::ptr;
 use std::mem;
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
+use std::iter;
 
 use kernel32;
 
@@ -64,9 +65,7 @@ fn check_handle(raw_handle: RawHandle) -> Result<RawHandle> {
 
 // OsStr to zero-terminated owned vector
 fn to_nullterm(s: &OsStr) -> Vec<u16> {
-    let mut vec: Vec<_> = s.encode_wide().collect();
-    vec.push(0u16);
-    vec
+    s.encode_wide().chain(iter::once(0u16)).collect()
 }
 
 pub fn CreatePipe(inherit_handle: bool) -> Result<(File, File)> {
