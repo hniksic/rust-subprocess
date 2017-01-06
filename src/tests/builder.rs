@@ -2,21 +2,21 @@ extern crate tempdir;
 
 use std::fs::File;
 
-use super::super::{Run, Redirection, NullFile, ExitStatus};
+use super::super::{Exec, Redirection, NullFile, ExitStatus};
 
 use self::tempdir::TempDir;
 
 use tests::common::read_whole_file;
 
 #[test]
-fn run_join() {
-    let status = Run::cmd("true").join().unwrap();
+fn exec_join() {
+    let status = Exec::cmd("true").join().unwrap();
     assert_eq!(status, ExitStatus::Exited(0));
 }
 
 #[test]
 fn null_file() {
-    let mut p = Run::cmd("cat")
+    let mut p = Exec::cmd("cat")
         .stdin(NullFile).stdout(Redirection::Pipe)
         .popen().unwrap();
     let (out, _) = p.communicate(None).unwrap();
@@ -25,7 +25,7 @@ fn null_file() {
 
 #[test]
 fn stream_stdout() {
-    let stream = Run::cmd("echo")
+    let stream = Exec::cmd("echo")
         .args(&["-n", "foo"])
         .stream_stdout().unwrap();
     assert!(read_whole_file(stream) == "foo");
@@ -33,7 +33,7 @@ fn stream_stdout() {
 
 #[test]
 fn stream_stderr() {
-    let stream = Run::cmd("sh")
+    let stream = Exec::cmd("sh")
         .args(&["-c", "echo -n foo >&2"])
         .stream_stderr().unwrap();
     assert!(read_whole_file(stream) == "foo");
@@ -44,7 +44,7 @@ fn stream_stdin() {
     let tmpdir = TempDir::new("test").unwrap();
     let tmpname = tmpdir.path().join("output");
     {
-        let mut stream = Run::cmd("cat")
+        let mut stream = Exec::cmd("cat")
             .stdout(File::create(&tmpname).unwrap())
             .stream_stdin().unwrap();
         stream.write_all(b"foo").unwrap();
@@ -54,21 +54,21 @@ fn stream_stdin() {
 
 #[test]
 fn stream_capture_out() {
-    let c = Run::cmd("printf").arg("foo")
+    let c = Exec::cmd("printf").arg("foo")
         .stdout(Redirection::Pipe).capture().unwrap();
     assert_eq!(c.stdout_str(), "foo");
 }
 
 #[test]
 fn stream_capture_err() {
-    let c = Run::cmd("sh").arg("-c").arg("printf foo >&2")
+    let c = Exec::cmd("sh").arg("-c").arg("printf foo >&2")
         .stderr(Redirection::Pipe).capture().unwrap();
     assert_eq!(c.stderr_str(), "foo");
 }
 
 #[test]
 fn stream_capture_out_with_input_data() {
-    let c = Run::cmd("cat")
+    let c = Exec::cmd("cat")
         .stdin("foo")
         .stdout(Redirection::Pipe)
         .capture().unwrap();
@@ -76,17 +76,17 @@ fn stream_capture_out_with_input_data() {
 }
 
 #[test]
-fn shell_exec() {
+fn exec_shell() {
     // note: this uses built-in echo on Windows, so don't try anything
     // fancy like echo -n
-    let stream = Run::shell("echo foo").stream_stdout().unwrap();
+    let stream = Exec::shell("echo foo").stream_stdout().unwrap();
     assert_eq!(read_whole_file(stream).trim(), "foo");
 }
 
 #[test]
-fn pipeline_run() {
+fn pipeline_open() {
     let mut processes = {
-        Run::cmd("echo").arg("foo\nbar") | Run::cmd("wc").arg("-l")
+        Exec::cmd("echo").arg("foo\nbar") | Exec::cmd("wc").arg("-l")
     }
     .stdout(Redirection::Pipe).popen().unwrap();
     let (output, _) = processes[1].communicate(None).unwrap();
@@ -96,7 +96,7 @@ fn pipeline_run() {
 #[test]
 fn pipeline_stream_out() {
     let stream = {
-        Run::cmd("echo").arg("foo\nbar") | Run::cmd("wc").arg("-l")
+        Exec::cmd("echo").arg("foo\nbar") | Exec::cmd("wc").arg("-l")
     }.stream_stdout().unwrap();
     assert!(read_whole_file(stream).trim() == "2");
 }
@@ -107,8 +107,8 @@ fn pipeline_stream_in() {
     let tmpname = tmpdir.path().join("output");
     {
         let mut stream = {
-            Run::cmd("cat")
-          | Run::cmd("wc").arg("-l")
+            Exec::cmd("cat")
+          | Exec::cmd("wc").arg("-l")
         }.stdout(File::create(&tmpname).unwrap())
          .stream_stdin().unwrap();
         stream.write_all(b"foo\nbar\nbaz\n").unwrap();
@@ -118,8 +118,8 @@ fn pipeline_stream_in() {
 
 #[test]
 fn pipeline_compose_pipelines() {
-    let pipe1 = Run::cmd("echo").arg("foo\nbar\nfoo") | Run::cmd("sort");
-    let pipe2 = Run::cmd("uniq") | Run::cmd("wc").arg("-l");
+    let pipe1 = Exec::cmd("echo").arg("foo\nbar\nfoo") | Exec::cmd("sort");
+    let pipe2 = Exec::cmd("uniq") | Exec::cmd("wc").arg("-l");
     let pipe = pipe1 | pipe2;
     let stream = pipe.stream_stdout().unwrap();
     assert_eq!(read_whole_file(stream).trim(), "2");
@@ -128,31 +128,31 @@ fn pipeline_compose_pipelines() {
 #[test]
 fn pipeline_capture() {
     let c = {
-        Run::cmd("cat") | Run::shell("wc -l")
+        Exec::cmd("cat") | Exec::shell("wc -l")
     }.stdin("foo\nbar\nbaz\n").capture().unwrap();
     assert_eq!(c.stdout_str().trim(), "3");
 }
 
 #[test]
 fn pipeline_join() {
-    let status = (Run::cmd("true") | Run::cmd("true")).join().unwrap();
+    let status = (Exec::cmd("true") | Exec::cmd("true")).join().unwrap();
     assert_eq!(status, ExitStatus::Exited(0));
 
-    let status = (Run::cmd("false") | Run::cmd("true")).join().unwrap();
+    let status = (Exec::cmd("false") | Exec::cmd("true")).join().unwrap();
     assert_eq!(status, ExitStatus::Exited(0));
 
-    let status = (Run::cmd("true") | Run::cmd("false")).join().unwrap();
+    let status = (Exec::cmd("true") | Exec::cmd("false")).join().unwrap();
     assert_eq!(status, ExitStatus::Exited(1));
 }
 
 #[test]
 fn pipeline_invalid_1() {
-    let try = (Run::cmd("echo").arg("foo") | Run::cmd("no-such-command")).join();
+    let try = (Exec::cmd("echo").arg("foo") | Exec::cmd("no-such-command")).join();
     assert!(try.is_err());
 }
 
 #[test]
 fn pipeline_invalid_2() {
-    let try = (Run::cmd("no-such-command") | Run::cmd("echo").arg("foo")).join();
+    let try = (Exec::cmd("no-such-command") | Exec::cmd("echo").arg("foo")).join();
     assert!(try.is_err());
 }

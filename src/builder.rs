@@ -11,11 +11,11 @@ mod os {
 }
 
 pub use self::os::*;
-pub use self::run::{Run, NullFile};
+pub use self::exec::{Exec, NullFile};
 pub use self::pipeline::Pipeline;
 
 
-mod run {
+mod exec {
     use std::ffi::{OsStr, OsString};
     use std::io::{Result as IoResult, Read, Write};
     use std::fs::{File, OpenOptions};
@@ -28,16 +28,16 @@ mod run {
     use super::Pipeline;
 
     #[derive(Debug)]
-    pub struct Run {
+    pub struct Exec {
         command: OsString,
         args: Vec<OsString>,
         config: PopenConfig,
         stdin_data: Option<Vec<u8>>,
     }
 
-    impl Run {
-        pub fn cmd<S: AsRef<OsStr>>(command: S) -> Run {
-            Run {
+    impl Exec {
+        pub fn cmd<S: AsRef<OsStr>>(command: S) -> Exec {
+            Exec {
                 command: command.as_ref().to_owned(),
                 args: vec![],
                 config: PopenConfig::default(),
@@ -45,26 +45,26 @@ mod run {
             }
         }
 
-        pub fn shell<S: AsRef<OsStr>>(cmdstr: S) -> Run {
-            Run::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
+        pub fn shell<S: AsRef<OsStr>>(cmdstr: S) -> Exec {
+            Exec::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
         }
 
-        pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Run {
+        pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Exec {
             self.args.push(arg.as_ref().to_owned());
             self
         }
 
-        pub fn args<S: AsRef<OsStr>>(mut self, args: &[S]) -> Run {
+        pub fn args<S: AsRef<OsStr>>(mut self, args: &[S]) -> Exec {
             self.args.extend(args.iter().map(|x| x.as_ref().to_owned()));
             self
         }
 
-        pub fn detached(mut self) -> Run {
+        pub fn detached(mut self) -> Exec {
             self.config.detached = true;
             self
         }
 
-        pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Run {
+        pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Exec {
             match (&self.config.stdin, stdin.into_input_redirection()) {
                 (&Redirection::None, InputRedirection::NoAction(new)) => self.config.stdin = new,
                 (&Redirection::Pipe, InputRedirection::NoAction(Redirection::Pipe)) => (),
@@ -77,7 +77,7 @@ mod run {
             self
         }
 
-        pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Run {
+        pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Exec {
             match (&self.config.stdout, stdout.into_output_redirection()) {
                 (&Redirection::None, new) => self.config.stdout = new,
                 (&Redirection::Pipe, Redirection::Pipe) => (),
@@ -86,7 +86,7 @@ mod run {
             self
         }
 
-        pub fn stderr<T: IntoOutputRedirection>(mut self, stderr: T) -> Run {
+        pub fn stderr<T: IntoOutputRedirection>(mut self, stderr: T) -> Exec {
             match (&self.config.stderr, stderr.into_output_redirection()) {
                 (&Redirection::None, new) => self.config.stderr = new,
                 (&Redirection::Pipe, Redirection::Pipe) => (),
@@ -136,9 +136,9 @@ mod run {
         }
     }
 
-    impl Clone for Run {
-        fn clone(&self) -> Run {
-            Run {
+    impl Clone for Exec {
+        fn clone(&self) -> Exec {
+            Exec {
                 command: self.command.clone(),
                 args: self.args.clone(),
                 config: self.config.try_clone().unwrap(),
@@ -147,10 +147,10 @@ mod run {
         }
     }
 
-    impl BitOr for Run {
+    impl BitOr for Exec {
         type Output = Pipeline;
 
-        fn bitor(self, rhs: Run) -> Pipeline {
+        fn bitor(self, rhs: Exec) -> Pipeline {
             Pipeline::new(self, rhs)
         }
     }
@@ -292,18 +292,19 @@ mod pipeline {
     use popen::{Popen, Redirection, Result as PopenResult};
     use os_common::ExitStatus;
 
-    use super::run::{Run, IntoInputRedirection, InputRedirection, IntoOutputRedirection};
+    use super::exec::{Exec, IntoInputRedirection, InputRedirection,
+                      IntoOutputRedirection};
 
     #[derive(Debug)]
     pub struct Pipeline {
-        cmds: Vec<Run>,
+        cmds: Vec<Exec>,
         stdin: Redirection,
         stdout: Redirection,
         stdin_data: Option<Vec<u8>>,
     }
 
     impl Pipeline {
-        pub fn new(cmd1: Run, cmd2: Run) -> Pipeline {
+        pub fn new(cmd1: Exec, cmd2: Exec) -> Pipeline {
             Pipeline {
                 cmds: vec![cmd1, cmd2],
                 stdin: Redirection::None,
@@ -312,7 +313,7 @@ mod pipeline {
             }
         }
 
-        pub fn add(mut self, r: Run) -> Pipeline {
+        pub fn add(mut self, r: Exec) -> Pipeline {
             self.cmds.push(r);
             self
         }
@@ -411,10 +412,10 @@ mod pipeline {
         }
     }
 
-    impl BitOr<Run> for Pipeline {
+    impl BitOr<Exec> for Pipeline {
         type Output = Pipeline;
 
-        fn bitor(self, rhs: Run) -> Pipeline {
+        fn bitor(self, rhs: Exec) -> Pipeline {
             self.add(rhs)
         }
     }
