@@ -9,8 +9,8 @@ use self::tempdir::TempDir;
 use tests::common::read_whole_file;
 
 #[test]
-fn run_wait() {
-    let status = Run::cmd("true").wait().unwrap();
+fn run_join() {
+    let status = Run::cmd("true").join().unwrap();
     assert_eq!(status, ExitStatus::Exited(0));
 }
 
@@ -134,25 +134,25 @@ fn pipeline_capture() {
 }
 
 #[test]
-fn pipeline_wait() {
-    let status = (Run::cmd("true") | Run::cmd("true")).wait().unwrap();
+fn pipeline_join() {
+    let status = (Run::cmd("true") | Run::cmd("true")).join().unwrap();
     assert_eq!(status, ExitStatus::Exited(0));
 
-    let status = (Run::cmd("false") | Run::cmd("true")).wait().unwrap();
+    let status = (Run::cmd("false") | Run::cmd("true")).join().unwrap();
     assert_eq!(status, ExitStatus::Exited(0));
 
-    let status = (Run::cmd("true") | Run::cmd("false")).wait().unwrap();
+    let status = (Run::cmd("true") | Run::cmd("false")).join().unwrap();
     assert_eq!(status, ExitStatus::Exited(1));
 }
 
 #[test]
 fn pipeline_invalid_1() {
-    let try = (Run::cmd("echo").arg("foo") | Run::cmd("no-such-command")).wait();
+    let try = (Run::cmd("echo").arg("foo") | Run::cmd("no-such-command")).join();
     assert!(try.is_err());
 }
 
 #[test]
 fn pipeline_invalid_2() {
-    let try = (Run::cmd("no-such-command") | Run::cmd("echo").arg("foo")).wait();
+    let try = (Run::cmd("no-such-command") | Run::cmd("echo").arg("foo")).join();
     assert!(try.is_err());
 }

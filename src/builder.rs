@@ -103,7 +103,7 @@ mod run {
             Ok(p)
         }
 
-        pub fn wait(self) -> PopenResult<ExitStatus> {
+        pub fn join(self) -> PopenResult<ExitStatus> {
             self.popen()?.wait()
         }
 
@@ -360,7 +360,7 @@ mod pipeline {
             Ok(ret)
         }
 
-        pub fn wait(self) -> PopenResult<ExitStatus> {
+        pub fn join(self) -> PopenResult<ExitStatus> {
             let mut v = self.popen()?;
             // Waiting on a pipeline waits for all commands, but
             // returns the status of the last one.  This is how the
