@@ -1,10 +1,12 @@
 extern crate subprocess;
 
-use subprocess::{Popen, PopenConfig, Redirection};
+use subprocess::{Exec};
+use std::io::{BufReader, BufRead};
 
 fn main() {
-    let mut p = Popen::create(&["sh", "-c", "echo foo; echo bar >&2"], PopenConfig {
-        stderr: Redirection::Merge, ..Default::default()
-    }).unwrap();
-    p.wait().unwrap();
+    let x = Exec::cmd("ls").stream_stdout().unwrap();
+    let br = BufReader::new(x);
+    for (i, line) in br.lines().enumerate() {
+        println!("{}: {}", i, line.unwrap());
+    }
 }
