@@ -251,9 +251,9 @@ mod os {
     use std::os::unix::io::AsRawFd;
     use os_common::ExitStatus;
     use std::ffi::OsString;
-    use std::time::Duration;
-    use super::ChildState::*;
+    use std::time::{Duration, Instant};
 
+    use super::ChildState::*;
     pub type ExtChildState = ();
 
     impl super::PopenOs for Popen {
@@ -307,16 +307,15 @@ mod os {
 
         fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
             use std::cmp::min;
-            use std::time::{Instant, Duration};
-            use std::thread;
 
             if let Finished(exit_status) = self.child_state {
                 return Ok(Some(exit_status));
             }
 
             let deadline = Instant::now() + dur;
-            // delay doubles at every iteration, so initial delay will be 1ms
-            let mut delay = Duration::new(0, 500_000);
+            // double delay at every iteration, maxing at 100ms
+            let mut delay = Duration::from_millis(1);
+
             loop {
                 self.waitpid(false)?;
                 if let Finished(exit_status) = self.child_state {
@@ -327,8 +326,8 @@ mod os {
                     return Ok(None);
                 }
                 let remaining = deadline.duration_since(now);
-                delay = min(delay * 2, min(remaining, Duration::from_millis(100)));
-                thread::sleep(delay);
+                ::std::thread::sleep(min(delay, remaining));
+                delay = min(delay * 2, Duration::from_millis(100));
             }
         }
 
