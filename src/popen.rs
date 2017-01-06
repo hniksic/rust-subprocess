@@ -480,8 +480,7 @@ mod os {
             if let Finished(exit_status) = self.child_state {
                 return Ok(Some(exit_status));
             }
-            self.wait_handle(Some(dur.as_secs() as f64
-                                  + dur.subsec_nanos() as f64 * 1e-9))?;
+            self.wait_handle(Some(dur))?;
             Ok(self.exit_status())
         }
 
@@ -514,15 +513,23 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn wait_handle(&mut self, timeout: Option<f64>) -> IoResult<Option<ExitStatus>>;
+        fn wait_handle(&mut self, timeout: Option<Duration>) -> IoResult<Option<ExitStatus>>;
     }
 
     impl PopenOsImpl for Popen {
-        fn wait_handle(&mut self, timeout: Option<f64>) -> IoResult<Option<ExitStatus>> {
+        fn wait_handle(&mut self, timeout: Option<Duration>) -> IoResult<Option<ExitStatus>> {
             let mut new_child_state = None;
             if let Running { ext: ExtChildState(ref handle), .. } = self.child_state {
-                let timeout = timeout.map(|t| (t * 1000.0) as u32);
-                let event = win32::WaitForSingleObject(handle, timeout)?;
+                let millis = timeout.map(|t| {
+                    if t <= Duration::new(4294967, 295_000_000) {
+                        (t.as_secs() as u32 * 1_000 + t.subsec_nanos() / 1_000_000)
+                    } else {
+                        // Clamp to avoid overflow.  We could support timeouts
+                        // longer than 49.71 days with multiple waits.
+                        u32::max_value()
+                    }
+                });
+                let event = win32::WaitForSingleObject(handle, millis)?;
                 if let win32::WaitEvent::OBJECT_0 = event {
                     let exit_code = win32::GetExitCodeProcess(handle)?;
                     new_child_state = Some(Finished(ExitStatus::Exited(exit_code)));
