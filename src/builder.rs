@@ -124,6 +124,10 @@ mod exec {
 
         pub fn capture(mut self) -> PopenResult<Capture> {
             let stdin_data = self.stdin_data.take();
+            if let (&Redirection::None, &Redirection::None)
+                = (&self.config.stdout, &self.config.stderr) {
+                self = self.stdout(Redirection::Pipe);
+            }
             let mut p = self.popen()?;
             let (maybe_out, maybe_err) = p.communicate_bytes(
                 stdin_data.as_ref().map(|v| &v[..]))?;

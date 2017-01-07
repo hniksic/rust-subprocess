@@ -54,8 +54,7 @@ fn stream_stdin() {
 
 #[test]
 fn stream_capture_out() {
-    let c = Exec::cmd("printf").arg("foo")
-        .stdout(Redirection::Pipe).capture().unwrap();
+    let c = Exec::cmd("printf").arg("foo").capture().unwrap();
     assert_eq!(c.stdout_str(), "foo");
 }
 
@@ -67,10 +66,17 @@ fn stream_capture_err() {
 }
 
 #[test]
-fn stream_capture_out_with_input_data() {
+fn stream_capture_out_with_input_data1() {
     let c = Exec::cmd("cat")
         .stdin("foo")
-        .stdout(Redirection::Pipe)
+        .capture().unwrap();
+    assert_eq!(c.stdout_str(), "foo");
+}
+
+#[test]
+fn stream_capture_out_with_input_data2() {
+    let c = Exec::cmd("cat")
+        .stdin(b"foo".to_vec())
         .capture().unwrap();
     assert_eq!(c.stdout_str(), "foo");
 }
