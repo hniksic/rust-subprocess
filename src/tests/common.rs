@@ -258,7 +258,7 @@ fn merge_err_to_out_file() {
     let tmpdir = TempDir::new("test").unwrap();
     let tmpname = tmpdir.path().join("output");
     let mut p = Popen::create(
-        &["sh", "-c", "echo -n foo; echo -n bar >&2"], PopenConfig {
+        &["sh", "-c", "printf foo; printf bar >&2"], PopenConfig {
             stdout: Redirection::File(File::create(&tmpname).unwrap()),
             stderr: Redirection::Merge,
             ..Default::default()

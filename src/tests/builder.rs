@@ -25,16 +25,14 @@ fn null_file() {
 
 #[test]
 fn stream_stdout() {
-    let stream = Exec::cmd("echo")
-        .args(&["-n", "foo"])
+    let stream = Exec::cmd("printf").arg("foo")
         .stream_stdout().unwrap();
     assert_eq!(read_whole_file(stream), "foo");
 }
 
 #[test]
 fn stream_stderr() {
-    let stream = Exec::cmd("sh")
-        .args(&["-c", "echo -n foo >&2"])
+    let stream = Exec::cmd("sh").args(&["-c", "printf foo >&2"])
         .stream_stderr().unwrap();
     assert_eq!(read_whole_file(stream), "foo");
 }
@@ -83,10 +81,8 @@ fn stream_capture_out_with_input_data2() {
 
 #[test]
 fn exec_shell() {
-    // note: this uses built-in echo on Windows, so don't try anything
-    // fancy like echo -n
-    let stream = Exec::shell("echo foo").stream_stdout().unwrap();
-    assert_eq!(read_whole_file(stream).trim(), "foo");
+    let stream = Exec::shell("printf foo").stream_stdout().unwrap();
+    assert_eq!(read_whole_file(stream), "foo");
 }
 
 #[test]
