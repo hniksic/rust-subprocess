@@ -20,7 +20,7 @@ fn null_file() {
         .stdin(NullFile).stdout(Redirection::Pipe)
         .popen().unwrap();
     let (out, _) = p.communicate(None).unwrap();
-    assert!(out.unwrap() == "");
+    assert_eq!(out.unwrap(), "");
 }
 
 #[test]
@@ -28,7 +28,7 @@ fn stream_stdout() {
     let stream = Exec::cmd("echo")
         .args(&["-n", "foo"])
         .stream_stdout().unwrap();
-    assert!(read_whole_file(stream) == "foo");
+    assert_eq!(read_whole_file(stream), "foo");
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn stream_stderr() {
     let stream = Exec::cmd("sh")
         .args(&["-c", "echo -n foo >&2"])
         .stream_stderr().unwrap();
-    assert!(read_whole_file(stream) == "foo");
+    assert_eq!(read_whole_file(stream), "foo");
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn pipeline_stream_out() {
     let stream = {
         Exec::cmd("echo").arg("foo\nbar") | Exec::cmd("wc").arg("-l")
     }.stream_stdout().unwrap();
-    assert!(read_whole_file(stream).trim() == "2");
+    assert_eq!(read_whole_file(stream).trim(), "2");
 }
 
 #[test]

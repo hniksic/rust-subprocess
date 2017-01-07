@@ -30,7 +30,7 @@ fn bad_cmd() {
 fn err_exit() {
     let mut p = Popen::create(&["sh", "-c", "exit 13"], PopenConfig::default())
         .unwrap();
-    assert!(p.wait().unwrap() == ExitStatus::Exited(13));
+    assert_eq!(p.wait().unwrap(), ExitStatus::Exited(13));
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn read_from_stdout() {
     let mut p = Popen::create(&["echo", "foo"], PopenConfig {
         stdout: Redirection::Pipe, ..Default::default()
     }).unwrap();
-    assert!(read_whole_file(p.stdout.take().unwrap()) == "foo\n");
+    assert_eq!(read_whole_file(p.stdout.take().unwrap()), "foo\n");
     assert!(p.wait().unwrap().success());
 }
 
@@ -73,7 +73,7 @@ fn input_from_file() {
         stdout: Redirection::Pipe,
         ..Default::default()
     }).unwrap();
-    assert!(read_whole_file(p.stdout.take().unwrap()) == "foo");
+    assert_eq!(read_whole_file(p.stdout.take().unwrap()), "foo");
     assert!(p.wait().unwrap().success());
 }
 
@@ -87,7 +87,7 @@ fn output_to_file() {
             stdout: Redirection::File(outfile), ..Default::default()
         }).unwrap();
     assert!(p.wait().unwrap().success());
-    assert!(read_whole_file(File::open(&tmpname).unwrap()) == "foo");
+    assert_eq!(read_whole_file(File::open(&tmpname).unwrap()), "foo");
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn input_output_from_file() {
             ..Default::default()
         }).unwrap();
     assert!(p.wait().unwrap().success());
-    assert!(read_whole_file(File::open(&tmpname_out).unwrap()) == "foo");
+    assert_eq!(read_whole_file(File::open(&tmpname_out).unwrap()), "foo");
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn communicate_input() {
         assert!(false);
     }
     assert!(p.wait().unwrap().success());
-    assert!(read_whole_file(File::open(&tmpname).unwrap()) == "hello world");
+    assert_eq!(read_whole_file(File::open(&tmpname).unwrap()), "hello world");
 }
 
 #[test]
@@ -170,8 +170,8 @@ fn communicate_input_output() {
             ..Default::default()
         }).unwrap();
     if let (Some(out), Some(err)) = p.communicate_bytes(Some(b"hello world")).unwrap() {
-        assert!(out == b"hello world");
-        assert!(err == b"foo\n");
+        assert_eq!(out, b"hello world");
+        assert_eq!(err, b"foo\n");
     } else {
         assert!(false);
     }
@@ -189,8 +189,8 @@ fn communicate_input_output_long() {
         }).unwrap();
     let input = [65u8; 1_000_000];
     if let (Some(out), Some(err)) = p.communicate_bytes(Some(&input)).unwrap() {
-        assert!(&out[..] == &input[..]);
-        assert!(&err[..] == &[32u8; 100_000][..]);
+        assert_eq!(&out[..], &input[..]);
+        assert_eq!(&err[..], &[32u8; 100_000][..]);
     } else {
         assert!(false);
     }
@@ -207,8 +207,8 @@ fn communicate_input_output_str() {
             ..Default::default()
         }).unwrap();
     if let (Some(out), Some(err)) = p.communicate(Some("hello world")).unwrap() {
-        assert!(out == "hello world");
-        assert!(err == "foo\n");
+        assert_eq!(out, "hello world");
+        assert_eq!(err, "foo\n");
     } else {
         assert!(false);
     }
@@ -264,7 +264,7 @@ fn merge_err_to_out_file() {
             ..Default::default()
         }).unwrap();
     assert!(p.wait().unwrap().success());
-    assert!(read_whole_file(File::open(&tmpname).unwrap()) == "foobar");
+    assert_eq!(read_whole_file(File::open(&tmpname).unwrap()), "foobar");
 }
 
 #[test]
@@ -290,5 +290,5 @@ fn wait_timeout() {
     let ret = p.wait_timeout(Duration::from_millis(100)).unwrap();
     assert!(ret.is_none());
     let ret = p.wait_timeout(Duration::from_millis(450)).unwrap();
-    assert!(ret == Some(ExitStatus::Exited(0)));
+    assert_eq!(ret, Some(ExitStatus::Exited(0)));
 }
