@@ -52,10 +52,11 @@ pub fn execvp<S1, S2>(cmd: S1, args: &[S2]) -> Result<()>
     let mut args_ptr: Vec<*const libc::c_char> = args_cstring.iter()
         .map(cstring_ptr).collect();
     args_ptr.push(ptr::null());
-    let c_argv = &args_ptr[0] as *const *const libc::c_char;
-    let cmd_cstring = os_to_cstring(cmd.as_ref())?;
 
+    let c_argv = args_ptr.as_ptr();
+    let cmd_cstring = os_to_cstring(cmd.as_ref())?;
     check_err(unsafe { libc::execvp(cstring_ptr(&cmd_cstring), c_argv) })?;
+
     Ok(())
 }
 

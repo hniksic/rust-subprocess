@@ -112,16 +112,16 @@ pub fn CreateProcess(cmdline: &OsStr,
     let mut pinfo: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let mut cmdline = to_nullterm(OsStr::new(cmdline));
     check(unsafe {
-        kernel32::CreateProcessW(ptr::null_mut(),
-                                 &mut cmdline[0] as winapi::LPWSTR,
+        kernel32::CreateProcessW(ptr::null(),
+                                 cmdline.as_mut_ptr(),
                                  ptr::null_mut(),   // lpProcessAttributes
                                  ptr::null_mut(),   // lpThreadAttributes
                                  inherit_handles as BOOL,  // bInheritHandles
                                  creation_flags,    // dwCreationFlags
                                  ptr::null_mut(),   // lpEnvironment
                                  ptr::null_mut(),   // lpCurrentDirectory
-                                 &mut sinfo as LPSTARTUPINFOW,
-                                 &mut pinfo as LPPROCESS_INFORMATION)
+                                 &mut sinfo,
+                                 &mut pinfo)
     })?;
     unsafe {
         mem::drop(Handle::from_raw_handle(pinfo.hThread));
