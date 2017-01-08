@@ -96,7 +96,8 @@ fn handle_of(opt_handle: &Option<File>) -> RawHandle {
     }
 }
 
-pub fn CreateProcess(cmdline: &OsStr,
+pub fn CreateProcess(appname: Option<&OsStr>,
+                     cmdline: &OsStr,
                      inherit_handles: bool,
                      creation_flags: u32,
                      stdin: Option<File>,
@@ -110,9 +111,12 @@ pub fn CreateProcess(cmdline: &OsStr,
     sinfo.hStdError = handle_of(&stderr);
     sinfo.dwFlags = sinfo_flags;
     let mut pinfo: PROCESS_INFORMATION = unsafe { mem::zeroed() };
-    let mut cmdline = to_nullterm(OsStr::new(cmdline));
+    let mut cmdline = to_nullterm(cmdline);
+    let wc_appname = appname.map(to_nullterm);
     check(unsafe {
-        kernel32::CreateProcessW(ptr::null(),
+        kernel32::CreateProcessW(wc_appname
+                                     .as_ref().map(|v| v.as_ptr())
+                                     .unwrap_or(ptr::null()),
                                  cmdline.as_mut_ptr(),
                                  ptr::null_mut(),   // lpProcessAttributes
                                  ptr::null_mut(),   // lpThreadAttributes

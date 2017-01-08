@@ -43,7 +43,9 @@ pub struct PopenConfig {
     pub stderr: Redirection,
     pub detached: bool,
 
-    // executable, cwd, env, preexec_fn, close_fds...
+    pub executable: Option<OsString>,
+
+    // cwd, env, preexec_fn, close_fds...
 }
 
 impl PopenConfig {
@@ -54,6 +56,7 @@ impl PopenConfig {
             stdout: self.stdout.try_clone()?,
             stderr: self.stderr.try_clone()?,
             detached: self.detached,
+            executable: self.executable.as_ref().cloned(),
         })
     }
 }
@@ -66,6 +69,7 @@ impl Default for PopenConfig {
             stdout: Redirection::None,
             stderr: Redirection::None,
             detached: false,
+            executable: None,
         }
     }
 }
@@ -101,7 +105,8 @@ impl Popen {
             child_state: ChildState::Preparing,
             detached: config.detached,
         };
-        inst.start(argv, config.stdin, config.stdout, config.stderr)?;
+        inst.start(argv, config.executable,
+                   config.stdin, config.stdout, config.stderr)?;
         Ok(inst)
     }
 
@@ -205,10 +210,10 @@ impl Popen {
     }
 
     fn start(&mut self,
-             argv: Vec<OsString>,
+             argv: Vec<OsString>, executable: Option<OsString>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
              -> Result<()> {
-        (self as &mut PopenOs).start(argv, stdin, stdout, stderr)
+        (self as &mut PopenOs).start(argv, executable, stdin, stdout, stderr)
     }
 
     pub fn wait(&mut self) -> Result<ExitStatus> {
@@ -230,7 +235,7 @@ impl Popen {
 
 
 trait PopenOs {
-    fn start(&mut self, argv: Vec<OsString>,
+    fn start(&mut self, argv: Vec<OsString>, executable: Option<OsString>,
              stdin: Redirection, stdout: Redirection, stderr: Redirection)
              -> Result<()>;
     fn wait(&mut self) -> Result<ExitStatus>;
@@ -258,7 +263,7 @@ mod os {
 
     impl super::PopenOs for Popen {
         fn start(&mut self,
-                 argv: Vec<OsString>,
+                 argv: Vec<OsString>, executable: Option<OsString>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> Result<()> {
             let mut exec_fail_pipe = posix::pipe()?;
@@ -269,7 +274,8 @@ mod os {
                 let child_pid = posix::fork()?;
                 if child_pid == 0 {
                     mem::drop(exec_fail_pipe.0);
-                    let result: IoResult<()> = self.do_exec(argv, child_ends);
+                    let result: IoResult<()> = self.do_exec(
+                        argv, executable, child_ends);
                     // If we are here, it means that exec has failed.  Notify
                     // the parent and exit.
                     let error_code = match result {
@@ -277,8 +283,10 @@ mod os {
                         Err(e) => e.raw_os_error().unwrap_or(-1)
                     } as u32;
                     exec_fail_pipe.1.write_all(
-                        &[error_code as u8, (error_code >> 8) as u8,
-                          (error_code >> 16) as u8, (error_code >> 24) as u8]).ok();
+                        &[error_code as u8,
+                          (error_code >> 8) as u8,
+                          (error_code >> 16) as u8,
+                          (error_code >> 24) as u8]).ok();
                     posix::_exit(127);
                 }
                 self.child_state = Running { pid: child_pid, ext: () };
@@ -341,14 +349,14 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn do_exec(&self, argv: Vec<OsString>,
+        fn do_exec(&self, argv: Vec<OsString>, executable: Option<OsString>,
                    child_ends: (Option<File>, Option<File>, Option<File>)) -> IoResult<()>;
         fn waitpid(&mut self, block: bool) -> IoResult<()>;
         fn send_signal(&self, signal: u8) -> IoResult<()>;
     }
 
     impl PopenOsImpl for Popen {
-        fn do_exec(&self, argv: Vec<OsString>,
+        fn do_exec(&self, argv: Vec<OsString>, executable: Option<OsString>,
                    child_ends: (Option<File>, Option<File>, Option<File>)) -> IoResult<()> {
             let (stdin, stdout, stderr) = child_ends;
             if let Some(stdin) = stdin {
@@ -360,7 +368,7 @@ mod os {
             if let Some(stderr) = stderr {
                 posix::dup2(stderr.as_raw_fd(), 2)?;
             }
-            posix::execvp(&argv[0], &argv)
+            posix::execvp(executable.as_ref().unwrap_or(&argv[0]), &argv)
         }
 
         fn waitpid(&mut self, block: bool) -> IoResult<()> {
@@ -427,7 +435,8 @@ mod os {
 mod os {
     use super::*;
     use std::io;
-    use std::fs::File;
+    use std::fs::{self, File};
+    use std::env;
     use win32;
     use os_common::{ExitStatus, StandardStream};
     use std::ffi::{OsStr, OsString};
@@ -441,7 +450,7 @@ mod os {
 
     impl super::PopenOs for Popen {
         fn start(&mut self,
-                 argv: Vec<OsString>,
+                 argv: Vec<OsString>, executable: Option<OsString>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> Result<()> {
             let (mut child_stdin, mut child_stdout, mut child_stderr)
@@ -450,8 +459,12 @@ mod os {
             ensure_child_stream(&mut child_stdout, StandardStream::Output)?;
             ensure_child_stream(&mut child_stderr, StandardStream::Error)?;
             let cmdline = assemble_cmdline(argv)?;
+            // CreateProcess doesn't search for appname in the PATH.
+            // We do it ourselves to match the Unix behavior.
+            let executable = executable.map(locate_in_path);
             let (handle, pid)
-                = win32::CreateProcess(&cmdline, true, 0,
+                = win32::CreateProcess(executable.as_ref().map(OsString::as_ref),
+                                       &cmdline, true, 0,
                                        child_stdin, child_stdout, child_stderr,
                                        win32::STARTF_USESTDHANDLES)?;
             self.child_state = Running {
@@ -556,12 +569,25 @@ mod os {
 
     pub fn set_inheritable(f: &mut File, inheritable: bool) -> IoResult<()> {
         win32::SetHandleInformation(f, win32::HANDLE_FLAG_INHERIT,
-                                         if inheritable {1} else {0})?;
+                                    if inheritable {1} else {0})?;
         Ok(())
     }
 
     pub fn make_pipe() -> IoResult<(File, File)> {
         win32::CreatePipe(true)
+    }
+
+    fn locate_in_path(executable: OsString) -> OsString {
+        if let Some(path) = env::var_os("PATH") {
+            for path in env::split_paths(&path) {
+                let path = path.join(&executable)
+                    .with_extension(::std::env::consts::EXE_EXTENSION);
+                if fs::metadata(&path).is_ok() {
+                    return path.into_os_string();
+                }
+            }
+        }
+        executable
     }
 
     fn assemble_cmdline(argv: Vec<OsString>) -> IoResult<OsString> {
