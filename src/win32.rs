@@ -89,10 +89,10 @@ pub fn SetHandleInformation(handle: &mut File, dwMask: u32, dwFlags: u32) -> Res
     Ok(())
 }
 
-fn handle_of(opt_handle: &Option<File>) -> RawHandle {
-    match opt_handle.as_ref() {
-        Some(ref handle) => handle.as_raw_handle(),
-        None => ptr::null_mut()
+fn handle_of(opt_handle: &Option<&File>) -> RawHandle {
+    match opt_handle {
+        &Some(handle) => handle.as_raw_handle(),
+        &None => ptr::null_mut()
     }
 }
 
@@ -100,9 +100,9 @@ pub fn CreateProcess(appname: Option<&OsStr>,
                      cmdline: &OsStr,
                      inherit_handles: bool,
                      creation_flags: u32,
-                     stdin: Option<File>,
-                     stdout: Option<File>,
-                     stderr: Option<File>,
+                     stdin: Option<&File>,
+                     stdout: Option<&File>,
+                     stderr: Option<&File>,
                      sinfo_flags: u32) -> Result<(Handle, u64)> {
     let mut sinfo: STARTUPINFOW = unsafe { mem::zeroed() };
     sinfo.cb = mem::size_of::<STARTUPINFOW>() as DWORD;

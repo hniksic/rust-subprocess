@@ -7,6 +7,7 @@ use std::string::FromUtf8Error;
 use std::fmt;
 use std::ffi::{OsStr, OsString};
 use std::time::Duration;
+use std::rc::Rc;
 
 use os_common::{ExitStatus, StandardStream};
 
@@ -126,9 +127,9 @@ impl Popen {
     // to the corresponding child.
     fn setup_streams(&mut self, stdin: Redirection,
                      stdout: Redirection, stderr: Redirection)
-                     -> Result<(Option<File>, Option<File>, Option<File>)> {
+                     -> Result<(Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>)> {
         fn prepare_pipe(parent_writes: bool,
-                        parent_ref: &mut Option<File>, child_ref: &mut Option<File>)
+                        parent_ref: &mut Option<File>, child_ref: &mut Option<Rc<File>>)
                         -> Result<()> {
             // Store the parent's end of the pipe into the given
             // reference, and return the child end.
@@ -137,22 +138,23 @@ impl Popen {
                 if parent_writes {(write, read)} else {(read, write)};
             os::set_inheritable(&mut parent_end, false)?;
             *parent_ref = Some(parent_end);
-            *child_ref = Some(child_end);
+            *child_ref = Some(Rc::new(child_end));
             Ok(())
         }
-        fn prepare_file(mut file: File) -> IoResult<File> {
+        fn prepare_file(mut file: File) -> IoResult<Option<Rc<File>>> {
             // Make the File inheritable and return it for use in the child.
             os::set_inheritable(&mut file, true)?;
-            Ok(file)
+            Ok(Some(Rc::new(file)))
         }
-        fn dup_child_stream(dest: &mut Option<File>, src: &mut Option<File>,
-                            src_id: StandardStream) -> IoResult<()> {
-            // dup one of the child streams created by one of the
-            // above functions, for Redirection::Merge.
+        fn reuse_stream(dest: &mut Option<Rc<File>>, src: &mut Option<Rc<File>>,
+                        src_id: StandardStream) -> IoResult<()> {
+            // For Redirection::Merge, make stdout and stderr refer to
+            // the same File.  If the file is unavailable, use the
+            // appropriate system output stream.
             if src.is_none() {
-                *src = Some(os::clone_standard_stream(src_id)?);
+                *src = Some(Rc::new(os::clone_standard_stream(src_id)?));
             }
-            *dest = Some(src.as_ref().unwrap().try_clone()?);
+            *dest = Some(src.as_ref().unwrap().clone());
             Ok(())
         }
 
@@ -169,7 +171,7 @@ impl Popen {
         match stdin {
             Redirection::Pipe => prepare_pipe(true, &mut self.stdin,
                                               &mut child_stdin)?,
-            Redirection::File(file) => child_stdin = Some(prepare_file(file)?),
+            Redirection::File(file) => child_stdin = prepare_file(file)?,
             Redirection::Merge => {
                 return Err(PopenError::LogicError("Redirection::Merge not valid for stdin"));
             }
@@ -178,14 +180,14 @@ impl Popen {
         match stdout {
             Redirection::Pipe => prepare_pipe(false, &mut self.stdout,
                                               &mut child_stdout)?,
-            Redirection::File(file) => child_stdout = Some(prepare_file(file)?),
+            Redirection::File(file) => child_stdout = prepare_file(file)?,
             Redirection::Merge => merge = MergeKind::OutToErr,
             Redirection::None => (),
         };
         match stderr {
             Redirection::Pipe => prepare_pipe(false, &mut self.stderr,
                                               &mut child_stderr)?,
-            Redirection::File(file) => child_stderr = Some(prepare_file(file)?),
+            Redirection::File(file) => child_stderr = prepare_file(file)?,
             Redirection::Merge => merge = MergeKind::ErrToOut,
             Redirection::None => (),
         };
@@ -199,11 +201,11 @@ impl Popen {
         // stdout stream.
         match merge {
             MergeKind::ErrToOut =>
-                dup_child_stream(&mut child_stderr, &mut child_stdout,
-                                 StandardStream::Output)?,
+                reuse_stream(&mut child_stderr, &mut child_stdout,
+                             StandardStream::Output)?,
             MergeKind::OutToErr =>
-                dup_child_stream(&mut child_stdout, &mut child_stderr,
-                                 StandardStream::Error)?,
+                reuse_stream(&mut child_stdout, &mut child_stderr,
+                             StandardStream::Error)?,
             MergeKind::None => (),
         }
 
@@ -295,6 +297,7 @@ mod os {
     use os_common::ExitStatus;
     use std::ffi::OsString;
     use std::time::{Duration, Instant};
+    use std::rc::Rc;
 
     use super::ChildState::*;
     pub type ExtChildState = ();
@@ -388,14 +391,16 @@ mod os {
 
     trait PopenOsImpl: super::PopenOs {
         fn do_exec(&self, argv: Vec<OsString>, executable: Option<OsString>,
-                   child_ends: (Option<File>, Option<File>, Option<File>)) -> IoResult<()>;
+                   child_ends: (Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>))
+                   -> IoResult<()>;
         fn waitpid(&mut self, block: bool) -> IoResult<()>;
         fn send_signal(&self, signal: u8) -> IoResult<()>;
     }
 
     impl PopenOsImpl for Popen {
         fn do_exec(&self, argv: Vec<OsString>, executable: Option<OsString>,
-                   child_ends: (Option<File>, Option<File>, Option<File>)) -> IoResult<()> {
+                   child_ends: (Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>))
+                   -> IoResult<()> {
             let (stdin, stdout, stderr) = child_ends;
             if let Some(stdin) = stdin {
                 posix::dup2(stdin.as_raw_fd(), 0)?;
@@ -481,6 +486,8 @@ mod os {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::time::Duration;
     use std::io::Result as IoResult;
+    use std::rc::Rc;
+
     use super::ChildState::*;
 
     #[derive(Debug)]
@@ -503,7 +510,9 @@ mod os {
             let (handle, pid)
                 = win32::CreateProcess(executable.as_ref().map(OsString::as_ref),
                                        &cmdline, true, 0,
-                                       child_stdin, child_stdout, child_stderr,
+                                       child_stdin.as_ref().map(Rc::as_ref),
+                                       child_stdout.as_ref().map(Rc::as_ref),
+                                       child_stderr.as_ref().map(Rc::as_ref),
                                        win32::STARTF_USESTDHANDLES)?;
             self.child_state = Running {
                 pid: pid as u32,
@@ -592,7 +601,7 @@ mod os {
         }
     }
 
-    fn ensure_child_stream(stream: &mut Option<File>, which: StandardStream)
+    fn ensure_child_stream(stream: &mut Option<Rc<File>>, which: StandardStream)
                            -> IoResult<()> {
         // If no stream is sent to CreateProcess, the child doesn't
         // get a valid stream.  This results in
@@ -600,7 +609,7 @@ mod os {
         // failing because the shell tries to redirect stdout to
         // stderr, but fails because it didn't receive a valid stdout.
         if stream.is_none() {
-            *stream = Some(clone_standard_stream(which)?);
+            *stream = Some(Rc::new(clone_standard_stream(which)?));
         }
         Ok(())
     }
