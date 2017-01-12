@@ -114,58 +114,96 @@ impl Popen {
         self.detached = true;
     }
 
-    fn make_child_streams(&mut self, stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                          -> Result<(Option<File>, Option<File>, Option<File>)> {
-        fn prepare_pipe(for_write: bool, store_parent_end: &mut Option<File>) -> Result<File> {
+    // Create the pipes requested by stdin, stdout, and stderr from
+    // the PopenConfig used to construct us, and return the Files to
+    // be given to the child process.
+    //
+    // For Redirection::Pipe, this stores the parent end of the pipe
+    // to the appropriate self.std* field, and returns the child end
+    // of the pipe.
+    //
+    // For Redirection::File, this transfers the ownership of the File
+    // to the corresponding child.
+    fn setup_streams(&mut self, stdin: Redirection,
+                     stdout: Redirection, stderr: Redirection)
+                     -> Result<(Option<File>, Option<File>, Option<File>)> {
+        fn prepare_pipe(parent_writes: bool,
+                        parent_ref: &mut Option<File>, child_ref: &mut Option<File>)
+                        -> Result<()> {
+            // Store the parent's end of the pipe into the given
+            // reference, and return the child end.
             let (read, write) = os::make_pipe()?;
             let (mut parent_end, child_end) =
-                if for_write {(write, read)} else {(read, write)};
+                if parent_writes {(write, read)} else {(read, write)};
             os::set_inheritable(&mut parent_end, false)?;
-            *store_parent_end = Some(parent_end);
-            Ok(child_end)
+            *parent_ref = Some(parent_end);
+            *child_ref = Some(child_end);
+            Ok(())
         }
         fn prepare_file(mut file: File) -> IoResult<File> {
+            // Make the File inheritable and return it for use in the child.
             os::set_inheritable(&mut file, true)?;
             Ok(file)
         }
+        fn dup_child_stream(dest: &mut Option<File>, src: &mut Option<File>,
+                            src_id: StandardStream) -> IoResult<()> {
+            // dup one of the child streams created by one of the
+            // above functions, for Redirection::Merge.
+            if src.is_none() {
+                *src = Some(os::clone_standard_stream(src_id)?);
+            }
+            *dest = Some(src.as_ref().unwrap().try_clone()?);
+            Ok(())
+        }
+
         enum MergeKind {
-            OutToErr, // 1>&2
             ErrToOut, // 2>&1
+            OutToErr, // 1>&2
             None,
         }
         let mut merge: MergeKind = MergeKind::None;
 
-        let child_stdin = match stdin {
-            Redirection::Pipe => Some(prepare_pipe(true, &mut self.stdin)?),
-            Redirection::File(file) => Some(prepare_file(file)?),
+        let (mut child_stdin, mut child_stdout, mut child_stderr)
+            = (None, None, None);
+
+        match stdin {
+            Redirection::Pipe => prepare_pipe(true, &mut self.stdin,
+                                              &mut child_stdin)?,
+            Redirection::File(file) => child_stdin = Some(prepare_file(file)?),
             Redirection::Merge => {
                 return Err(PopenError::LogicError("Redirection::Merge not valid for stdin"));
             }
-            Redirection::None => None,
+            Redirection::None => (),
         };
-        let mut child_stdout = match stdout {
-            Redirection::Pipe => Some(prepare_pipe(false, &mut self.stdout)?),
-            Redirection::File(file) => Some(prepare_file(file)?),
-            Redirection::Merge => { merge = MergeKind::ErrToOut; None },
-            Redirection::None => None,
+        match stdout {
+            Redirection::Pipe => prepare_pipe(false, &mut self.stdout,
+                                              &mut child_stdout)?,
+            Redirection::File(file) => child_stdout = Some(prepare_file(file)?),
+            Redirection::Merge => merge = MergeKind::OutToErr,
+            Redirection::None => (),
         };
-        let mut child_stderr = match stderr {
-            Redirection::Pipe => Some(prepare_pipe(false, &mut self.stderr)?),
-            Redirection::File(file) => Some(prepare_file(file)?),
-            Redirection::Merge => { merge = MergeKind::OutToErr; None },
-            Redirection::None => None,
+        match stderr {
+            Redirection::Pipe => prepare_pipe(false, &mut self.stderr,
+                                              &mut child_stderr)?,
+            Redirection::File(file) => child_stderr = Some(prepare_file(file)?),
+            Redirection::Merge => merge = MergeKind::ErrToOut,
+            Redirection::None => (),
         };
 
-        fn dup_child_stream(child_stream: &mut Option<File>, s: StandardStream) -> IoResult<File> {
-            if child_stream.is_none() {
-                *child_stream = Some(os::clone_standard_stream(s)?);
-            }
-            child_stream.as_ref().unwrap().try_clone()
-        }
-
+        // Handle Redirection::Merge after creating the output child
+        // streams.  Merge by cloning the child stream, or the
+        // appropriate standard stream if we don't have a child stream
+        // requested using Redirection::Pipe or Redirection::File.  In
+        // other words, 2>&1 (ErrToOut) is implemented by making
+        // child_stderr point to a dup of child_stdout, or of the OS's
+        // stdout stream.
         match merge {
-            MergeKind::OutToErr => child_stderr = Some(dup_child_stream(&mut child_stdout, StandardStream::Output)?),
-            MergeKind::ErrToOut => child_stdout = Some(dup_child_stream(&mut child_stderr, StandardStream::Error)?),
+            MergeKind::ErrToOut =>
+                dup_child_stream(&mut child_stderr, &mut child_stdout,
+                                 StandardStream::Output)?,
+            MergeKind::OutToErr =>
+                dup_child_stream(&mut child_stdout, &mut child_stderr,
+                                 StandardStream::Error)?,
             MergeKind::None => (),
         }
 
@@ -270,7 +308,7 @@ mod os {
             set_inheritable(&mut exec_fail_pipe.0, false)?;
             set_inheritable(&mut exec_fail_pipe.1, false)?;
             {
-                let child_ends = self.make_child_streams(stdin, stdout, stderr)?;
+                let child_ends = self.setup_streams(stdin, stdout, stderr)?;
                 let child_pid = posix::fork()?;
                 if child_pid == 0 {
                     mem::drop(exec_fail_pipe.0);
@@ -454,7 +492,7 @@ mod os {
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> Result<()> {
             let (mut child_stdin, mut child_stdout, mut child_stderr)
-                = self.make_child_streams(stdin, stdout, stderr)?;
+                = self.setup_streams(stdin, stdout, stderr)?;
             ensure_child_stream(&mut child_stdin, StandardStream::Input)?;
             ensure_child_stream(&mut child_stdout, StandardStream::Output)?;
             ensure_child_stream(&mut child_stderr, StandardStream::Error)?;
