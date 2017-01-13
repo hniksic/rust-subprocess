@@ -1,5 +1,4 @@
 use std::io::{Result, Error};
-use libc;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::fs::File;
@@ -7,7 +6,9 @@ use std::os::unix::io::FromRawFd;
 use std::ptr;
 use std::ffi::CString;
 
-use os_common::{ExitStatus, StandardStream};
+use libc;
+
+use os_common::{ExitStatus, StandardStream, Undropped};
 
 pub use libc::ECHILD;
 
@@ -117,17 +118,13 @@ pub fn dup2(oldfd: i32, newfd: i32) -> Result<()> {
     Ok(())
 }
 
-pub fn dup(fd: i32) -> Result<i32> {
-    check_err(unsafe { libc::dup(fd) })
-}
-
-pub fn clone_standard_stream(which: StandardStream) -> Result<File> {
+pub fn get_standard_stream(which: StandardStream) -> Result<Undropped<File>> {
     let fd = match which {
         StandardStream::Input => 0,
         StandardStream::Output => 1,
         StandardStream::Error => 2,
     };
-    Ok(unsafe {
-        File::from_raw_fd(dup(fd)?)
-    })
+    unsafe {
+        Ok(Undropped::new(File::from_raw_fd(fd)))
+    }
 }

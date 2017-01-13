@@ -7,7 +7,6 @@ use std::string::FromUtf8Error;
 use std::fmt;
 use std::ffi::{OsStr, OsString};
 use std::time::Duration;
-use std::rc::Rc;
 
 use os_common::{ExitStatus, StandardStream};
 
@@ -32,6 +31,48 @@ enum ChildState {
     },
     Finished(ExitStatus),
 }
+
+mod fileref {
+    // FileRef: a reference-counted File instance, allowing multiple
+    // references to the same File.  If the underlying File is Owned,
+    // it will be closed along with the last FileRef.  If unowned
+    // (used for system streams), it will remain open.
+
+    use std::fs::File;
+    use os_common::Undropped;
+    use std::rc::Rc;
+    use std::ops::Deref;
+
+    #[derive(Debug)]
+    enum InnerFile {
+        Owned(File),
+        System(Undropped<File>),
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct FileRef(Rc<InnerFile>);
+
+    impl FileRef {
+        pub fn from_owned(f: File) -> FileRef {
+            FileRef(Rc::new(InnerFile::Owned(f)))
+        }
+        pub fn from_system(f: Undropped<File>) -> FileRef {
+            FileRef(Rc::new(InnerFile::System(f)))
+        }
+    }
+
+    impl Deref for FileRef {
+        type Target = File;
+
+        fn deref(&self) -> &File {
+            match self.0.deref() {
+                &InnerFile::Owned(ref f) => f,
+                &InnerFile::System(ref f) => f.get_ref(),
+            }
+        }
+    }
+}
+use self::fileref::FileRef;
 
 #[derive(Debug)]
 pub struct PopenConfig {
@@ -127,32 +168,34 @@ impl Popen {
     // to the corresponding child.
     fn setup_streams(&mut self, stdin: Redirection,
                      stdout: Redirection, stderr: Redirection)
-                     -> Result<(Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>)> {
+                     -> Result<(Option<FileRef>, Option<FileRef>, Option<FileRef>)> {
         fn prepare_pipe(parent_writes: bool,
-                        parent_ref: &mut Option<File>, child_ref: &mut Option<Rc<File>>)
+                        parent_ref: &mut Option<File>, child_ref: &mut Option<FileRef>)
                         -> Result<()> {
             // Store the parent's end of the pipe into the given
-            // reference, and return the child end.
+            // reference, and store the child end.
             let (read, write) = os::make_pipe()?;
             let (mut parent_end, child_end) =
                 if parent_writes {(write, read)} else {(read, write)};
             os::set_inheritable(&mut parent_end, false)?;
             *parent_ref = Some(parent_end);
-            *child_ref = Some(Rc::new(child_end));
+            *child_ref = Some(FileRef::from_owned(child_end));
             Ok(())
         }
-        fn prepare_file(mut file: File) -> IoResult<Option<Rc<File>>> {
-            // Make the File inheritable and return it for use in the child.
+        fn prepare_file(mut file: File, child_ref: &mut Option<FileRef>)
+                        -> IoResult<()> {
+            // Make the File inheritable and store it for use in the child.
             os::set_inheritable(&mut file, true)?;
-            Ok(Some(Rc::new(file)))
+            *child_ref = Some(FileRef::from_owned(file));
+            Ok(())
         }
-        fn reuse_stream(dest: &mut Option<Rc<File>>, src: &mut Option<Rc<File>>,
+        fn reuse_stream(dest: &mut Option<FileRef>, src: &mut Option<FileRef>,
                         src_id: StandardStream) -> IoResult<()> {
             // For Redirection::Merge, make stdout and stderr refer to
             // the same File.  If the file is unavailable, use the
             // appropriate system output stream.
             if src.is_none() {
-                *src = Some(Rc::new(os::clone_standard_stream(src_id)?));
+                *src = Some(FileRef::from_system(os::get_standard_stream(src_id)?));
             }
             *dest = Some(src.as_ref().unwrap().clone());
             Ok(())
@@ -171,7 +214,7 @@ impl Popen {
         match stdin {
             Redirection::Pipe => prepare_pipe(true, &mut self.stdin,
                                               &mut child_stdin)?,
-            Redirection::File(file) => child_stdin = prepare_file(file)?,
+            Redirection::File(file) => prepare_file(file, &mut child_stdin)?,
             Redirection::Merge => {
                 return Err(PopenError::LogicError("Redirection::Merge not valid for stdin"));
             }
@@ -180,14 +223,14 @@ impl Popen {
         match stdout {
             Redirection::Pipe => prepare_pipe(false, &mut self.stdout,
                                               &mut child_stdout)?,
-            Redirection::File(file) => child_stdout = prepare_file(file)?,
+            Redirection::File(file) => prepare_file(file, &mut child_stdout)?,
             Redirection::Merge => merge = MergeKind::OutToErr,
             Redirection::None => (),
         };
         match stderr {
             Redirection::Pipe => prepare_pipe(false, &mut self.stderr,
                                               &mut child_stderr)?,
-            Redirection::File(file) => child_stderr = prepare_file(file)?,
+            Redirection::File(file) => prepare_file(file, &mut child_stderr)?,
             Redirection::Merge => merge = MergeKind::ErrToOut,
             Redirection::None => (),
         };
@@ -297,9 +340,10 @@ mod os {
     use os_common::ExitStatus;
     use std::ffi::OsString;
     use std::time::{Duration, Instant};
-    use std::rc::Rc;
 
     use super::ChildState::*;
+    use super::fileref::FileRef;
+
     pub type ExtChildState = ();
 
     impl super::PopenOs for Popen {
@@ -391,7 +435,7 @@ mod os {
 
     trait PopenOsImpl: super::PopenOs {
         fn do_exec(&self, argv: Vec<OsString>, executable: Option<OsString>,
-                   child_ends: (Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>))
+                   child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>))
                    -> IoResult<()>;
         fn waitpid(&mut self, block: bool) -> IoResult<()>;
         fn send_signal(&self, signal: u8) -> IoResult<()>;
@@ -399,17 +443,23 @@ mod os {
 
     impl PopenOsImpl for Popen {
         fn do_exec(&self, argv: Vec<OsString>, executable: Option<OsString>,
-                   child_ends: (Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>))
+                   child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>))
                    -> IoResult<()> {
             let (stdin, stdout, stderr) = child_ends;
             if let Some(stdin) = stdin {
-                posix::dup2(stdin.as_raw_fd(), 0)?;
+                if stdin.as_raw_fd() != 0 {
+                    posix::dup2(stdin.as_raw_fd(), 0)?;
+                }
             }
             if let Some(stdout) = stdout {
-                posix::dup2(stdout.as_raw_fd(), 1)?;
+                if stdout.as_raw_fd() != 1 {
+                    posix::dup2(stdout.as_raw_fd(), 1)?;
+                }
             }
             if let Some(stderr) = stderr {
-                posix::dup2(stderr.as_raw_fd(), 2)?;
+                if stderr.as_raw_fd() != 2 {
+                    posix::dup2(stderr.as_raw_fd(), 2)?;
+                }
             }
             posix::execvp(executable.as_ref().unwrap_or(&argv[0]), &argv)
         }
@@ -470,7 +520,7 @@ mod os {
         posix::pipe()
     }
 
-    pub use posix::clone_standard_stream;
+    pub use posix::get_standard_stream;
 }
 
 
@@ -484,11 +534,12 @@ mod os {
     use os_common::{ExitStatus, StandardStream};
     use std::ffi::{OsStr, OsString};
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::os::windows::io::{RawHandle, AsRawHandle};
     use std::time::Duration;
     use std::io::Result as IoResult;
-    use std::rc::Rc;
 
     use super::ChildState::*;
+    use super::fileref::FileRef;
 
     #[derive(Debug)]
     pub struct ExtChildState(win32::Handle);
@@ -498,6 +549,9 @@ mod os {
                  argv: Vec<OsString>, executable: Option<OsString>,
                  stdin: Redirection, stdout: Redirection, stderr: Redirection)
                  -> Result<()> {
+            fn raw(opt: &Option<FileRef>) -> Option<RawHandle> {
+                 opt.as_ref().map(|f| f.as_raw_handle())
+            }
             let (mut child_stdin, mut child_stdout, mut child_stderr)
                 = self.setup_streams(stdin, stdout, stderr)?;
             ensure_child_stream(&mut child_stdin, StandardStream::Input)?;
@@ -510,9 +564,9 @@ mod os {
             let (handle, pid)
                 = win32::CreateProcess(executable.as_ref().map(OsString::as_ref),
                                        &cmdline, true, 0,
-                                       child_stdin.as_ref().map(Rc::as_ref),
-                                       child_stdout.as_ref().map(Rc::as_ref),
-                                       child_stderr.as_ref().map(Rc::as_ref),
+                                       raw(&child_stdin),
+                                       raw(&child_stdout),
+                                       raw(&child_stderr),
                                        win32::STARTF_USESTDHANDLES)?;
             self.child_state = Running {
                 pid: pid as u32,
@@ -601,15 +655,15 @@ mod os {
         }
     }
 
-    fn ensure_child_stream(stream: &mut Option<Rc<File>>, which: StandardStream)
+    fn ensure_child_stream(stream: &mut Option<FileRef>, which: StandardStream)
                            -> IoResult<()> {
         // If no stream is sent to CreateProcess, the child doesn't
-        // get a valid stream.  This results in
-        // Run("sh").arg("-c").arg("echo foo >&2").stream_stderr()
+        // get a valid stream.  This results in e.g.
+        // Exec("sh").arg("-c").arg("echo foo >&2").stream_stderr()
         // failing because the shell tries to redirect stdout to
         // stderr, but fails because it didn't receive a valid stdout.
         if stream.is_none() {
-            *stream = Some(Rc::new(clone_standard_stream(which)?));
+            *stream = Some(FileRef::from_system(get_standard_stream(which)?));
         }
         Ok(())
     }
@@ -694,7 +748,7 @@ mod os {
         cmdline.push('"' as u16);
     }
 
-    pub use win32::clone_standard_stream;
+    pub use win32::get_standard_stream;
 }
 
 

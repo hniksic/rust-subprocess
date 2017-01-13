@@ -21,7 +21,7 @@ use winapi::winnt::PHANDLE;
 pub use winapi::winerror::{ERROR_BAD_PATHNAME, ERROR_ACCESS_DENIED};
 pub const STILL_ACTIVE: u32 = 259;
 
-use os_common::StandardStream;
+use os_common::{StandardStream, Undropped};
 
 #[derive(Debug)]
 pub struct Handle(RawHandle);
@@ -89,26 +89,19 @@ pub fn SetHandleInformation(handle: &mut File, dwMask: u32, dwFlags: u32) -> Res
     Ok(())
 }
 
-fn handle_of(opt_handle: &Option<&File>) -> RawHandle {
-    match opt_handle {
-        &Some(handle) => handle.as_raw_handle(),
-        &None => ptr::null_mut()
-    }
-}
-
 pub fn CreateProcess(appname: Option<&OsStr>,
                      cmdline: &OsStr,
                      inherit_handles: bool,
                      creation_flags: u32,
-                     stdin: Option<&File>,
-                     stdout: Option<&File>,
-                     stderr: Option<&File>,
+                     stdin: Option<RawHandle>,
+                     stdout: Option<RawHandle>,
+                     stderr: Option<RawHandle>,
                      sinfo_flags: u32) -> Result<(Handle, u64)> {
     let mut sinfo: STARTUPINFOW = unsafe { mem::zeroed() };
     sinfo.cb = mem::size_of::<STARTUPINFOW>() as DWORD;
-    sinfo.hStdInput = handle_of(&stdin);
-    sinfo.hStdOutput = handle_of(&stdout);
-    sinfo.hStdError = handle_of(&stderr);
+    sinfo.hStdInput = stdin.unwrap_or(ptr::null_mut());
+    sinfo.hStdOutput = stdout.unwrap_or(ptr::null_mut());
+    sinfo.hStdError = stderr.unwrap_or(ptr::null_mut());
     sinfo.dwFlags = sinfo_flags;
     let mut pinfo: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let mut cmdline = to_nullterm(cmdline);
@@ -178,7 +171,7 @@ pub fn TerminateProcess(handle: &Handle, exit_code: u32) -> Result<()> {
 
 unsafe fn GetStdHandle(which: StandardStream) -> Result<RawHandle> {
     // private/unsafe because the raw handle it returns must be
-    // duplicated before converting to an owned Handle.
+    // duplicated or leaked before converting to an owned Handle.
     use winapi::winbase::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
     let id = match which {
         StandardStream::Input => STD_INPUT_HANDLE,
@@ -189,15 +182,9 @@ unsafe fn GetStdHandle(which: StandardStream) -> Result<RawHandle> {
     Ok(raw_handle)
 }
 
-pub fn clone_standard_stream(which: StandardStream) -> Result<File> {
+pub fn get_standard_stream(which: StandardStream) -> Result<Undropped<File>> {
     unsafe {
         let raw = GetStdHandle(which)?;
-        let mut new_raw = ptr::null_mut();
-        let cur_proc = kernel32::GetCurrentProcess();
-        check(kernel32::DuplicateHandle(cur_proc, raw, cur_proc, &mut
-                                        new_raw, 0,
-                                        true as BOOL,
-                                        winapi::winnt::DUPLICATE_SAME_ACCESS))?;
-        Ok(File::from_raw_handle(new_raw))
+        Ok(Undropped::new(File::from_raw_handle(raw)))
     }
 }
