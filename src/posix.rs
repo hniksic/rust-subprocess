@@ -5,6 +5,7 @@ use std::fs::File;
 use std::os::unix::io::FromRawFd;
 use std::ptr;
 use std::ffi::CString;
+use std::mem;
 
 use libc;
 
@@ -127,4 +128,29 @@ pub fn get_standard_stream(which: StandardStream) -> Result<Undropped<File>> {
     unsafe {
         Ok(Undropped::new(File::from_raw_fd(fd)))
     }
+}
+
+pub fn reset_sigpipe() -> Result<()> {
+    // This is called after forking to reset SIGPIPE handling to the
+    // defaults that Unix programs expect.  Quoting
+    // std::process::Command::do_exec:
+    //
+    // """
+    // libstd ignores SIGPIPE, and signal-handling libraries often set
+    // a mask. Child processes inherit ignored signals and the signal
+    // mask from their parent, but most UNIX programs do not reset
+    // these things on their own, so we need to clean things up now to
+    // avoid confusing the program we're about to run.
+    // """
+
+    unsafe {
+        let mut set: libc::sigset_t = mem::uninitialized();
+        check_err(libc::sigemptyset(&mut set))?;
+        check_err(libc::pthread_sigmask(libc::SIG_SETMASK, &set, ptr::null_mut()))?;
+        let ret = libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        if ret == libc::SIG_ERR {
+            return Err(Error::last_os_error());
+        }
+    }
+    Ok(())
 }

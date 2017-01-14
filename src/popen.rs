@@ -695,6 +695,7 @@ mod os {
                     posix::dup2(stderr.as_raw_fd(), 2)?;
                 }
             }
+            posix::reset_sigpipe()?;
             posix::execvp(executable.as_ref().unwrap_or(&argv[0]), &argv)
         }
 
