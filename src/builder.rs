@@ -27,12 +27,13 @@ mod exec {
     use super::os::*;
     use super::Pipeline;
 
-    /// A builder for `Popen` instances, providing control and convenience methods.
+    /// A builder for [`Popen`] instances, providing control and
+    /// convenience methods.
     ///
     /// `Exec` provides a Rustic API for building up the arguments to
-    /// `Popen::create`, but also convenience methods and classes for
-    /// capturing the output, and for connecting `Popen` instances
-    /// into pipelines.
+    /// [`Popen::create`], but also convenience methods and classes
+    /// for capturing the output, and for connecting [`Popen`]
+    /// instances into pipelines.
     ///
     /// # Examples
     ///
@@ -85,6 +86,9 @@ mod exec {
     ///   .stdout_str();
     /// assert!(out == "a\nb\nc\n");
     /// ```
+    ///
+    /// [`Popen`]: struct.Popen.html
+    /// [`Popen::create`]: struct.Popen.html#method.create
 
     #[derive(Debug)]
     pub struct Exec {
@@ -144,13 +148,16 @@ mod exec {
         ///
         /// Argument can be:
         ///
-        /// * a `Redirection`;
+        /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
         /// * a `Vec<u8>` or `&str`, which will set up a `Redirection::Pipe`
         ///   for stdin, making sure that `capture` feeds that data into the
-        ///   standard input of the subprocess.
-        /// * `NullFile`, which will redirect the standard input to read from
-        ///    /dev/null.
+        ///   standard input of the subprocess;
+        /// * [`NullFile`], which will redirect the standard input to read from
+        ///    `/dev/null`.
+        ///
+        /// [`Redirection`]: struct.Redirection.html
+        /// [`NullFile`]: struct.NullFile.html
         pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Exec {
             match (&self.config.stdin, stdin.into_input_redirection()) {
                 (&Redirection::None, InputRedirection::AsRedirection(new)) => self.config.stdin = new,
@@ -168,10 +175,13 @@ mod exec {
         ///
         /// Argument can be:
         ///
-        /// * a `Redirection`;
+        /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-        /// * `NullFile`, which will redirect the standard input to read from
-        ///    /dev/null.
+        /// * [`NullFile`], which will redirect the standard output to go to
+        ///    `/dev/null`.
+        ///
+        /// [`Redirection`]: struct.Redirection.html
+        /// [`NullFile`]: struct.NullFile.html
         pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Exec {
             match (&self.config.stdout, stdout.into_output_redirection()) {
                 (&Redirection::None, new) => self.config.stdout = new,
@@ -185,10 +195,13 @@ mod exec {
         ///
         /// Argument can be:
         ///
-        /// * a `Redirection`;
+        /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-        /// * `NullFile`, which will redirect the standard input to read from
-        ///    /dev/null.
+        /// * [`NullFile`], which will redirect the standard error to go to
+        ///    `/dev/null`.
+        ///
+        /// [`Redirection`]: struct.Redirection.html
+        /// [`NullFile`]: struct.NullFile.html
         pub fn stderr<T: IntoOutputRedirection>(mut self, stderr: T) -> Exec {
             match (&self.config.stderr, stderr.into_output_redirection()) {
                 (&Redirection::None, new) => self.config.stderr = new,
@@ -465,17 +478,18 @@ mod pipeline {
     use super::exec::{Exec, IntoInputRedirection, InputRedirection,
                       IntoOutputRedirection};
 
-    /// A builder for multiple `Popen` instances connected via pipes.
+    /// A builder for multiple [`Popen`] instances connected via
+    /// pipes.
     ///
-    /// A pipeline is a sequence of two or more `Exec` commands
+    /// A pipeline is a sequence of two or more [`Exec`] commands
     /// connected via pipes.  Just like in a Unix shell pipeline, each
     /// command receives standard input from the previous command, and
     /// passes standard output to the next command.  Optionally, the
     /// standard input of the first command can be provided from the
     /// outside, and the output of the last command can be captured.
     ///
-    /// In most cases you do not need to create `Pipeline` instances
-    /// directly; instead, combine `Exec` instances using the `|`
+    /// In most cases you do not need to create [`Pipeline`] instances
+    /// directly; instead, combine [`Exec`] instances using the `|`
     /// operator which produces `Pipeline`.
     ///
     /// # Examples
@@ -494,6 +508,10 @@ mod pipeline {
     ///     Exec::cmd("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
     /// }.capture()?.output_str();
     /// ```
+    ///
+    /// [`Popen`]: struct.Popen.html
+    /// [`Exec`]: struct.Exec.html
+    /// [`Pipeline`]: struct.Pipeline.html
     #[derive(Debug)]
     pub struct Pipeline {
         cmds: Vec<Exec>,
@@ -520,13 +538,15 @@ mod pipeline {
         ///
         /// Argument can be:
         ///
-        /// * a `Redirection`;
+        /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
         /// * a `Vec<u8>` or `&str`, which will set up a `Redirection::Pipe`
         ///   for stdin, making sure that `capture` feeds that data into the
         ///   standard input of the subprocess.
         /// * `NullFile`, which will redirect the standard input to read from
         ///    /dev/null.
+        ///
+        /// [`Redirection`]: struct.Redirection.html
         pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Pipeline {
             match stdin.into_input_redirection() {
                 InputRedirection::AsRedirection(r) => self.stdin = r,
@@ -543,10 +563,12 @@ mod pipeline {
         ///
         /// Argument can be:
         ///
-        /// * a `Redirection`;
+        /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
         /// * `NullFile`, which will redirect the standard input to read from
         ///    /dev/null.
+        ///
+        /// [`Redirection`]: struct.Redirection.html
         pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Pipeline {
             self.stdout = stdout.into_output_redirection();
             self
@@ -738,12 +760,16 @@ mod pipeline {
         }
     }
 
+    /// Output of the last command in the pipeline.
     pub struct CaptureOutput {
+        /// Output as bytes.
         pub stdout: Vec<u8>,
+        /// Exit status.
         pub exit_status: ExitStatus
     }
 
     impl CaptureOutput {
+        /// Output as string, converted using `String::from_utf8_lossy`.
         pub fn stdout_str(&self) -> String {
             String::from_utf8_lossy(&self.stdout).into_owned()
         }

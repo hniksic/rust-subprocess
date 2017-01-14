@@ -19,19 +19,30 @@ use self::ChildState::*;
 /// of the object, so having the object means that the child was
 /// successfully executed.  To prevent accumulation of zombie
 /// processes, the child is automatically waited upon when the `Popen`
-/// struct goes out of scope, which can be prevented using the `detach` method.
+/// struct goes out of scope, which can be prevented using the
+/// [`detach`] method.
 ///
 /// Depending on how the subprocess was configured, its input, output,
 /// and error streams can be connected to the parent and available as
-/// `stdin`, `stdout`, and `stderr` public fields.  To simply read the
-/// output and errors into memory (and optionally provide input the
-/// same way), use the `communicate_bytes` or `communicate` methods,
-/// which guarantee deadlock-free communication with the subprocess.
+/// [`stdin`], [`stdout`], and [`stderr`] public fields.  To simply
+/// read the output and errors into memory (and optionally provide
+/// input the same way), use the [`communicate_bytes`] or
+/// [`communicate`] methods, which guarantee deadlock-free
+/// communication with the subprocess.
 ///
-/// `Popen` instances can be obtained their `create` method, or using
-/// the `popen` method of the `Exec` class.  Subprocesses can be
-/// connected into pipes, but this is also easier to achieve using
-/// `Exec`.
+/// `Popen` instances can be obtained their [`create`] method, or
+/// using the [`popen`] method of the [`Exec`] class.  Subprocesses
+/// can be connected into pipes, but this is also easier to achieve
+/// using [`Exec`].
+///
+/// [`Exec`]: struct.Exec.html
+/// [`stdin`]: struct.Popen.html#structfield.stdin
+/// [`stdout`]: struct.Popen.html#structfield.stdout
+/// [`stderr`]: struct.Popen.html#structfield.stderr
+/// [`create`]: struct.Popen.html#method.create
+/// [`communicate`]: struct.Popen.html#method.communicate
+/// [`communicate_bytes`]: struct.Popen.html#method.communicate_bytes
+/// [`detach`]: struct.Popen.html#method.detach
 
 #[derive(Debug)]
 pub struct Popen {
