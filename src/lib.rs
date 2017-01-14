@@ -17,7 +17,7 @@ mod win32;
 mod os_common;
 
 pub use self::os_common::ExitStatus;
-pub use self::popen::{Popen, PopenConfig, Redirection, PopenError};
+pub use self::popen::{Popen, PopenConfig, Redirection, PopenError, Result};
 pub use self::builder::{Exec, NullFile, Pipeline};
 
 
