@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Hrvoje Niksic <hniksic@gmail.com>"]
 description = "Execution and interaction with external processes"
 license = "Apache-2.0/MIT"
-#repository = "..."
+repository = "https://github.com/hniksic/rust-subprocess"
 #documentation = "..."
 
 [dependencies]
