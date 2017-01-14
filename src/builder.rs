@@ -466,7 +466,7 @@ mod pipeline {
     impl Drop for WritePipelineAdapter {
         // the same rationale as Drop for WriteAdapter
         fn drop(&mut self) {
-            let ref mut first = self.0[0];
+            let first = &mut self.0[0];
             first.stdin.take();
         }
     }

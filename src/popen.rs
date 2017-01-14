@@ -65,9 +65,9 @@ mod fileref {
         type Target = File;
 
         fn deref(&self) -> &File {
-            match self.0.deref() {
-                &InnerFile::Owned(ref f) => f,
-                &InnerFile::System(ref f) => f.get_ref(),
+            match *self.0.deref() {
+                InnerFile::Owned(ref f) => f,
+                InnerFile::System(ref f) => f.get_ref(),
             }
         }
     }
@@ -126,11 +126,11 @@ pub enum Redirection {
 
 impl Redirection {
     pub fn try_clone(&self) -> IoResult<Redirection> {
-        Ok(match self {
-            &Redirection::File(ref f) => Redirection::File(f.try_clone()?),
-            &Redirection::None => Redirection::None,
-            &Redirection::Pipe => Redirection::Pipe,
-            &Redirection::Merge => Redirection::Merge,
+        Ok(match *self {
+            Redirection::File(ref f) => Redirection::File(f.try_clone()?),
+            Redirection::None => Redirection::None,
+            Redirection::Pipe => Redirection::Pipe,
+            Redirection::Merge => Redirection::Merge,
         })
     }
 }

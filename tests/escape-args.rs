@@ -14,10 +14,10 @@ fn escape_args() {
     // This is mostly relevant for Windows: test whether
     // assemble_cmdline does a good job with arguments that require
     // escaping.
-    for &arg in ["x", "", " ", "  ",
-                 r" \ ", r" \\ ", r" \\\ ",
-                 r#"""#, r#""""#, r#"\"\\""#,
-                 "æ÷", "šđ", "本", "❤", "☃",].iter() {
+    for &arg in &["x", "", " ", "  ",
+                  r" \ ", r" \\ ", r" \\\ ",
+                  r#"""#, r#""""#, r#"\"\\""#,
+                  "æ÷", "šđ", "本", "❤", "☃",] {
         let mut p = Popen::create(&[just_echo_path().as_ref(), arg], PopenConfig {
             stdout: Redirection::Pipe,
             ..Default::default()
