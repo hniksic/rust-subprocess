@@ -95,29 +95,40 @@ mod exec {
             self
         }
 
+        fn check_no_stdin_data(&self, meth: &str) {
+            if self.stdin_data.is_some() {
+                panic!("{} called with input data specified", meth);
+            }
+        }
+
         // Terminators
 
         pub fn popen(mut self) -> PopenResult<Popen> {
+            self.check_no_stdin_data("popen");
             self.args.insert(0, self.command);
             let p = Popen::create(&self.args, self.config)?;
             Ok(p)
         }
 
         pub fn join(self) -> PopenResult<ExitStatus> {
+            self.check_no_stdin_data("join");
             self.popen()?.wait()
         }
 
         pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
+            self.check_no_stdin_data("stream_stdout");
             let p = self.stdout(Redirection::Pipe).popen()?;
             Ok(Box::new(ReadOutAdapter(p)))
         }
 
         pub fn stream_stderr(self) -> PopenResult<Box<Read>> {
+            self.check_no_stdin_data("stream_stderr");
             let p = self.stderr(Redirection::Pipe).popen()?;
             Ok(Box::new(ReadErrAdapter(p)))
         }
 
         pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
+            self.check_no_stdin_data("stream_stdin");
             let p = self.stdin(Redirection::Pipe).popen()?;
             Ok(Box::new(WriteAdapter(p)))
         }

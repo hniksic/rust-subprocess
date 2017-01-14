@@ -158,3 +158,33 @@ fn pipeline_invalid_2() {
     let try = (Exec::cmd("no-such-command") | Exec::cmd("echo").arg("foo")).join();
     assert!(try.is_err());
 }
+
+#[test]
+#[should_panic]
+fn reject_input_data_popen() {
+    Exec::cmd("true").stdin("xxx").popen().unwrap();
+}
+
+#[test]
+#[should_panic]
+fn reject_input_data_join() {
+    Exec::cmd("true").stdin("xxx").join().unwrap();
+}
+
+#[test]
+#[should_panic]
+fn reject_input_data_stream_stdout() {
+    Exec::cmd("true").stdin("xxx").stream_stdout().unwrap();
+}
+
+#[test]
+#[should_panic]
+fn reject_input_data_stream_stderr() {
+    Exec::cmd("true").stdin("xxx").stream_stderr().unwrap();
+}
+
+#[test]
+#[should_panic]
+fn reject_input_data_stream_stdin() {
+    Exec::cmd("true").stdin("xxx").stream_stdin().unwrap();
+}
