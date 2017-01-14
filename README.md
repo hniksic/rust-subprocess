@@ -12,7 +12,7 @@ The following features are available:
   input, output, and error.
 
 * Waiting for the process to finish and polling its status: `poll`,
-  `wait`, and `timed_wait`.
+  `wait`, and `wait_timeout`.
 
 * Advanced redirection options, such as connecting standard streams to
   arbitary files, or merging errors into output like shell's `2>&1`
@@ -21,7 +21,7 @@ The following features are available:
 * The `communicate` method for deadlock-free reading of output while
   simultaneously providing input to the subprocess.
 
-* Connecting multiple commands to OS-level pipelines.
+* Connecting multiple commands into OS-level pipelines.
 
 * Rustic builder-style API for building commands and pipelines and
   collecting their results.
@@ -41,10 +41,10 @@ convenience API using the builder pattern, in the vein of
 builder to create `Popen` instances, and then to continue working with
 them directly.
 
-The `Popen` type offers functionality currently missing from the Rust
-standard library.  It provides methods for terminating the process,
-polling its status, waiting with timeout, and the `communicate`
-method, useful enough to have been [created
+The `Popen` type offers some functionality currently missing from the
+Rust standard library.  It provides methods for polling the process,
+waiting with timeout, and the `communicate` method, useful enough to
+have been [created
 independently](https://crates.io/crates/subprocess-communicate).
 While the design follows Python's [`subprocess`
 module](https://docs.python.org/3/library/subprocess.html#popen-constructor),
@@ -52,7 +52,9 @@ this module was adapted to Rust's style.  Some of the changes
 accommodate the differences between the languages, such as the lack of
 default and keyword arguments in Rust, and others take advantage of
 Rust's more advanced type system, or of additional capabilities such
-as the ownership system and the `Drop` trait.
+as the ownership system and the `Drop` trait.  Python's utility
+functions such as `subprocess.run` are not included because they have
+better alternatives in the form of the builder API.
 
 Working with subprocesses using `subprocess::Popen` can look like
 this:
@@ -160,11 +162,11 @@ to the next command in the pipeline.  Optionally, the standard input
 of the first command can be provided from the outside, and the output
 of the last command can be captured.
 
-Execite a pipeline and return the exit status of the last command:
+Execute a pipeline and return the exit status of the last command:
 
 ```rust
 let exit_status =
-  (Exec::shell("ls *.o") | Exec::cmd("xargs").arg("rm")).join()?;
+  (Exec::shell("ls *.bak") | Exec::cmd("xargs").arg("rm")).join()?;
 ```
 
 Capture the pipeline's output:
@@ -193,7 +195,7 @@ then.
 
 ```rust
 let mut proc = Exec::cmd("sleep").arg("2").popen()?;
-if let Some(status) = proc.timed_wait(Duration::new(1, 0))? {
+if let Some(status) = proc.wait_timeout(Duration::new(1, 0))? {
     println!("process finished as {:?}", status);
 } else {
     proc.kill()?;

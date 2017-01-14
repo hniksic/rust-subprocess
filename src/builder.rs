@@ -27,6 +27,65 @@ mod exec {
     use super::os::*;
     use super::Pipeline;
 
+    /// A builder for `Popen` instances, providing control and convenience methods.
+    ///
+    /// `Exec` provides a Rustic API for building up the arguments to
+    /// `Popen::create`, but also convenience methods and classes for
+    /// capturing the output, and for connecting `Popen` instances
+    /// into pipelines.
+    ///
+    /// # Examples
+    ///
+    /// Execute an external command and wait for it to complete:
+    ///
+    /// ```ignore
+    /// let exit_status = Exec::cmd("umount").arg(dirname).join()?;
+    /// ```
+    ///
+    /// Execute the command using the OS shell, like C's `system`:
+    ///
+    /// ```ignore
+    /// Exec::shell("shutdown -h now").join()?;
+    /// ```
+    ///
+    /// Start a subprocess and obtain its output as a `Read` trait object,
+    /// like C's `popen`:
+    ///
+    /// ```ignore
+    /// let stream = Exec::cmd("ls").stream_stdout()?;
+    /// // call stream.read_to_string, construct io::BufReader(stream), etc.
+    /// ```
+    ///
+    /// Capture the output of a command:
+    ///
+    /// ```ignore
+    /// let out = Exec::cmd("ls")
+    ///   .stdout(Redirection::Pipe)
+    ///   .capture()?
+    ///   .stdout_str();
+    /// ```
+    ///
+    /// Redirect errors to standard output, and capture both in a single stream:
+    ///
+    /// ```ignore
+    /// let out_and_err = Exec::cmd("ls")
+    ///   .stdout(Redirection::Pipe)
+    ///   .stderr(Redirection::Merge)
+    ///   .capture()?
+    ///   .stdout_str();
+    /// ```
+    ///
+    /// Provide input to the command and read its output:
+    ///
+    /// ```ignore
+    /// let out = Exec::cmd("sort")
+    ///   .stdin("b\nc\na\n")
+    ///   .stdout(Redirection::Pipe)
+    ///   .capture()?
+    ///   .stdout_str();
+    /// assert!(out == "a\nb\nc\n");
+    /// ```
+
     #[derive(Debug)]
     pub struct Exec {
         command: OsString,
@@ -36,6 +95,10 @@ mod exec {
     }
 
     impl Exec {
+        /// Constructs a new `Exec`, configured to run `command`.
+        ///
+        /// By default, the command will be run without arguments, and
+        /// none of the standard streams will be modified.
         pub fn cmd<S: AsRef<OsStr>>(command: S) -> Exec {
             Exec {
                 command: command.as_ref().to_owned(),
@@ -45,29 +108,53 @@ mod exec {
             }
         }
 
+        /// Constructs a new `Exec`, configured to run `cmdstr` with
+        /// the system shell.
+        ///
+        /// On Unix-like systems, this is equivalent to
+        /// `Exec::cmd("sh").arg("-c").arg(cmdstr)`.  On Windows,
+        /// `cmd.exe /c` is used instead.
         pub fn shell<S: AsRef<OsStr>>(cmdstr: S) -> Exec {
             Exec::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
         }
 
+        /// Append `arg` to argument list.
         pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Exec {
             self.args.push(arg.as_ref().to_owned());
             self
         }
 
+        /// Extend the argument list with `args`.
         pub fn args<S: AsRef<OsStr>>(mut self, args: &[S]) -> Exec {
             self.args.extend(args.iter().map(|x| x.as_ref().to_owned()));
             self
         }
 
+        /// Specify that the process is initially detached.
+        ///
+        /// A detached process means that we will not wait for the
+        /// process to finish when the object that owns it goes out of
+        /// scope.
         pub fn detached(mut self) -> Exec {
             self.config.detached = true;
             self
         }
 
+        /// Specify how to set up the standard input of the child process.
+        ///
+        /// Argument can be:
+        ///
+        /// * a `Redirection`;
+        /// * a `File`, which is a shorthand for `Redirection::File(file)`;
+        /// * a `Vec<u8>` or `&str`, which will set up a `Redirection::Pipe`
+        ///   for stdin, making sure that `capture` feeds that data into the
+        ///   standard input of the subprocess.
+        /// * `NullFile`, which will redirect the standard input to read from
+        ///    /dev/null.
         pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Exec {
             match (&self.config.stdin, stdin.into_input_redirection()) {
-                (&Redirection::None, InputRedirection::NoAction(new)) => self.config.stdin = new,
-                (&Redirection::Pipe, InputRedirection::NoAction(Redirection::Pipe)) => (),
+                (&Redirection::None, InputRedirection::AsRedirection(new)) => self.config.stdin = new,
+                (&Redirection::Pipe, InputRedirection::AsRedirection(Redirection::Pipe)) => (),
                 (&Redirection::None, InputRedirection::FeedData(data)) => {
                     self.config.stdin = Redirection::Pipe;
                     self.stdin_data = Some(data);
@@ -77,6 +164,14 @@ mod exec {
             self
         }
 
+        /// Specify how to set up the standard output of the child process.
+        ///
+        /// Argument can be:
+        ///
+        /// * a `Redirection`;
+        /// * a `File`, which is a shorthand for `Redirection::File(file)`;
+        /// * `NullFile`, which will redirect the standard input to read from
+        ///    /dev/null.
         pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Exec {
             match (&self.config.stdout, stdout.into_output_redirection()) {
                 (&Redirection::None, new) => self.config.stdout = new,
@@ -86,6 +181,14 @@ mod exec {
             self
         }
 
+        /// Specify how to set up the standard error of the child process.
+        ///
+        /// Argument can be:
+        ///
+        /// * a `Redirection`;
+        /// * a `File`, which is a shorthand for `Redirection::File(file)`;
+        /// * `NullFile`, which will redirect the standard input to read from
+        ///    /dev/null.
         pub fn stderr<T: IntoOutputRedirection>(mut self, stderr: T) -> Exec {
             match (&self.config.stderr, stderr.into_output_redirection()) {
                 (&Redirection::None, new) => self.config.stderr = new,
@@ -103,6 +206,7 @@ mod exec {
 
         // Terminators
 
+        /// Start the process, and return the `Popen` for the running process.
         pub fn popen(mut self) -> PopenResult<Popen> {
             self.check_no_stdin_data("popen");
             self.args.insert(0, self.command);
@@ -110,29 +214,74 @@ mod exec {
             Ok(p)
         }
 
+        /// Start the process, wait for it to finish, and return the exit status.
+        ///
+        /// This method will wait for as long as necessary for the
+        /// process to finish.  If a timeout is needed, use
+        /// `popen()?.wait_timeout(...)` instead.
         pub fn join(self) -> PopenResult<ExitStatus> {
             self.check_no_stdin_data("join");
             self.popen()?.wait()
         }
 
+        /// Start the process and return a `Read` trait object that
+        /// reads from the standard output of the child process.
+        ///
+        /// This will automatically set up
+        /// `stdout(Redirection::Pipe)`, so it is not necessary to do
+        /// that beforehand.
+        ///
+        /// When the trait object is dropped, it will wait for the
+        /// process to finish.  If this is undesirable, use
+        /// `detached()`.
         pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
             self.check_no_stdin_data("stream_stdout");
             let p = self.stdout(Redirection::Pipe).popen()?;
             Ok(Box::new(ReadOutAdapter(p)))
         }
 
+        /// Start the process and return a `Read` trait object that
+        /// reads from the standard error of the child process.
+        ///
+        /// This will automatically set up
+        /// `stderr(Redirection::Pipe)`, so it is not necessary to do
+        /// that beforehand.
+        ///
+        /// When the trait object is dropped, it will wait for the
+        /// process to finish.  If this is undesirable, use
+        /// `detached()`.
         pub fn stream_stderr(self) -> PopenResult<Box<Read>> {
             self.check_no_stdin_data("stream_stderr");
             let p = self.stderr(Redirection::Pipe).popen()?;
             Ok(Box::new(ReadErrAdapter(p)))
         }
 
+        /// Start the process and return a `Write` trait object that
+        /// writes to the standard input of the child process.
+        ///
+        /// This will automatically set up `stdin(Redirection::Pipe)`,
+        /// so it is not necessary to do that beforehand.
+        ///
+        /// When the trait object is dropped, it will wait for the
+        /// process to finish.  If this is undesirable, use
+        /// `detached()`.
         pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
             self.check_no_stdin_data("stream_stdin");
             let p = self.stdin(Redirection::Pipe).popen()?;
             Ok(Box::new(WriteAdapter(p)))
         }
 
+        /// Start the process, collect its output, and wait for it to
+        /// finish.
+        ///
+        /// The return value provides the standard output and standard
+        /// error as bytes or optionally strings, as well as the exit
+        /// status.
+        ///
+        /// Unlike `Popen::communicate`, this method actually waits
+        /// for the process to finish, rather than simply waiting for
+        /// its standard streams to close.  If this is undesirable,
+        /// use `detached()`.
         pub fn capture(mut self) -> PopenResult<Capture> {
             let stdin_data = self.stdin_data.take();
             if let (&Redirection::None, &Redirection::None)
@@ -165,6 +314,7 @@ mod exec {
     impl BitOr for Exec {
         type Output = Pipeline;
 
+        /// Combine `self` and `rhs` into an OS-level pipeline.
         fn bitor(self, rhs: Exec) -> Pipeline {
             Pipeline::new(self, rhs)
         }
@@ -229,7 +379,7 @@ mod exec {
     }
 
     pub enum InputRedirection {
-        NoAction(Redirection),
+        AsRedirection(Redirection),
         FeedData(Vec<u8>),
     }
 
@@ -242,22 +392,27 @@ mod exec {
             if let Redirection::Merge = self {
                 panic!("Redirection::Merge is only allowed for output streams");
             }
-            InputRedirection::NoAction(self)
+            InputRedirection::AsRedirection(self)
         }
     }
 
     impl IntoInputRedirection for File {
         fn into_input_redirection(self) -> InputRedirection {
-            InputRedirection::NoAction(Redirection::File(self))
+            InputRedirection::AsRedirection(Redirection::File(self))
         }
     }
 
+    /// Marker value for `stdin`, `stdout`, and `stderr` methods of
+    /// `Exec` and `Pipeline`.
+    ///
+    /// Use of this value means that the corresponding stream should
+    /// be redirected to the devnull device.
     pub struct NullFile;
 
     impl IntoInputRedirection for NullFile {
         fn into_input_redirection(self) -> InputRedirection {
             let null_file = OpenOptions::new().read(true).open(NULL_DEVICE).unwrap();
-            InputRedirection::NoAction(Redirection::File(null_file))
+            InputRedirection::AsRedirection(Redirection::File(null_file))
         }
     }
 
@@ -310,6 +465,35 @@ mod pipeline {
     use super::exec::{Exec, IntoInputRedirection, InputRedirection,
                       IntoOutputRedirection};
 
+    /// A builder for multiple `Popen` instances connected via pipes.
+    ///
+    /// A pipeline is a sequence of two or more `Exec` commands
+    /// connected via pipes.  Just like in a Unix shell pipeline, each
+    /// command receives standard input from the previous command, and
+    /// passes standard output to the next command.  Optionally, the
+    /// standard input of the first command can be provided from the
+    /// outside, and the output of the last command can be captured.
+    ///
+    /// In most cases you do not need to create `Pipeline` instances
+    /// directly; instead, combine `Exec` instances using the `|`
+    /// operator which produces `Pipeline`.
+    ///
+    /// # Examples
+    ///
+    /// Execite a pipeline and return the exit status of the last command:
+    ///
+    /// ```ignore
+    /// let exit_status =
+    ///   (Exec::shell("ls *.bak") | Exec::cmd("xargs").arg("rm")).join()?;
+    /// ```
+    ///
+    /// Capture the pipeline's output:
+    ///
+    /// ```ignore
+    /// let dir_checksum = {
+    ///     Exec::cmd("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
+    /// }.capture()?.output_str();
+    /// ```
     #[derive(Debug)]
     pub struct Pipeline {
         cmds: Vec<Exec>,
@@ -319,6 +503,9 @@ mod pipeline {
     }
 
     impl Pipeline {
+        /// Create a new pipeline by combining two commands.
+        ///
+        /// Equivalent to `cmd1 | cmd2`.
         pub fn new(cmd1: Exec, cmd2: Exec) -> Pipeline {
             Pipeline {
                 cmds: vec![cmd1, cmd2],
@@ -328,9 +515,21 @@ mod pipeline {
             }
         }
 
+        /// Specify how to set up the standard input of the first
+        /// command in the pipeline.
+        ///
+        /// Argument can be:
+        ///
+        /// * a `Redirection`;
+        /// * a `File`, which is a shorthand for `Redirection::File(file)`;
+        /// * a `Vec<u8>` or `&str`, which will set up a `Redirection::Pipe`
+        ///   for stdin, making sure that `capture` feeds that data into the
+        ///   standard input of the subprocess.
+        /// * `NullFile`, which will redirect the standard input to read from
+        ///    /dev/null.
         pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Pipeline {
             match stdin.into_input_redirection() {
-                InputRedirection::NoAction(r) => self.stdin = r,
+                InputRedirection::AsRedirection(r) => self.stdin = r,
                 InputRedirection::FeedData(data) => {
                     self.stdin = Redirection::Pipe;
                     self.stdin_data = Some(data);
@@ -339,14 +538,40 @@ mod pipeline {
             self
         }
 
+        /// Specify how to set up the standard output of the last
+        /// command in the pipeline.
+        ///
+        /// Argument can be:
+        ///
+        /// * a `Redirection`;
+        /// * a `File`, which is a shorthand for `Redirection::File(file)`;
+        /// * `NullFile`, which will redirect the standard input to read from
+        ///    /dev/null.
         pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Pipeline {
             self.stdout = stdout.into_output_redirection();
             self
         }
 
+        fn check_no_stdin_data(&self, meth: &str) {
+            if self.stdin_data.is_some() {
+                panic!("{} called with input data specified", meth);
+            }
+        }
+
         // Terminators:
 
+        /// Start all commands in the pipeline, and return the
+        /// `Vec<Popen>` whose members correspond to running commands.
+        ///
+        /// If some command fails to start, the remaining commands
+        /// will not be started, and the appropriate error will be
+        /// returned.  The commands that have already started will be
+        /// waited to finish (but will probably exit immediately due
+        /// to missing output), except for the ones for which
+        /// `detached()` was called.  This is equivalent to what the
+        /// shell does.
         pub fn popen(mut self) -> PopenResult<Vec<Popen>> {
+            self.check_no_stdin_data("popen");
             assert!(self.cmds.len() >= 2);
             let cnt = self.cmds.len();
 
@@ -371,7 +596,10 @@ mod pipeline {
             Ok(ret)
         }
 
+        /// Start the pipeline, wait for it to finish, and return the
+        /// exit status of the last command.
         pub fn join(self) -> PopenResult<ExitStatus> {
+            self.check_no_stdin_data("join");
             let mut v = self.popen()?;
             // Waiting on a pipeline waits for all commands, but
             // returns the status of the last one.  This is how the
@@ -380,16 +608,48 @@ mod pipeline {
             v.last_mut().unwrap().wait()
         }
 
+        /// Start the pipeline and return a `Read` trait object that
+        /// reads from the standard output of the last command.
+        ///
+        /// This will automatically set up
+        /// `stdout(Redirection::Pipe)`, so it is not necessary to do
+        /// that beforehand.
+        ///
+        /// When the trait object is dropped, it will wait for the
+        /// pipeline to finish.  If this is undesirable, use
+        /// `detached()`.
         pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
+            self.check_no_stdin_data("stream_stdout");
             let v = self.stdout(Redirection::Pipe).popen()?;
             Ok(Box::new(ReadPipelineAdapter(v)))
         }
 
+        /// Start the pipeline and return a `Write` trait object that
+        /// writes to the standard input of the first command.
+        ///
+        /// This will automatically set up `stdin(Redirection::Pipe)`,
+        /// so it is not necessary to do that beforehand.
+        ///
+        /// When the trait object is dropped, it will wait for the
+        /// process to finish.  If this is undesirable, use
+        /// `detached()`.
         pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
+            self.check_no_stdin_data("stream_stdin");
             let v = self.stdin(Redirection::Pipe).popen()?;
             Ok(Box::new(WritePipelineAdapter(v)))
         }
 
+        /// Start the pipeline, collect its output, and wait for all
+        /// commands to finish.
+        ///
+        /// The return value provides the standard output of the last
+        /// command error as bytes or optionally strings, as well as
+        /// the exit status of the last command.
+        ///
+        /// Unlike `Popen::communicate`, this method actually waits
+        /// for the processes to finish, rather than simply waiting
+        /// for the output to close.  If this is undesirable, use
+        /// `detached()`.
         pub fn capture(mut self) -> PopenResult<CaptureOutput> {
             assert!(self.cmds.len() >= 2);
 

@@ -12,10 +12,42 @@ use os_common::{ExitStatus, StandardStream};
 
 use self::ChildState::*;
 
+/// Interface to a running subprocess.
+///
+/// The `Popen` object represents the parent's interface to a running
+/// subprocess.  The child process is started during the construction
+/// of the object, so having the object means that the child was
+/// successfully executed.  To prevent accumulation of zombie
+/// processes, the child is automatically waited upon when the `Popen`
+/// struct goes out of scope, which can be prevented using the `detach` method.
+///
+/// Depending on how the subprocess was configured, its input, output,
+/// and error streams can be connected to the parent and available as
+/// `stdin`, `stdout`, and `stderr` public fields.  To simply read the
+/// output and errors into memory (and optionally provide input the
+/// same way), use the `communicate_bytes` or `communicate` methods,
+/// which guarantee deadlock-free communication with the subprocess.
+///
+/// `Popen` instances can be obtained their `create` method, or using
+/// the `popen` method of the `Exec` class.  Subprocesses can be
+/// connected into pipes, but this is also easier to achieve using
+/// `Exec`.
+
 #[derive(Debug)]
 pub struct Popen {
+    /// If `stdin` was specified as `Redirection::Pipe`, this will
+    /// contain a writeable `File` object connected to the standard
+    /// input of the child process.
     pub stdin: Option<File>,
+
+    /// If `stdout` was specified as `Redirection::Pipe`, this will
+    /// contain a readable `File` object connected to the standard
+    /// output of the child process.
     pub stdout: Option<File>,
+
+    /// If `stderr` was specified as `Redirection::Pipe`, this will
+    /// contain a readable `File` object connected to the standard
+    /// error of the child process.
     pub stderr: Option<File>,
 
     child_state: ChildState,
@@ -74,23 +106,51 @@ mod fileref {
 }
 use self::fileref::FileRef;
 
+/// Structure designed to be passed to `Popen::create`.
+///
+/// Always create this structure using the `Default` trait, such as
+/// `PopenConfig { field1: value1, field2: value2,
+/// ..Default::default() }`.  This ensures that later additions to the
+/// struct do not break existing code.
+///
+/// An alternative to using `PopenConfig` is the `Exec` struct which
+/// provides a builder-style interface to the same functionality.
+
 #[derive(Debug)]
 pub struct PopenConfig {
-    // Force construction using ..Default::default(), so we can add
-    // new public fields without breaking code
-    pub _use_default_to_construct: (),
-
+    /// How to configure the executed program's standard input.
     pub stdin: Redirection,
+    /// How to configure the executed program's standard output.
     pub stdout: Redirection,
+    /// How to configure the executed program's standard error.
     pub stderr: Redirection,
+    /// Whether the `Popen` instance is initially detached.
     pub detached: bool,
 
+    /// Executable to run.
+    ///
+    /// If this field is provided, this executable will be used to run
+    /// the program instead of `argv[0]`, but `argv[0]` will still be
+    /// provided as the program's argument list.
     pub executable: Option<OsString>,
+
+    // force construction using ..Default::default()
+    #[doc(hidden)]
+    pub _use_default_to_construct: (),
 
     // cwd, env, preexec_fn, close_fds...
 }
 
 impl PopenConfig {
+    /// Clone the underlying `PopenConfig`, or return an error.
+    ///
+    /// This is guaranteed not to fail as long as no
+    /// `Redirection::File` variant is used for one of the standard
+    /// streams.  Otherwise, it fail if `File::try_clone` fails on one
+    /// of the `Redirection` values.
+    ///
+    /// `try_clone().unwrap()` is used to implement `clone()` for the
+    /// builder structs `Exec` and `Pipeline`.
     pub fn try_clone(&self) -> IoResult<PopenConfig> {
         Ok(PopenConfig {
             _use_default_to_construct: (),
@@ -116,15 +176,65 @@ impl Default for PopenConfig {
     }
 }
 
+/// Instruction what to do with a stream in the child process.
+///
+/// Values of this type are used in `stdin`, `stdout`, and `stderr`
+/// field of the `PopenConfig` struct and tell `Popen::create` how to
+/// set up the child process, determining what will be available in
+/// the corresponding fields of the `Popen` object.
+
 #[derive(Debug)]
 pub enum Redirection {
+    /// Do nothing with the stream.
+    ///
+    /// The stream is typically inherited from the parent.  The field
+    /// in `Popen` corresponding to the stream will be `None`.
     None,
+
+    /// Redirect the stream to the specified open `File`.
+    ///
+    /// This does not create a pipe, it simply spawns the child so
+    /// that the specified stream sees that file.  The child can read
+    /// from or write to the provided file on its own, without any
+    /// intervention by the parent.
+    ///
+    /// The field in `Popen` corresponding to the stream will be
+    /// `None`.
     File(File),
+
+    /// Redirect the stream to a pipe.
+    ///
+    /// This creates a unidirectional pipe for the standard stream.
+    /// One end is passed to the child process and configured as one
+    /// of its standard streams, and the other end is available to the
+    /// parent as a `File` object in the corresponding field of the
+    /// `Popen` struct.
+    ///
+    /// The field in `Popen` corresponding to the stream will be
+    /// `None`.
     Pipe,
+
+    /// Merge the stream to the other output stream.
+    ///
+    /// This is only valid for output streams.  Using
+    /// `Redirection::Merge` for `PopenConfig::stderr` requests the
+    /// child's stderr to be the same underlying file as the child's
+    /// output stream (whatever that is), equivalent to the `2>&1`
+    /// operator of the Bourne shell.  Analogously, using
+    /// `Redirection::Merge` for `PopenConfig::stdout` is equivalent
+    /// to `1>&2` in the shell.
+    ///
+    /// Specifying `Redirection::Merge` for `PopenConfig::stdin` or
+    /// specifying it for both `stdout` and `stderr` is invalid and
+    /// will cause `Popen::create` to return
+    /// `Err(PopenError::LogicError)`.
     Merge,
 }
 
 impl Redirection {
+    /// Clone the underlying `Redirection`, or return an error.
+    ///
+    /// Can fail in `File` variant.
     pub fn try_clone(&self) -> IoResult<Redirection> {
         Ok(match *self {
             Redirection::File(ref f) => Redirection::File(f.try_clone()?),
@@ -136,6 +246,27 @@ impl Redirection {
 }
 
 impl Popen {
+    /// Execute an external program in a new process.
+    ///
+    /// `argv` is a slice containing the program followed by its
+    /// arguments, such as `&["ps", "x"]`. `config` specifies details
+    /// how to create and interface to the process.
+    ///
+    /// For example, this simply runs `cargo update`:
+    ///
+    /// ```ignore
+    /// Popen::create(&["cargo", "update"], PopenConfig::default())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// If the external program cannot be executed for any reason, an
+    /// error is returned.  The most typical reason for execution to
+    /// fail is that the program is missing on the `PATH`, but other
+    /// errors are also possible.  Note that this is distinct from the
+    /// program running and then exiting with a failure code - this
+    /// can be detected by calling the `wait` method to obtain its
+    /// exit status.
     pub fn create<S: AsRef<OsStr>>(argv: &[S], config: PopenConfig)
                                    -> Result<Popen> {
         let argv: Vec<OsString> = argv.iter()
@@ -150,10 +281,6 @@ impl Popen {
         inst.start(argv, config.executable,
                    config.stdin, config.stdout, config.stderr)?;
         Ok(inst)
-    }
-
-    pub fn detach(&mut self) {
-        self.detached = true;
     }
 
     // Create the pipes requested by stdin, stdout, and stderr from
@@ -255,12 +382,92 @@ impl Popen {
         Ok((child_stdin, child_stdout, child_stderr))
     }
 
+    /// Mark the process as detached.
+    ///
+    /// This method has no effect on the OS level, it simply tells
+    /// `Popen` not to wait for the subprocess to finish when going
+    /// out of scope.  If the child process has already finished, or
+    /// if it is guaranteed to finish before `Popen` goes out of
+    /// scope, calling `detach` has no effect.
+    pub fn detach(&mut self) {
+        self.detached = true;
+    }
+
+    /// Return the PID of the subprocess, if it is known to be still running.
+    ///
+    /// Note that this method won't actually *check* whether the child
+    /// process is still running, it will only return the information
+    /// last set using one of `create`, `wait`, `wait_timeout`, or
+    /// `poll`.  For a newly created `Popen`, `pid()` always returns
+    /// `Some`.
+    pub fn pid(&self) -> Option<u32> {
+        match self.child_state {
+            Running { pid, .. } => Some(pid),
+            _ => None
+        }
+    }
+
+    /// Return the exit status of the subprocess, if it is known to have finished.
+    ///
+    /// Note that this method won't actually *check* whether the child
+    /// process has finished, it only returns the previously available
+    /// information.  To check or wait for the process to finish, call
+    /// `wait`, `wait_timeout`, or `poll`.
+    pub fn exit_status(&self) -> Option<ExitStatus> {
+        match self.child_state {
+            Finished(exit_status) => Some(exit_status),
+            _ => None
+        }
+    }
+
+    /// Feed and capture the piped data of the subprocess.
+    ///
+    /// This will send the `input_data` to the subprocess, read its
+    /// output and error, and return them as a pair of
+    /// `Option<Vec<u8>>`.  The corresponding options will be `None` if
+    /// the respective stream was not specified as `Redirection::Pipe`.
+    ///
+    /// The communication is guaranteed to be deadlock-free.  This is
+    /// currently ensured using threads (only when interaction with
+    /// more than one stream is needed), and may be converted to
+    /// `poll()` in the future.
+    ///
+    /// Note that this method will not wait for the program to finish,
+    /// only to close its output stream(s).  The program may continue
+    /// running afterwards, and `wait()` must be used to ensure that
+    /// it has actually finished.
+    ///
+    /// # Panics
+    ///
+    /// If `input_data` is provided and `stdin` was not redirected to
+    /// a pipe.
     pub fn communicate_bytes(&mut self, input_data: Option<&[u8]>)
                              -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         communicate_bytes(&mut self.stdin, &mut self.stdout, &mut self.stderr,
                           input_data)
     }
 
+    /// Feed and capture the piped data of the subprocess as strings.
+    ///
+    /// This is a convenience method equivalent to
+    /// `communicate_bytes`, but with input as `&str` and output as
+    /// `String`.
+    ///
+    /// # Panics
+    ///
+    /// The same as with `communicate_bytes`
+    ///
+    /// # Errors
+    ///
+    /// * `Err(::std::io::Error)` if a system call fails
+    /// * `Err(PopenError::Utf8Error)` if the output of the process is
+    ///    not valid UTF-8 and therefore cannot be represented as a
+    ///    String.
+    ///
+    /// # Panics
+    ///
+    /// If `input_data` is provided and `stdin` was not redirected to
+    /// a pipe.
     pub fn communicate(&mut self, input_data: Option<&str>)
                        -> Result<(Option<String>, Option<String>)> {
         let (out, err) = self.communicate_bytes(input_data.map(|s| s.as_bytes()))?;
@@ -273,23 +480,15 @@ impl Popen {
         Ok((out_str, err_str))
     }
 
-    pub fn pid(&self) -> Option<u32> {
-        match self.child_state {
-            Running { pid, .. } => Some(pid),
-            _ => None
-        }
-    }
-
-    pub fn exit_status(&self) -> Option<ExitStatus> {
-        match self.child_state {
-            Finished(exit_status) => Some(exit_status),
-            _ => None
-        }
-    }
-
+    /// Check whether the process is still running, without blocking or errors.
+    ///
+    /// This checks whether the process is still running and.  If it
+    /// is still running, `None` is returned, otherwise
+    /// `Some(exit_status)`.  This method is guaranteed not to block
+    /// and is exactly equivalent to
+    /// `wait_timeout(Duration::new(0, 0)).unwrap_or(None)`.
     pub fn poll(&mut self) -> Option<ExitStatus> {
-        self.wait_timeout(Duration::from_secs(0)).ok(); // ignore errors
-        self.exit_status()
+        self.wait_timeout(Duration::from_secs(0)).unwrap_or(None)
     }
 
     fn start(&mut self,
@@ -299,18 +498,53 @@ impl Popen {
         (self as &mut PopenOs).start(argv, executable, stdin, stdout, stderr)
     }
 
+    /// Wait for the process to finish, and return its exit status.
+    ///
+    /// If the process has already finished, it will exit immediately,
+    /// returning the exit status.  Calling `wait` after that will
+    /// return the cached exit status without executing any system
+    /// calls.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Err` if a system call fails in an unpredicted way.
+    /// This should not happen in normal usage.
     pub fn wait(&mut self) -> Result<ExitStatus> {
         (self as &mut PopenOs).wait()
     }
 
+    /// Wait for the process to finish, timing out after the specified duration.
+    ///
+    /// This function behaves like `wait()`, except that the caller
+    /// will be blocked for roughly no longer than `dur`.  It returns
+    /// `Ok(None)` if the timeout is known to have elapsed.
+    ///
+    /// On Unix-like systems, timeout is implemented by calling
+    /// `waitpid(..., WNOHANG)` in a loop with adaptive sleep
+    /// intervals between iterations.
     pub fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
         (self as &mut PopenOs).wait_timeout(dur)
     }
 
+    /// Terminate the subprocess.
+    ///
+    /// On Unix-like systems, this sends the `SIGTERM` signal to the
+    /// child process, which can be caught by the child in order to
+    /// perform cleanup before exiting.  On Windows, it is equivalent
+    /// to `kill()`.
     pub fn terminate(&mut self) -> IoResult<()> {
         (self as &mut PopenOs).terminate()
     }
 
+    /// Kill the subprocess.
+    ///
+    /// On Unix-like systems, this sends the `SIGKILL` signal to the
+    /// child process, which cannot be caught.
+    ///
+    /// On Windows, it invokes [`TerminateProcess`] on the process
+    /// handle with equivalent semantics.
+    ///
+    /// [`TerminateProcess`]: https://msdn.microsoft.com/en-us/library/windows/desktop/ms686714(v=vs.85).aspx
     pub fn kill(&mut self) -> IoResult<()> {
         (self as &mut PopenOs).kill()
     }
@@ -468,7 +702,8 @@ mod os {
             match self.child_state {
                 Preparing => panic!("child_state == Preparing"),
                 Running { pid, .. } => {
-                    match posix::waitpid(pid, if block { 0 } else { posix::WNOHANG }) {
+                    match posix::waitpid(pid, if block { 0 }
+                                         else { posix::WNOHANG }) {
                         Err(e) => {
                             if let Some(errno) = e.raw_os_error() {
                                 if errno == posix::ECHILD {
@@ -476,7 +711,8 @@ mod os {
                                     // (another thread, a signal handler...).
                                     // The PID no longer exists and we cannot
                                     // find its exit status.
-                                    self.child_state = Finished(ExitStatus::Undetermined);
+                                    self.child_state
+                                        = Finished(ExitStatus::Undetermined);
                                     return Ok(());
                                 }
                             }
@@ -580,9 +816,10 @@ mod os {
             match self.child_state {
                 Preparing => panic!("child_state == Preparing"),
                 Finished(exit_status) => Ok(exit_status),
-                // Since we invoked wait_handle without timeout, exit status should
-                // exist at this point.  The only way for it not to exist would be if
-                // something strange happened, like WaitForSingleObject returning
+                // Since we invoked wait_handle without timeout, exit
+                // status should exist at this point.  The only way
+                // for it not to exist would be if something strange
+                // happened, like WaitForSingleObject returning
                 // something other than OBJECT_0.
                 Running {..} => Err(
                     PopenError::LogicError("Failed to obtain exit status"))
@@ -599,10 +836,12 @@ mod os {
 
         fn terminate(&mut self) -> IoResult<()> {
             let mut new_child_state = None;
-            if let Running { ext: ExtChildState(ref handle), .. } = self.child_state {
+            if let Running { ext: ExtChildState(ref handle),
+                             .. } = self.child_state {
                 match win32::TerminateProcess(handle, 1) {
                     Err(err) => {
-                        if err.raw_os_error() != Some(win32::ERROR_ACCESS_DENIED as i32) {
+                        if err.raw_os_error() != Some(win32::ERROR_ACCESS_DENIED
+                                                      as i32) {
                             return Err(err);
                         }
                         let rc = win32::GetExitCodeProcess(handle)?;
@@ -626,16 +865,20 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn wait_handle(&mut self, timeout: Option<Duration>) -> IoResult<Option<ExitStatus>>;
+        fn wait_handle(&mut self, timeout: Option<Duration>)
+                       -> IoResult<Option<ExitStatus>>;
     }
 
     impl PopenOsImpl for Popen {
-        fn wait_handle(&mut self, timeout: Option<Duration>) -> IoResult<Option<ExitStatus>> {
+        fn wait_handle(&mut self, timeout: Option<Duration>)
+                       -> IoResult<Option<ExitStatus>> {
             let mut new_child_state = None;
-            if let Running { ext: ExtChildState(ref handle), .. } = self.child_state {
+            if let Running { ext: ExtChildState(ref handle),
+                             .. } = self.child_state {
                 let millis = timeout.map(|t| {
                     if t <= Duration::new(4294967, 295_000_000) {
-                        (t.as_secs() as u32 * 1_000 + t.subsec_nanos() / 1_000_000)
+                        (t.as_secs() as u32 * 1_000
+                         + t.subsec_nanos() / 1_000_000)
                     } else {
                         // Clamp to avoid overflow.  We could support timeouts
                         // longer than 49.71 days with multiple waits.
@@ -701,7 +944,8 @@ mod os {
                 is_first = false;
             }
             if arg.encode_wide().any(|c| c == 0) {
-                return Err(io::Error::from_raw_os_error(win32::ERROR_BAD_PATHNAME as i32));
+                return Err(io::Error::from_raw_os_error(
+                    win32::ERROR_BAD_PATHNAME as i32));
             }
             append_quoted(&arg, &mut cmdline);
         }
@@ -763,11 +1007,15 @@ impl Drop for Popen {
     }
 }
 
+/// Error in `Popen` calls.
 
 #[derive(Debug)]
 pub enum PopenError {
+    /// Error when attempting to convert bytes to string.
     Utf8Error(FromUtf8Error),
+    /// The underlying error is io::Error.
     IoError(io::Error),
+    /// A logical error was made, e.g. invalid arguments detected at run-time.
     LogicError(&'static str),
 }
 
@@ -811,6 +1059,7 @@ impl fmt::Display for PopenError {
     }
 }
 
+/// Result type for the `subprocess` calls.
 pub type Result<T> = result::Result<T, PopenError>;
 
 mod communicate {
@@ -839,17 +1088,20 @@ mod communicate {
                              -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         match (stdin, stdout, stderr) {
             (mut stdin_ref @ &mut Some(_), &mut None, &mut None) => {
-                let input_data = input_data.expect("must provide input to redirected stdin");
+                let input_data = input_data.expect(
+                    "must provide input to redirected stdin");
                 comm_write(stdin_ref, input_data)?;
                 Ok((None, None))
             }
             (&mut None, mut stdout_ref @ &mut Some(_), &mut None) => {
-                assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
+                assert!(input_data.is_none(),
+                        "cannot provide input to non-redirected stdin");
                 let out = comm_read(stdout_ref)?;
                 Ok((Some(out), None))
             }
             (&mut None, &mut None, mut stderr_ref @ &mut Some(_)) => {
-                assert!(input_data.is_none(), "cannot provide input to non-redirected stdin");
+                assert!(input_data.is_none(),
+                        "cannot provide input to non-redirected stdin");
                 let err = comm_read(stderr_ref)?;
                 Ok((None, Some(err)))
             }
@@ -857,19 +1109,25 @@ mod communicate {
                 crossbeam::scope(move |scope| {
                     let (mut out_thr, mut err_thr) = (None, None);
                     if stdout_ref.is_some() {
-                        out_thr = Some(scope.spawn(move || comm_read(stdout_ref)))
+                        out_thr = Some(scope.spawn(move
+                                                   || comm_read(stdout_ref)))
                     }
                     if stderr_ref.is_some() {
-                        err_thr = Some(scope.spawn(move || comm_read(stderr_ref)))
+                        err_thr = Some(scope.spawn(move
+                                                   || comm_read(stderr_ref)))
                     }
                     if stdin_ref.is_some() {
-                        let input_data = input_data.expect("must provide input to redirected stdin");
+                        let input_data = input_data.expect(
+                            "must provide input to redirected stdin");
                         comm_write(stdin_ref, input_data)?;
                     }
-                    Ok((if let Some(out_thr) = out_thr {Some(out_thr.join()?)} else {None},
-                        if let Some(err_thr) = err_thr {Some(err_thr.join()?)} else {None}))
+                    Ok((if let Some(out_thr) = out_thr
+                        { Some(out_thr.join()?) } else { None },
+                        if let Some(err_thr) = err_thr
+                        { Some(err_thr.join()?) } else { None }))
                 })
         }
     }
 }
+
 pub use self::communicate::communicate_bytes;
