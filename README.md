@@ -60,21 +60,21 @@ Working with subprocesses using `subprocess::Popen` can look like
 this:
 
 ```rust
-let mut proc = Popen::create(&["command", "arg1", "arg2"], PopenConfig {
+let mut p = Popen::create(&["command", "arg1", "arg2"], PopenConfig {
     stdout: Redirection::Pipe, ..Default::default()
 })?;
 
 // Since we requested stdout to be redirected to a pipe, the parent's
-// end of the pipe is available as proc.stdout.  It can either be read
+// end of the pipe is available as p.stdout.  It can either be read
 // directly, or processed using the communicate() method:
-let (out, err) = proc.communicate(None)?;
+let (out, err) = p.communicate(None)?;
 
 // check if the process is still alive
-if let Some(exit_status) = proc.poll() {
+if let Some(exit_status) = p.poll() {
   // the process has finished
 } else {
   // it is still running, terminate it
-  proc.terminate()?;
+  p.terminate()?;
 }
 ```
 
@@ -182,9 +182,9 @@ let dir_checksum = {
 Check whether a previously launched process is still running:
 
 ```rust
-let mut proc = Exec::cmd("sleep").arg("2").popen()?;
+let mut p = Exec::cmd("sleep").arg("2").popen()?;
 thread::sleep(Duration::new(1, 0))
-if proc.poll().is_none() {
+if p.poll().is_none() {
     // poll() returns Some(exit_status) if the process has completed
     println!("process is still running");
 }
@@ -194,12 +194,12 @@ Give the process 1 second to run, and kill it if it didn't complete by
 then.
 
 ```rust
-let mut proc = Exec::cmd("sleep").arg("2").popen()?;
-if let Some(status) = proc.wait_timeout(Duration::new(1, 0))? {
+let mut p = Exec::cmd("sleep").arg("2").popen()?;
+if let Some(status) = p.wait_timeout(Duration::new(1, 0))? {
     println!("process finished as {:?}", status);
 } else {
-    proc.kill()?;
-    proc.wait()?;
+    p.kill()?;
+    p.wait()?;
     println!("process killed");
 }
 ```
