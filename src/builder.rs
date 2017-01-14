@@ -317,11 +317,6 @@ mod pipeline {
             }
         }
 
-        pub fn add(mut self, r: Exec) -> Pipeline {
-            self.cmds.push(r);
-            self
-        }
-
         pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Pipeline {
             match stdin.into_input_redirection() {
                 InputRedirection::NoAction(r) => self.stdin = r,
@@ -419,8 +414,9 @@ mod pipeline {
     impl BitOr<Exec> for Pipeline {
         type Output = Pipeline;
 
-        fn bitor(self, rhs: Exec) -> Pipeline {
-            self.add(rhs)
+        fn bitor(mut self, rhs: Exec) -> Pipeline {
+            self.cmds.push(rhs);
+            self
         }
     }
 
