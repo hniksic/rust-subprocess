@@ -299,6 +299,9 @@ impl Popen {
     /// exit status.
     pub fn create<S: AsRef<OsStr>>(argv: &[S], config: PopenConfig)
                                    -> Result<Popen> {
+        if argv.is_empty() {
+            return Err(PopenError::LogicError("argv must not be empty"));
+        }
         let argv: Vec<OsString> = argv.iter()
             .map(|p| p.as_ref().to_owned()).collect();
         let mut inst = Popen {

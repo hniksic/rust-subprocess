@@ -8,7 +8,7 @@ use std::time::Duration;
 use std::ffi::OsStr;
 
 
-use super::super::{Popen, PopenConfig, ExitStatus, Redirection};
+use super::super::{Popen, PopenConfig, ExitStatus, Redirection, PopenError};
 
 pub fn read_whole_file<T: Read>(mut f: T) -> String {
     let mut content = String::new();
@@ -26,6 +26,15 @@ fn good_cmd() {
 fn bad_cmd() {
     let result = Popen::create(&["nosuchcommand"], PopenConfig::default());
     assert!(result.is_err());
+}
+
+#[test]
+fn reject_empty_argv() {
+    let test = Popen::create(&[""; 0], PopenConfig::default());
+    if let Err(PopenError::LogicError(..)) = test {
+    } else {
+        assert!(false, "didn't get LogicError for empty argv");
+    }
 }
 
 #[test]
