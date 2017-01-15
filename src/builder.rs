@@ -455,11 +455,17 @@ mod exec {
         }
     }
 
-    /// Marker value for `stdin`, `stdout`, and `stderr` methods of
-    /// `Exec` and `Pipeline`.
+    /// Marker value for [`stdin`], [`stdout`], and [`stderr`] methods
+    /// of [`Exec`] and [`Pipeline`].
     ///
     /// Use of this value means that the corresponding stream should
     /// be redirected to the devnull device.
+    ///
+    /// [`stdin`]: struct.Exec.html#method.stdin
+    /// [`stdout`]: struct.Exec.html#method.stdout
+    /// [`stderr`]: struct.Exec.html#method.stderr
+    /// [`Exec`]: struct.Exec.html
+    /// [`Pipeline`]: struct.Pipeline.html
     pub struct NullFile;
 
     impl IntoInputRedirection for NullFile {
@@ -552,7 +558,7 @@ mod pipeline {
     /// # fn dummy() -> Result<()> {
     /// let dir_checksum = {
     ///     Exec::cmd("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
-    /// }.capture().unwrap().stdout_str();
+    /// }.capture()?.stdout_str();
     /// # Ok(())
     /// # }
     /// ```

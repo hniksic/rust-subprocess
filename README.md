@@ -15,7 +15,7 @@ The following features are available:
   `wait`, and `wait_timeout`.
 
 * Advanced redirection options, such as connecting standard streams to
-  arbitary files, or merging errors into output like shell's `2>&1`
+  arbitrary files, or merging errors into output like shell's `2>&1`
   operator.
 
 * The `communicate` method for deadlock-free reading of output while
@@ -173,8 +173,8 @@ Capture the pipeline's output:
 
 ```rust
 let dir_checksum = {
-    Exec::cmd("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
-}.capture()?.output_str();
+    Exec::shell("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
+}.capture()?.stdout_str();
 ```
 
 ### Interacting with subprocess

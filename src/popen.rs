@@ -116,7 +116,7 @@ mod fileref {
 }
 use self::fileref::FileRef;
 
-/// Structure designed to be passed to `Popen::create`.
+/// Options for [`Popen::create`].
 ///
 /// When constructing `PopenConfig`, always use the [`Default`] trait,
 /// such as:
@@ -138,6 +138,7 @@ use self::fileref::FileRef;
 /// An alternative to using `PopenConfig` directly is creating
 /// processes using [`Exec`], a builder for `Popen`.
 ///
+/// [`Popen::create`]: struct.Popen.html#method.create
 /// [`Exec`]: struct.Exec.html
 /// [`Default`]: https://doc.rust-lang.org/core/default/trait.Default.html
 
@@ -155,11 +156,10 @@ pub struct PopenConfig {
     /// Executable to run.
     ///
     /// If provided, this executable will be used to run the program
-    /// instead of `argv[0]`.  However, even so, `argv[0]` will be
-    /// passed to the subprocess which will see it in as its own
-    /// `argv[0]`.  On some Unix systems, the `ps` command will then
-    /// show the process passed as `argv[0]`, even though `executable`
-    /// is actually running.
+    /// instead of `argv[0]`.  However, `argv[0]` will still be passed
+    /// to the subprocess, which will see that as `argv[0]`.  On some
+    /// Unix systems, `ps` will show the string passed as `argv[0]`,
+    /// even though `executable` is actually running.
     pub executable: Option<OsString>,
 
     // force construction using ..Default::default()
@@ -170,12 +170,15 @@ pub struct PopenConfig {
 }
 
 impl PopenConfig {
-    /// Clone the underlying `PopenConfig`, or return an error.
+    /// Clone the underlying [`PopenConfig`], or return an error.
     ///
     /// This is guaranteed not to fail as long as no
-    /// `Redirection::File` variant is used for one of the standard
+    /// [`Redirection::File`] variant is used for one of the standard
     /// streams.  Otherwise, it fails if `File::try_clone` fails on
     /// one of the `Redirection`s.
+    ///
+    /// [`PopenConfig`]: struct.PopenConfig.html
+    /// [`Redirection::File`]: enum.Redirection.html#variant.File
     pub fn try_clone(&self) -> IoResult<PopenConfig> {
         Ok(PopenConfig {
             _use_default_to_construct: (),
@@ -1041,7 +1044,9 @@ impl Drop for Popen {
     }
 }
 
-/// Error in `Popen` calls.
+/// Error in [`Popen`] calls.
+///
+/// [`Popen`]: struct.Popen.html
 
 #[derive(Debug)]
 pub enum PopenError {
@@ -1093,7 +1098,8 @@ impl fmt::Display for PopenError {
     }
 }
 
-/// Result type for the `subprocess` calls.
+/// Result returned by calls in the `subprocess` crate in places where
+/// `::std::io::Result` does not suffice.
 pub type Result<T> = result::Result<T, PopenError>;
 
 mod communicate {
