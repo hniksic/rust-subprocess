@@ -14,13 +14,12 @@ use self::ChildState::*;
 
 /// Interface to a running subprocess.
 ///
-/// The `Popen` object represents the parent's interface to a running
-/// subprocess.  The child process is started during the construction
-/// of the object, so having the object means that the child was
-/// successfully executed.  To prevent accumulation of zombie
-/// processes, the child is automatically waited upon when the `Popen`
-/// struct goes out of scope, which can be prevented using the
-/// [`detach`] method.
+/// `Popen` is the parent's interface to a running subprocess.  The
+/// child process is started in the constructor, so owning `Popen`
+/// means that the program has been successfully executed.  To prevent
+/// accumulation of zombie processes, the child is automatically
+/// waited upon when a `Popen` goes out of scope, which can be
+/// prevented using the [`detach`] method.
 ///
 /// Depending on how the subprocess was configured, its input, output,
 /// and error streams can be connected to the parent and available as
@@ -47,18 +46,18 @@ use self::ChildState::*;
 #[derive(Debug)]
 pub struct Popen {
     /// If `stdin` was specified as `Redirection::Pipe`, this will
-    /// contain a writeable `File` object connected to the standard
-    /// input of the child process.
+    /// contain a writeble `File` connected to the standard input of
+    /// the child process.
     pub stdin: Option<File>,
 
     /// If `stdout` was specified as `Redirection::Pipe`, this will
-    /// contain a readable `File` object connected to the standard
-    /// output of the child process.
+    /// contain a readable `File` connected to the standard output of
+    /// the child process.
     pub stdout: Option<File>,
 
     /// If `stderr` was specified as `Redirection::Pipe`, this will
-    /// contain a readable `File` object connected to the standard
-    /// error of the child process.
+    /// contain a readable `File` connected to the standard error of
+    /// the child process.
     pub stderr: Option<File>,
 
     child_state: ChildState,
@@ -119,13 +118,23 @@ use self::fileref::FileRef;
 
 /// Structure designed to be passed to `Popen::create`.
 ///
-/// Always create this structure using the `Default` trait, such as
-/// `PopenConfig { field1: value1, field2: value2,
-/// ..Default::default() }`.  This ensures that later additions to the
-/// struct do not break existing code.
+/// When constructing `PopenConfig`, always use the [`Default`] trait,
+/// such as:
 ///
-/// An alternative to using `PopenConfig` is the `Exec` struct which
-/// provides a builder-style interface to the same functionality.
+/// ```ignore
+/// Popen::create(argv, PopenConfig {
+///      field1: value1, field2: value2,
+///      ..Default::default()
+/// })
+/// ```
+///
+/// This ensures that fields added later do not break existing code.
+///
+/// An alternative to using `PopenConfig` directly is creating
+/// processes using [`Exec`], a builder for `Popen`.
+///
+/// [`Exec`]: struct.Exec.html
+/// [`Default`]: https://doc.rust-lang.org/core/default/trait.Default.html
 
 #[derive(Debug)]
 pub struct PopenConfig {
@@ -140,9 +149,12 @@ pub struct PopenConfig {
 
     /// Executable to run.
     ///
-    /// If this field is provided, this executable will be used to run
-    /// the program instead of `argv[0]`, but `argv[0]` will still be
-    /// provided as the program's argument list.
+    /// If provided, this executable will be used to run the program
+    /// instead of `argv[0]`.  However, even so, `argv[0]` will be
+    /// passed to the subprocess which will see it in as its own
+    /// `argv[0]`.  On some Unix systems, the `ps` command will then
+    /// show the process passed as `argv[0]`, even though `executable`
+    /// is actually running.
     pub executable: Option<OsString>,
 
     // force construction using ..Default::default()
@@ -157,11 +169,8 @@ impl PopenConfig {
     ///
     /// This is guaranteed not to fail as long as no
     /// `Redirection::File` variant is used for one of the standard
-    /// streams.  Otherwise, it fail if `File::try_clone` fails on one
-    /// of the `Redirection` values.
-    ///
-    /// `try_clone().unwrap()` is used to implement `clone()` for the
-    /// builder structs `Exec` and `Pipeline`.
+    /// streams.  Otherwise, it fails if `File::try_clone` fails on
+    /// one of the `Redirection`s.
     pub fn try_clone(&self) -> IoResult<PopenConfig> {
         Ok(PopenConfig {
             _use_default_to_construct: (),
@@ -189,10 +198,11 @@ impl Default for PopenConfig {
 
 /// Instruction what to do with a stream in the child process.
 ///
-/// Values of this type are used in `stdin`, `stdout`, and `stderr`
-/// field of the `PopenConfig` struct and tell `Popen::create` how to
-/// set up the child process, determining what will be available in
-/// the corresponding fields of the `Popen` object.
+/// `Redirection` values are used for the `stdin`, `stdout`, and
+/// `stderr` field of the `PopenConfig` struct.  They tell
+/// `Popen::create` how to set up the standard streams in the child
+/// process and the corresponding fields of the `Popen` struct in the
+/// parent.
 
 #[derive(Debug)]
 pub enum Redirection {
@@ -218,8 +228,8 @@ pub enum Redirection {
     /// This creates a unidirectional pipe for the standard stream.
     /// One end is passed to the child process and configured as one
     /// of its standard streams, and the other end is available to the
-    /// parent as a `File` object in the corresponding field of the
-    /// `Popen` struct.
+    /// parent as a `File` in the corresponding field of the `Popen`
+    /// struct.
     ///
     /// The field in `Popen` corresponding to the stream will be
     /// `None`.

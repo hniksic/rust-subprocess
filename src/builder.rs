@@ -30,10 +30,9 @@ mod exec {
     /// A builder for [`Popen`] instances, providing control and
     /// convenience methods.
     ///
-    /// `Exec` provides a Rustic API for building up the arguments to
-    /// [`Popen::create`], but also convenience methods and classes
-    /// for capturing the output, and for connecting [`Popen`]
-    /// instances into pipelines.
+    /// `Exec` provides a builder API for [`Popen::create`], and
+    /// includes convenience methods for capturing the output, and for
+    /// connecting subprocesses into pipelines.
     ///
     /// # Examples
     ///
@@ -134,7 +133,7 @@ mod exec {
             self
         }
 
-        /// Specify that the process is initially detached.
+        /// Specifies that the process is initially detached.
         ///
         /// A detached process means that we will not wait for the
         /// process to finish when the object that owns it goes out of
@@ -144,7 +143,7 @@ mod exec {
             self
         }
 
-        /// Specify how to set up the standard input of the child process.
+        /// Specifies how to set up the standard input of the child process.
         ///
         /// Argument can be:
         ///
@@ -171,7 +170,7 @@ mod exec {
             self
         }
 
-        /// Specify how to set up the standard output of the child process.
+        /// Specifies how to set up the standard output of the child process.
         ///
         /// Argument can be:
         ///
@@ -191,7 +190,7 @@ mod exec {
             self
         }
 
-        /// Specify how to set up the standard error of the child process.
+        /// Specifies how to set up the standard error of the child process.
         ///
         /// Argument can be:
         ///
@@ -219,7 +218,7 @@ mod exec {
 
         // Terminators
 
-        /// Start the process, and return the `Popen` for the running process.
+        /// Starts the process, returning a `Popen` for the running process.
         pub fn popen(mut self) -> PopenResult<Popen> {
             self.check_no_stdin_data("popen");
             self.args.insert(0, self.command);
@@ -227,7 +226,8 @@ mod exec {
             Ok(p)
         }
 
-        /// Start the process, wait for it to finish, and return the exit status.
+        /// Starts the process, waits for it to finish, and returns
+        /// the exit status.
         ///
         /// This method will wait for as long as necessary for the
         /// process to finish.  If a timeout is needed, use
@@ -237,7 +237,7 @@ mod exec {
             self.popen()?.wait()
         }
 
-        /// Start the process and return a `Read` trait object that
+        /// Starts the process and returns a `Read` trait object that
         /// reads from the standard output of the child process.
         ///
         /// This will automatically set up
@@ -253,7 +253,7 @@ mod exec {
             Ok(Box::new(ReadOutAdapter(p)))
         }
 
-        /// Start the process and return a `Read` trait object that
+        /// Starts the process and returns a `Read` trait object that
         /// reads from the standard error of the child process.
         ///
         /// This will automatically set up
@@ -269,7 +269,7 @@ mod exec {
             Ok(Box::new(ReadErrAdapter(p)))
         }
 
-        /// Start the process and return a `Write` trait object that
+        /// Starts the process and returns a `Write` trait object that
         /// writes to the standard input of the child process.
         ///
         /// This will automatically set up `stdin(Redirection::Pipe)`,
@@ -284,8 +284,8 @@ mod exec {
             Ok(Box::new(WriteAdapter(p)))
         }
 
-        /// Start the process, collect its output, and wait for it to
-        /// finish.
+        /// Starts the process, collects its output, and waits for it
+        /// to finish.
         ///
         /// The return value provides the standard output and standard
         /// error as bytes or optionally strings, as well as the exit
@@ -314,6 +314,14 @@ mod exec {
     }
 
     impl Clone for Exec {
+        /// Returns a copy of the value.
+        ///
+        /// This method is guaranteed not to fail as long as none of
+        /// the `Redirection` values contain a `Redirection::File`
+        /// variant.  If a redirection to `File` is present, cloning
+        /// that field will use `File::try_clone` method, which
+        /// duplicates a file descriptor and can (but is not likely
+        /// to) fail.  In that scenario, `Exec::clone` panics.
         fn clone(&self) -> Exec {
             Exec {
                 command: self.command.clone(),
@@ -327,7 +335,7 @@ mod exec {
     impl BitOr for Exec {
         type Output = Pipeline;
 
-        /// Combine `self` and `rhs` into an OS-level pipeline.
+        /// Create a `Pipeline` from `self` and `rhs`.
         fn bitor(self, rhs: Exec) -> Pipeline {
             Pipeline::new(self, rhs)
         }
@@ -376,16 +384,23 @@ mod exec {
     }
 
     pub struct Capture {
+        /// Standard output as bytes.
         pub stdout: Vec<u8>,
+        /// Standard error as bytes.
         pub stderr: Vec<u8>,
+        /// Exit status of the process.
         pub exit_status: ExitStatus,
     }
 
     impl Capture {
+        /// Returns the process's standard output as string, converted
+        /// from bytes using `String::from_utf8_lossy`.
         pub fn stdout_str(&self) -> String {
             String::from_utf8_lossy(&self.stdout).into_owned()
         }
 
+        /// Returns the process's standard error as string, converted
+        /// from bytes using `String::from_utf8_lossy`.
         pub fn stderr_str(&self) -> String {
             String::from_utf8_lossy(&self.stderr).into_owned()
         }
@@ -521,7 +536,7 @@ mod pipeline {
     }
 
     impl Pipeline {
-        /// Create a new pipeline by combining two commands.
+        /// Creates a new pipeline by combining two commands.
         ///
         /// Equivalent to `cmd1 | cmd2`.
         pub fn new(cmd1: Exec, cmd2: Exec) -> Pipeline {
@@ -533,7 +548,7 @@ mod pipeline {
             }
         }
 
-        /// Specify how to set up the standard input of the first
+        /// Specifies how to set up the standard input of the first
         /// command in the pipeline.
         ///
         /// Argument can be:
@@ -558,7 +573,7 @@ mod pipeline {
             self
         }
 
-        /// Specify how to set up the standard output of the last
+        /// Specifies how to set up the standard output of the last
         /// command in the pipeline.
         ///
         /// Argument can be:
@@ -582,7 +597,7 @@ mod pipeline {
 
         // Terminators:
 
-        /// Start all commands in the pipeline, and return the
+        /// Starts all commands in the pipeline, and returns a
         /// `Vec<Popen>` whose members correspond to running commands.
         ///
         /// If some command fails to start, the remaining commands
@@ -618,8 +633,8 @@ mod pipeline {
             Ok(ret)
         }
 
-        /// Start the pipeline, wait for it to finish, and return the
-        /// exit status of the last command.
+        /// Starts the pipeline, waits for it to finish, and returns
+        /// the exit status of the last command.
         pub fn join(self) -> PopenResult<ExitStatus> {
             self.check_no_stdin_data("join");
             let mut v = self.popen()?;
@@ -630,7 +645,7 @@ mod pipeline {
             v.last_mut().unwrap().wait()
         }
 
-        /// Start the pipeline and return a `Read` trait object that
+        /// Starts the pipeline and returns a `Read` trait object that
         /// reads from the standard output of the last command.
         ///
         /// This will automatically set up
@@ -646,8 +661,8 @@ mod pipeline {
             Ok(Box::new(ReadPipelineAdapter(v)))
         }
 
-        /// Start the pipeline and return a `Write` trait object that
-        /// writes to the standard input of the first command.
+        /// Starts the pipeline and returns a `Write` trait object
+        /// that writes to the standard input of the first command.
         ///
         /// This will automatically set up `stdin(Redirection::Pipe)`,
         /// so it is not necessary to do that beforehand.
@@ -661,8 +676,8 @@ mod pipeline {
             Ok(Box::new(WritePipelineAdapter(v)))
         }
 
-        /// Start the pipeline, collect its output, and wait for all
-        /// commands to finish.
+        /// Starts the pipeline, collects its output, and waits for
+        /// all commands to finish.
         ///
         /// The return value provides the standard output of the last
         /// command error as bytes or optionally strings, as well as
@@ -694,6 +709,14 @@ mod pipeline {
     }
 
     impl Clone for Pipeline {
+        /// Returns a copy of the value.
+        ///
+        /// This method is guaranteed not to fail as long as none of
+        /// the `Redirection` values contain a `Redirection::File`
+        /// variant.  If a redirection to `File` is present, cloning
+        /// that field will use `File::try_clone` method, which
+        /// duplicates a file descriptor and can (but is not likely
+        /// to) fail.  In that scenario, `Exec::clone` panics.
         fn clone(&self) -> Pipeline {
             Pipeline {
                 cmds: self.cmds.clone(),
@@ -707,6 +730,7 @@ mod pipeline {
     impl BitOr<Exec> for Pipeline {
         type Output = Pipeline;
 
+        /// Append a command to the pipeline and return a new pipeline.
         fn bitor(mut self, rhs: Exec) -> Pipeline {
             self.cmds.push(rhs);
             self
@@ -716,6 +740,7 @@ mod pipeline {
     impl BitOr for Pipeline {
         type Output = Pipeline;
 
+        /// Append a pipeline to the pipeline and return a new pipeline.
         fn bitor(mut self, rhs: Pipeline) -> Pipeline {
             self.cmds.extend(rhs.cmds);
             self.stdout = rhs.stdout;
@@ -764,12 +789,19 @@ mod pipeline {
     pub struct CaptureOutput {
         /// Output as bytes.
         pub stdout: Vec<u8>,
-        /// Exit status.
+        /// Exit status of the pipeline.
+        ///
+        /// Following the shell convention, the exit status of the
+        /// pipeline is defined as the exit status of the last command
+        /// in the pipeline.  If you need the exit statuses of all
+        /// processes, use `Pipeline::popen()` and collect the exit
+        /// statuses e.g. with `map(Popen::wait).collect::<Vec<_>>()`.
         pub exit_status: ExitStatus
     }
 
     impl CaptureOutput {
-        /// Output as string, converted using `String::from_utf8_lossy`.
+        /// Returns pipeline output as string, converted from bytes
+        /// using `String::from_utf8_lossy`.
         pub fn stdout_str(&self) -> String {
             String::from_utf8_lossy(&self.stdout).into_owned()
         }
