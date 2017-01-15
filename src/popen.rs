@@ -314,8 +314,8 @@ impl Popen {
             child_state: ChildState::Preparing,
             detached: config.detached,
         };
-        inst.start(argv, config.executable,
-                   config.stdin, config.stdout, config.stderr)?;
+        inst.os_start(argv, config.executable,
+                      config.stdin, config.stdout, config.stderr)?;
         Ok(inst)
     }
 
@@ -527,13 +527,6 @@ impl Popen {
         self.wait_timeout(Duration::from_secs(0)).unwrap_or(None)
     }
 
-    fn start(&mut self,
-             argv: Vec<OsString>, executable: Option<OsString>,
-             stdin: Redirection, stdout: Redirection, stderr: Redirection)
-             -> Result<()> {
-        (self as &mut PopenOs).start(argv, executable, stdin, stdout, stderr)
-    }
-
     /// Wait for the process to finish, and return its exit status.
     ///
     /// If the process has already finished, it will exit immediately,
@@ -546,7 +539,7 @@ impl Popen {
     /// Returns an `Err` if a system call fails in an unpredicted way.
     /// This should not happen in normal usage.
     pub fn wait(&mut self) -> Result<ExitStatus> {
-        (self as &mut PopenOs).wait()
+        self.os_wait()
     }
 
     /// Wait for the process to finish, timing out after the specified duration.
@@ -559,7 +552,7 @@ impl Popen {
     /// `waitpid(..., WNOHANG)` in a loop with adaptive sleep
     /// intervals between iterations.
     pub fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
-        (self as &mut PopenOs).wait_timeout(dur)
+        self.os_wait_timeout(dur)
     }
 
     /// Terminate the subprocess.
@@ -569,7 +562,7 @@ impl Popen {
     /// perform cleanup before exiting.  On Windows, it is equivalent
     /// to `kill()`.
     pub fn terminate(&mut self) -> IoResult<()> {
-        (self as &mut PopenOs).terminate()
+        self.os_terminate()
     }
 
     /// Kill the subprocess.
@@ -582,20 +575,18 @@ impl Popen {
     ///
     /// [`TerminateProcess`]: https://msdn.microsoft.com/en-us/library/windows/desktop/ms686714(v=vs.85).aspx
     pub fn kill(&mut self) -> IoResult<()> {
-        (self as &mut PopenOs).kill()
+        self.os_kill()
     }
 }
 
-
 trait PopenOs {
-    fn start(&mut self, argv: Vec<OsString>, executable: Option<OsString>,
-             stdin: Redirection, stdout: Redirection, stderr: Redirection)
-             -> Result<()>;
-    fn wait(&mut self) -> Result<ExitStatus>;
-    fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>>;
-    fn terminate(&mut self) -> IoResult<()>;
-    fn kill(&mut self) -> IoResult<()>;
-
+    fn os_start(&mut self, argv: Vec<OsString>, executable: Option<OsString>,
+                stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                -> Result<()>;
+    fn os_wait(&mut self) -> Result<ExitStatus>;
+    fn os_wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>>;
+    fn os_terminate(&mut self) -> IoResult<()>;
+    fn os_kill(&mut self) -> IoResult<()>;
 }
 
 #[cfg(unix)]
@@ -617,10 +608,10 @@ mod os {
     pub type ExtChildState = ();
 
     impl super::PopenOs for Popen {
-        fn start(&mut self,
-                 argv: Vec<OsString>, executable: Option<OsString>,
-                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                 -> Result<()> {
+        fn os_start(&mut self,
+                    argv: Vec<OsString>, executable: Option<OsString>,
+                    stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                    -> Result<()> {
             let mut exec_fail_pipe = posix::pipe()?;
             set_inheritable(&mut exec_fail_pipe.0, false)?;
             set_inheritable(&mut exec_fail_pipe.1, false)?;
@@ -661,14 +652,15 @@ mod os {
             }
         }
 
-        fn wait(&mut self) -> Result<ExitStatus> {
+        fn os_wait(&mut self) -> Result<ExitStatus> {
             while let Running {..} = self.child_state {
                 self.waitpid(true)?;
             }
             Ok(self.exit_status().unwrap())
         }
 
-        fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
+        fn os_wait_timeout(&mut self, dur: Duration)
+                           -> Result<Option<ExitStatus>> {
             use std::cmp::min;
 
             if let Finished(exit_status) = self.child_state {
@@ -694,11 +686,11 @@ mod os {
             }
         }
 
-        fn terminate(&mut self) -> IoResult<()> {
+        fn os_terminate(&mut self) -> IoResult<()> {
             self.send_signal(posix::SIGTERM)
         }
 
-        fn kill(&mut self) -> IoResult<()> {
+        fn os_kill(&mut self) -> IoResult<()> {
             self.send_signal(posix::SIGKILL)
         }
     }
@@ -818,10 +810,10 @@ mod os {
     pub struct ExtChildState(win32::Handle);
 
     impl super::PopenOs for Popen {
-        fn start(&mut self,
-                 argv: Vec<OsString>, executable: Option<OsString>,
-                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
-                 -> Result<()> {
+        fn os_start(&mut self,
+                    argv: Vec<OsString>, executable: Option<OsString>,
+                    stdin: Redirection, stdout: Redirection, stderr: Redirection)
+                    -> Result<()> {
             fn raw(opt: &Option<FileRef>) -> Option<RawHandle> {
                  opt.as_ref().map(|f| f.as_raw_handle())
             }
@@ -848,7 +840,7 @@ mod os {
             Ok(())
         }
 
-        fn wait(&mut self) -> Result<ExitStatus> {
+        fn os_wait(&mut self) -> Result<ExitStatus> {
             self.wait_handle(None)?;
             match self.child_state {
                 Preparing => panic!("child_state == Preparing"),
@@ -863,7 +855,8 @@ mod os {
             }
         }
 
-        fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
+        fn os_wait_timeout(&mut self, dur: Duration)
+                           -> Result<Option<ExitStatus>> {
             if let Finished(exit_status) = self.child_state {
                 return Ok(Some(exit_status));
             }
@@ -871,7 +864,7 @@ mod os {
             Ok(self.exit_status())
         }
 
-        fn terminate(&mut self) -> IoResult<()> {
+        fn os_terminate(&mut self) -> IoResult<()> {
             let mut new_child_state = None;
             if let Running { ext: ExtChildState(ref handle),
                              .. } = self.child_state {
@@ -896,7 +889,7 @@ mod os {
             Ok(())
         }
 
-        fn kill(&mut self) -> IoResult<()> {
+        fn os_kill(&mut self) -> IoResult<()> {
             self.terminate()
         }
     }
