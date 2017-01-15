@@ -1,11 +1,26 @@
 //! Execution and interaction with external processes.
 //!
-//! The module has two entry points.  One is the [`Popen`] struct,
-//! inspired by Python's `subprocess.Popen`.  This is useful when a
-//! greater amount of control is needed, or when porting Python code
-//! written for Python's `subprocess`.  The other entry point is the
-//! [`Exec`] struct written in the builder style more native to Rust,
-//! similar to `std::process::Command`.
+//! The entry point to the module is the `Popen` struct and the `Exec`
+//! builder class.  `Popen` is modeled after Python's
+//! `subprocess.Popen`, with modifications to make it fit to Rust,
+//! while `Exec` provides a nice Rustic builder-style API with
+//! convenient methods for streaming and capturing of output, as well
+//! as combining `Popen` instances into pipelines.
+//!
+//! Compared to `std::process`, the module follows the following
+//! additional features:
+//!
+//! * The `communicate` method for deadlock-free reading of subprocess
+//!   output/error, while simultaneously providing it stdin.
+//!
+//! * Advanced redirection options, such as connecting standard streams to
+//!   arbitary files, or merging errors into output like shell's `2>&1`
+//!   operator.
+//!
+//! * Non-blocking and timeout methods to wait on the process: `poll`,
+//!   `wait`, and `wait_timeout`.
+//!
+//! * Connecting multiple commands into OS-level pipelines.
 //!
 //! # Examples
 //!
@@ -34,11 +49,10 @@
 //! Use the [`Exec`] builder to execute a command and capture its
 //! output:
 //!
-//! ```ignore
-//! let output = Exec::cmd("command").arg("arg1").arg("arg2")
-//!     .stdout(Redirection::Pipe)
-//!     .capture()?
-//!     .stdout_str();
+//! ```rust
+//! let dir_checksum = {
+//!     Exec::cmd("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
+//! }.capture()?.output_str();
 //! ```
 //!
 //! [`Popen`]: struct.Popen.html
