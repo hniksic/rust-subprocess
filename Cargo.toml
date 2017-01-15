@@ -1,6 +1,6 @@
 [package]
 name = "subprocess"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Hrvoje Niksic <hniksic@gmail.com>"]
 description = "Execution and interaction with external processes"
 license = "Apache-2.0/MIT"
