@@ -2,7 +2,7 @@
 name = "subprocess"
 version = "0.1.5"
 authors = ["Hrvoje Niksic <hniksic@gmail.com>"]
-description = "Execution and interaction with external processes"
+description = "Execution of child processes and pipelines"
 license = "Apache-2.0/MIT"
 repository = "https://github.com/hniksic/rust-subprocess"
 documentation = "https://docs.rs/subprocess/"

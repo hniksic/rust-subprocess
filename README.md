@@ -1,6 +1,6 @@
 # subprocess
 
-The `subprocess` library provides facilities for execution and
+The `subprocess` library provides facilities for execution of and
 interaction with external processes and pipelines.  It is inspired by
 Python's `subprocess` module, adding a Rust spin on top.
 

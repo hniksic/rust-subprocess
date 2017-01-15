@@ -1,4 +1,4 @@
-//! Execution and interaction with external processes.
+//! Execution of and interaction with external processes and pipelines.
 //!
 //! The entry points to the crate are the [`Popen`] struct and the
 //! [`Exec`] builder.  `Popen` is the interface to a running child
