@@ -27,7 +27,9 @@
 //! Create [`Popen`] directly in order to communicate with a process and
 //! optionally terminate it:
 //!
-//! ```ignore
+//! ```
+//! # use subprocess::*;
+//! # fn dummy() -> Result<()> {
 //! let mut p = Popen::create(&["ps", "x"], PopenConfig {
 //!     stdout: Redirection::Pipe, ..Default::default()
 //! })?;
@@ -44,15 +46,21 @@
 //!     // it is still running, terminate it
 //!     p.terminate()?;
 //! }
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! Use the [`Exec`] builder to execute a command and capture its
 //! output:
 //!
-//! ```rust
+//! ```no_run
+//! # use subprocess::*;
+//! # fn dummy() -> Result<()> {
 //! let dir_checksum = {
 //!     Exec::cmd("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
-//! }.capture()?.output_str();
+//! }.capture()?.stdout_str();
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! [`Popen`]: struct.Popen.html

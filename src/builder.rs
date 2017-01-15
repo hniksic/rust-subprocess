@@ -38,52 +38,77 @@ mod exec {
     ///
     /// Execute an external command and wait for it to complete:
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use subprocess::*;
+    /// # fn dummy() -> Result<()> {
+    /// # let dirname = "some_dir";
     /// let exit_status = Exec::cmd("umount").arg(dirname).join()?;
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// Execute the command using the OS shell, like C's `system`:
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use subprocess::*;
+    /// # fn dummy() -> Result<()> {
     /// Exec::shell("shutdown -h now").join()?;
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// Start a subprocess and obtain its output as a `Read` trait object,
     /// like C's `popen`:
     ///
-    /// ```ignore
+    /// ```
+    /// # use subprocess::*;
+    /// # fn dummy() -> Result<()> {
     /// let stream = Exec::cmd("ls").stream_stdout()?;
     /// // call stream.read_to_string, construct io::BufReader(stream), etc.
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// Capture the output of a command:
     ///
-    /// ```ignore
+    /// ```
+    /// # use subprocess::*;
+    /// # fn dummy() -> Result<()> {
     /// let out = Exec::cmd("ls")
     ///   .stdout(Redirection::Pipe)
     ///   .capture()?
     ///   .stdout_str();
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// Redirect errors to standard output, and capture both in a single stream:
     ///
-    /// ```ignore
+    /// ```
+    /// # use subprocess::*;
+    /// # fn dummy() -> Result<()> {
     /// let out_and_err = Exec::cmd("ls")
     ///   .stdout(Redirection::Pipe)
     ///   .stderr(Redirection::Merge)
     ///   .capture()?
     ///   .stdout_str();
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// Provide input to the command and read its output:
     ///
-    /// ```ignore
+    /// ```
+    /// # use subprocess::*;
+    /// # fn dummy() -> Result<()> {
     /// let out = Exec::cmd("sort")
     ///   .stdin("b\nc\na\n")
     ///   .stdout(Redirection::Pipe)
     ///   .capture()?
     ///   .stdout_str();
     /// assert!(out == "a\nb\nc\n");
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// [`Popen`]: struct.Popen.html
@@ -511,17 +536,25 @@ mod pipeline {
     ///
     /// Execite a pipeline and return the exit status of the last command:
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use subprocess::*;
+    /// # fn dummy() -> Result<()> {
     /// let exit_status =
     ///   (Exec::shell("ls *.bak") | Exec::cmd("xargs").arg("rm")).join()?;
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// Capture the pipeline's output:
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use subprocess::*;
+    /// # fn dummy() -> Result<()> {
     /// let dir_checksum = {
     ///     Exec::cmd("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
-    /// }.capture()?.output_str();
+    /// }.capture().unwrap().stdout_str();
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// [`Popen`]: struct.Popen.html

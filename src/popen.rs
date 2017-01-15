@@ -121,11 +121,16 @@ use self::fileref::FileRef;
 /// When constructing `PopenConfig`, always use the [`Default`] trait,
 /// such as:
 ///
-/// ```ignore
+/// ```
+/// # use subprocess::*;
+/// # let argv = &["true"];
 /// Popen::create(argv, PopenConfig {
-///      field1: value1, field2: value2,
+///      stdout: Redirection::Pipe,
+///      detached: true,
+///      // ... other fields you want to override ...
 ///      ..Default::default()
 /// })
+/// # .unwrap();
 /// ```
 ///
 /// This ensures that fields added later do not break existing code.
@@ -275,8 +280,12 @@ impl Popen {
     ///
     /// For example, this simply runs `cargo update`:
     ///
-    /// ```ignore
-    /// Popen::create(&["cargo", "update"], PopenConfig::default())
+    /// ```no_run
+    /// # use subprocess::*;
+    /// # fn dummy() -> Result<()> {
+    /// Popen::create(&["cargo", "update"], PopenConfig::default())?;
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Errors
