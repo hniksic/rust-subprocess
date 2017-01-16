@@ -1096,8 +1096,6 @@ impl fmt::Display for PopenError {
 pub type Result<T> = result::Result<T, PopenError>;
 
 mod communicate {
-    extern crate crossbeam;
-
     use std::fs::File;
     use std::io::{Result as IoResult, Read, Write};
 
@@ -1139,27 +1137,70 @@ mod communicate {
                 Ok((None, Some(err)))
             }
             (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) =>
-                crossbeam::scope(move |scope| {
-                    let (mut out_thr, mut err_thr) = (None, None);
-                    if stdout_ref.is_some() {
-                        out_thr = Some(scope.spawn(move
-                                                   || comm_read(stdout_ref)))
-                    }
-                    if stderr_ref.is_some() {
-                        err_thr = Some(scope.spawn(move
-                                                   || comm_read(stderr_ref)))
-                    }
-                    if stdin_ref.is_some() {
-                        let input_data = input_data.expect(
-                            "must provide input to redirected stdin");
-                        comm_write(stdin_ref, input_data)?;
-                    }
-                    Ok((if let Some(out_thr) = out_thr
-                        { Some(out_thr.join()?) } else { None },
-                        if let Some(err_thr) = err_thr
-                        { Some(err_thr.join()?) } else { None }))
-                })
+                rw3way(stdin_ref, stdout_ref, stderr_ref, input_data)
         }
+    }
+
+    fn rw3way(stdin_ref: &mut Option<File>, stdout_ref: &mut Option<File>,
+              stderr_ref: &mut Option<File>, input_data: Option<&[u8]>)
+              -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        use posix;
+        use std::os::unix::io::AsRawFd;
+        use std::cmp::min;
+
+        fn make_poll_fd(f: &Option<File>) -> posix::PollFd {
+            posix::PollFd {
+                fd: f.as_ref().map(File::as_raw_fd).unwrap_or(-1),
+                events: posix::POLLIN | posix::POLLOUT,
+                revents: 0,
+            }
+        }
+
+        let mut input_data = input_data.unwrap_or(b"");
+        let mut out = Vec::<u8>::new();
+        let mut err = Vec::<u8>::new();
+
+        let (mut done_in, mut done_out, mut done_err) = (stdin_ref.is_none(),
+                                                         stdout_ref.is_none(),
+                                                         stderr_ref.is_none());
+
+        let mut fds = [make_poll_fd(&stdin_ref),
+                       make_poll_fd(&stdout_ref),
+                       make_poll_fd(&stderr_ref),];
+
+        while !(done_in && done_out && done_err) {
+            posix::poll(&mut fds, -1)?;
+            if !done_in && fds[0].revents & (posix::POLLOUT | posix::POLLHUP) != 0 {
+                let n = stdin_ref.as_ref().unwrap().write(&input_data[..min(4096, input_data.len())])?;
+                input_data = &input_data[n..];
+                if input_data.is_empty() {
+                    stdin_ref.take();
+                    fds[0].fd = -1;
+                    done_in = true;
+                }
+            }
+            if !done_out && fds[1].revents & (posix::POLLIN | posix::POLLHUP) != 0 {
+                let mut buf = [0u8; 4096];
+                let n = stdout_ref.as_ref().unwrap().read(&mut buf)?;
+                if n != 0 {
+                    out.extend(&buf[..n]);
+                } else {
+                    fds[1].fd = -1;
+                    done_out = true;
+                }
+            }
+            if !done_err && fds[2].revents & (posix::POLLIN | posix::POLLHUP) != 0 {
+                let mut buf = [0u8; 4096];
+                let n = stderr_ref.as_ref().unwrap().read(&mut buf)?;
+                if n != 0 {
+                    err.extend(&buf[..n]);
+                } else {
+                    fds[2].fd = -1;
+                    done_err = true;
+                }
+            }
+        }
+        Ok((Some(out), Some(err)))
     }
 }
 

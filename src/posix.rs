@@ -158,9 +158,9 @@ pub fn reset_sigpipe() -> Result<()> {
 #[repr(C)]
 #[derive(Debug)]
 pub struct PollFd {
-    fd: i32,
-    events: u16,
-    revents: u16,
+    pub fd: i32,
+    pub events: i16,
+    pub revents: i16,
 }
 
 pub use libc::{
@@ -176,8 +176,10 @@ pub fn poll(fds: &mut [PollFd], timeout: i32) -> Result<usize> {
     assert!(mem::size_of::<PollFd>() == mem::size_of::<libc::pollfd>());
     let cnt;
     unsafe {
-        let fds_ptr = mem::transmute::<&mut PollFd, *mut libc::pollfd>(&mut fds[0]);
-        cnt = check_err(libc::poll(fds_ptr, fds.len() as libc::nfds_t, timeout))?;
+        let fds_ptr = mem::transmute::<&mut PollFd,
+                                       *mut libc::pollfd>(&mut fds[0]);
+        cnt = check_err(libc::poll(fds_ptr, fds.len() as libc::nfds_t,
+                                   timeout))?;
     }
     Ok(cnt as usize)
 }
