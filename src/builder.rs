@@ -184,8 +184,10 @@ mod exec {
         /// [`NullFile`]: struct.NullFile.html
         pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Exec {
             match (&self.config.stdin, stdin.into_input_redirection()) {
-                (&Redirection::None, InputRedirection::AsRedirection(new)) => self.config.stdin = new,
-                (&Redirection::Pipe, InputRedirection::AsRedirection(Redirection::Pipe)) => (),
+                (&Redirection::None, InputRedirection::AsRedirection(new))
+                    => self.config.stdin = new,
+                (&Redirection::Pipe,
+                 InputRedirection::AsRedirection(Redirection::Pipe)) => (),
                 (&Redirection::None, InputRedirection::FeedData(data)) => {
                     self.config.stdin = Redirection::Pipe;
                     self.stdin_data = Some(data);
@@ -470,7 +472,8 @@ mod exec {
 
     impl IntoInputRedirection for NullFile {
         fn into_input_redirection(self) -> InputRedirection {
-            let null_file = OpenOptions::new().read(true).open(NULL_DEVICE).unwrap();
+            let null_file = OpenOptions::new().read(true)
+                .open(NULL_DEVICE).unwrap();
             InputRedirection::AsRedirection(Redirection::File(null_file))
         }
     }
@@ -505,7 +508,8 @@ mod exec {
 
     impl IntoOutputRedirection for NullFile {
         fn into_output_redirection(self) -> Redirection {
-            let null_file = OpenOptions::new().write(true).open(NULL_DEVICE).unwrap();
+            let null_file = OpenOptions::new().write(true)
+                .open(NULL_DEVICE).unwrap();
             Redirection::File(null_file)
         }
     }
@@ -601,7 +605,8 @@ mod pipeline {
         ///    /dev/null.
         ///
         /// [`Redirection`]: struct.Redirection.html
-        pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Pipeline {
+        pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T)
+                                              -> Pipeline {
             match stdin.into_input_redirection() {
                 InputRedirection::AsRedirection(r) => self.stdin = r,
                 InputRedirection::FeedData(data) => {
@@ -623,7 +628,8 @@ mod pipeline {
         ///    /dev/null.
         ///
         /// [`Redirection`]: struct.Redirection.html
-        pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Pipeline {
+        pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T)
+                                                -> Pipeline {
             self.stdout = stdout.into_output_redirection();
             self
         }
