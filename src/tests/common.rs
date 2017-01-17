@@ -209,24 +209,6 @@ fn communicate_input_output_long() {
 }
 
 #[test]
-fn communicate_input_output_str() {
-    let mut p = Popen::create(
-        &["sh", "-c", "cat; echo foo >&2"], PopenConfig {
-            stdin: Redirection::Pipe,
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        }).unwrap();
-    if let (Some(out), Some(err)) = p.communicate(Some("hello world")).unwrap() {
-        assert_eq!(out, "hello world");
-        assert_eq!(err, "foo\n");
-    } else {
-        assert!(false);
-    }
-    assert!(p.wait().unwrap().success());
-}
-
-#[test]
 fn null_byte_in_cmd() {
     let try_p = Popen::create(&["echo\0foo"], PopenConfig::default());
     assert!(try_p.is_err());
