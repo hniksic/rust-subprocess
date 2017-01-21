@@ -1,7 +1,7 @@
 [package]
 name = "subprocess"
 version = "0.1.6"
-authors = ["Hrvoje Niksic <hniksic@gmail.com>"]
+authors = ["Hrvoje Nikšić <hniksic@gmail.com>"]
 description = "Execution of child processes and pipelines, inspired by Python's subprocess module with Rust-specific extensions."
 readme = "README.md"
 keywords = ["execute", "process", "command", "redirect", "pipe"]
