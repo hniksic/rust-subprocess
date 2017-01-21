@@ -12,20 +12,18 @@ mod os {
     fn poll3(fin: Option<&File>, fout: Option<&File>, ferr: Option<&File>)
              -> IoResult<(bool, bool, bool)> {
         fn to_poll(f: Option<&File>, for_read: bool) -> posix::PollFd {
-            posix::PollFd {
-                fd: f.map(File::as_raw_fd).unwrap_or(-1),
-                events: if for_read { posix::POLLIN } else { posix::POLLOUT },
-                revents: 0,
-            }
+            let optfd = f.map(File::as_raw_fd);
+            let events = if for_read { posix::POLLIN } else { posix::POLLOUT };
+            posix::PollFd::new(optfd, events)
         }
 
         let mut fds = [to_poll(fin, false),
                        to_poll(fout, true), to_poll(ferr, true)];
         posix::poll(&mut fds, -1)?;
 
-        Ok((fds[0].revents & (posix::POLLOUT | posix::POLLHUP) != 0,
-            fds[1].revents & (posix::POLLIN | posix::POLLHUP) != 0,
-            fds[2].revents & (posix::POLLIN | posix::POLLHUP) != 0))
+        Ok((fds[0].test(posix::POLLOUT | posix::POLLHUP),
+            fds[1].test(posix::POLLIN | posix::POLLHUP),
+            fds[2].test(posix::POLLIN | posix::POLLHUP)))
     }
 
     pub fn rw3way(stdin_ref: &mut Option<File>, stdout_ref: &mut Option<File>,
