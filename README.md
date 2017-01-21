@@ -213,6 +213,6 @@ if let Some(status) = p.wait_timeout(Duration::new(1, 0))? {
 
 `subprocess` is distributed under the terms of both the MIT license
 and the Apache License (Version 2.0).  See
-[LICENSE-APACHE](LICENSE-APACHE) for [LICENSE-MIT](LICENSE-MIT) for
+[LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT) for
 details.  Contributing changes is assumed to signal agreement with
 these licensing terms.
