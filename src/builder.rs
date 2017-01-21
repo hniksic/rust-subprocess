@@ -521,8 +521,8 @@ mod pipeline {
     use std::ops::BitOr;
     use std::fs::File;
 
-    use popen;
     use popen::{Popen, Redirection, Result as PopenResult};
+    use communicate;
     use os_common::ExitStatus;
 
     use super::exec::{Exec, IntoInputRedirection, InputRedirection,
@@ -742,7 +742,7 @@ mod pipeline {
             let vlen = v.len();
             let mut last = v.drain(vlen - 1..).next().unwrap();
 
-            let (maybe_out, _) = popen::communicate_bytes(
+            let (maybe_out, _) = communicate::communicate_bytes(
                 &mut first.stdin, &mut last.stdout, &mut None,
                 stdin_data.as_ref().map(|v| &v[..]))?;
             let out = maybe_out.unwrap_or_else(Vec::new);

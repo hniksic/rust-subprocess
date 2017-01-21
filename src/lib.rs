@@ -79,6 +79,7 @@ extern crate kernel32;
 extern crate winapi;
 
 mod popen;
+mod communicate;
 mod builder;
 
 #[cfg(unix)]
