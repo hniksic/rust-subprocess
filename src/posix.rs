@@ -22,7 +22,7 @@ fn check_err<T: Ord + Default>(num: T) -> Result<T> {
 
 pub fn pipe() -> Result<(File, File)> {
     let mut fds = [0 as libc::c_int; 2];
-    check_err(unsafe { libc::pipe(&mut fds[0]) })?;
+    check_err(unsafe { libc::pipe(fds.as_mut_ptr()) })?;
     Ok(unsafe {
         (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1]))
     })
@@ -43,7 +43,7 @@ fn os_to_cstring(s: &OsStr) -> Result<CString> {
 }
 
 fn cstring_ptr(s: &CString) -> *const libc::c_char {
-    &s.as_bytes_with_nul()[0] as *const u8 as _
+    s.as_bytes_with_nul().as_ptr() as _
 }
 
 pub fn execvp<S1, S2>(cmd: S1, args: &[S2]) -> Result<()>
