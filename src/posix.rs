@@ -155,6 +155,7 @@ pub fn reset_sigpipe() -> Result<()> {
     Ok(())
 }
 
+#[repr(C)]
 pub struct PollFd(libc::pollfd);
 
 impl PollFd {
@@ -179,10 +180,15 @@ pub use libc::{
     POLLNVAL,
 };
 
-pub fn poll(fds: &mut [PollFd], timeout: i32) -> Result<usize> {
+pub fn poll(fds: &mut [PollFd], timeout: Option<u32>) -> Result<usize> {
     let cnt;
+    let timeout = timeout
+        .map(|t|
+             if t > i32::max_value() as u32 { i32::max_value() }
+             else { t as i32 })
+        .unwrap_or(-1);
     unsafe {
-        let fds_ptr = &mut fds[0].0 as *mut libc::pollfd;
+        let fds_ptr = fds.as_ptr() as *mut libc::pollfd;
         cnt = check_err(libc::poll(fds_ptr, fds.len() as libc::nfds_t,
                                    timeout))?;
     }

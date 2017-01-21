@@ -19,7 +19,7 @@ mod os {
 
         let mut fds = [to_poll(fin, false),
                        to_poll(fout, true), to_poll(ferr, true)];
-        posix::poll(&mut fds, -1)?;
+        posix::poll(&mut fds, None)?;
 
         Ok((fds[0].test(posix::POLLOUT | posix::POLLHUP),
             fds[1].test(posix::POLLIN | posix::POLLHUP),
