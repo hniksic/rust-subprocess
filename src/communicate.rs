@@ -100,6 +100,41 @@ mod os {
     }
 }
 
+#[cfg(windows)]
+mod os {
+    extern crate crossbeam;
+
+    use std::fs::File;
+    use std::io::Result as IoResult;
+
+    use super::{comm_read, comm_write};
+
+    pub fn rw3way(stdin_ref: &mut Option<File>, stdout_ref: &mut Option<File>,
+                  stderr_ref: &mut Option<File>, input_data: Option<&[u8]>)
+                  -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        crossbeam::scope(move |scope| {
+            let (mut out_thr, mut err_thr) = (None, None);
+            if stdout_ref.is_some() {
+                out_thr = Some(scope.spawn(move
+                                           || comm_read(stdout_ref)))
+            }
+            if stderr_ref.is_some() {
+                err_thr = Some(scope.spawn(move
+                                           || comm_read(stderr_ref)))
+            }
+            if stdin_ref.is_some() {
+                let input_data = input_data.expect(
+                    "must provide input to redirected stdin");
+                comm_write(stdin_ref, input_data)?;
+            }
+            Ok((if let Some(out_thr) = out_thr
+                { Some(out_thr.join()?) } else { None },
+                if let Some(err_thr) = err_thr
+                { Some(err_thr.join()?) } else { None }))
+        })
+    }
+}
+
 fn comm_read(outfile: &mut Option<File>) -> IoResult<Vec<u8>> {
     let mut outfile = outfile.take().expect("file missing");
     let mut contents = Vec::new();
