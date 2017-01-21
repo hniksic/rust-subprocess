@@ -33,6 +33,10 @@ mod os {
                   -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         const WRITE_SIZE: usize = 4096;
 
+        if stdin_ref.is_some() {
+            input_data.expect("must provide input to redirected stdin");
+        }
+
         let mut stdout_ref = stdout_ref.as_ref();
         let mut stderr_ref = stderr_ref.as_ref();
 
@@ -40,7 +44,28 @@ mod os {
         let mut out = Vec::<u8>::new();
         let mut err = Vec::<u8>::new();
 
-        while stdin_ref.is_some() || stdout_ref.is_some() || stderr_ref.is_some() {
+        loop {
+            match (stdin_ref.as_ref(), stdout_ref, stderr_ref) {
+                // When only a single stream remains for reading or
+                // writing, we no longer need polling.  When no stream
+                // remains, we are done.
+                (Some(..), None, None) => {
+                    stdin_ref.as_ref().unwrap().write_all(input_data)?;
+                    stdin_ref.take();
+                    break;
+                }
+                (None, Some(ref mut stdout), None) => {
+                    stdout.read_to_end(&mut out)?;
+                    break;
+                }
+                (None, None, Some(ref mut stderr)) => {
+                    stderr.read_to_end(&mut err)?;
+                    break;
+                }
+                (None, None, None) => break,
+                _ => ()
+            }
+
             let (in_ready, out_ready, err_ready)
                 = poll3(stdin_ref.as_ref(), stdout_ref, stderr_ref)?;
             if in_ready {
@@ -70,6 +95,7 @@ mod os {
                 }
             }
         }
+
         Ok((Some(out), Some(err)))
     }
 }
@@ -93,19 +119,19 @@ pub fn communicate_bytes(stdin: &mut Option<File>,
                          input_data: Option<&[u8]>)
                          -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
     match (stdin, stdout, stderr) {
-        (mut stdin_ref @ &mut Some(_), &mut None, &mut None) => {
+        (mut stdin_ref @ &mut Some(..), &mut None, &mut None) => {
             let input_data = input_data.expect(
                 "must provide input to redirected stdin");
             comm_write(stdin_ref, input_data)?;
             Ok((None, None))
         }
-        (&mut None, mut stdout_ref @ &mut Some(_), &mut None) => {
+        (&mut None, mut stdout_ref @ &mut Some(..), &mut None) => {
             assert!(input_data.is_none(),
                     "cannot provide input to non-redirected stdin");
             let out = comm_read(stdout_ref)?;
             Ok((Some(out), None))
         }
-        (&mut None, &mut None, mut stderr_ref @ &mut Some(_)) => {
+        (&mut None, &mut None, mut stderr_ref @ &mut Some(..)) => {
             assert!(input_data.is_none(),
                     "cannot provide input to non-redirected stdin");
             let err = comm_read(stderr_ref)?;
