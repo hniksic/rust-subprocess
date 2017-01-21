@@ -4,7 +4,10 @@
 
 The `subprocess` library provides facilities for execution of and
 interaction with external processes and pipelines.  It is inspired by
-Python's `subprocess` module, adding a Rust spin on top.
+Python's `subprocess` module, adding a Rust spin on top.  `subprocess`
+is [available on crates.io](https://crates.io/crates/subprocess), and
+[API Documentation is available on
+docs.rs](https://docs.rs/subprocess/).
 
 ## Features
 
