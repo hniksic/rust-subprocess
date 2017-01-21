@@ -11,16 +11,18 @@ mod os {
 
     fn poll3(fin: Option<&File>, fout: Option<&File>, ferr: Option<&File>)
              -> IoResult<(bool, bool, bool)> {
-        fn to_poll(f: Option<&File>) -> posix::PollFd {
+        fn to_poll(f: Option<&File>, for_read: bool) -> posix::PollFd {
             posix::PollFd {
                 fd: f.map(File::as_raw_fd).unwrap_or(-1),
-                events: posix::POLLIN | posix::POLLOUT,
+                events: if for_read { posix::POLLIN } else { posix::POLLOUT },
                 revents: 0,
             }
         }
 
-        let mut fds = [to_poll(fin), to_poll(fout), to_poll(ferr)];
+        let mut fds = [to_poll(fin, false),
+                       to_poll(fout, true), to_poll(ferr, true)];
         posix::poll(&mut fds, -1)?;
+
         Ok((fds[0].revents & (posix::POLLOUT | posix::POLLHUP) != 0,
             fds[1].revents & (posix::POLLIN | posix::POLLHUP) != 0,
             fds[2].revents & (posix::POLLIN | posix::POLLHUP) != 0))
@@ -29,6 +31,8 @@ mod os {
     pub fn rw3way(stdin_ref: &mut Option<File>, stdout_ref: &mut Option<File>,
                   stderr_ref: &mut Option<File>, input_data: Option<&[u8]>)
                   -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        const WRITE_SIZE: usize = 4096;
+
         let mut stdout_ref = stdout_ref.as_ref();
         let mut stderr_ref = stderr_ref.as_ref();
 
@@ -40,7 +44,7 @@ mod os {
             let (in_ready, out_ready, err_ready)
                 = poll3(stdin_ref.as_ref(), stdout_ref, stderr_ref)?;
             if in_ready {
-                let chunk = &input_data[..min(4096, input_data.len())];
+                let chunk = &input_data[..min(WRITE_SIZE, input_data.len())];
                 let n = stdin_ref.as_ref().unwrap().write(chunk)?;
                 input_data = &input_data[n..];
                 if input_data.is_empty() {
