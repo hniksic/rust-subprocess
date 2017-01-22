@@ -89,12 +89,11 @@ fn decode_exit_status(status: i32) -> ExitStatus {
     }
 }
 
-pub const SIGTERM: u8 = libc::SIGTERM as u8;
-pub const SIGKILL: u8 = libc::SIGKILL as u8;
+pub use libc::{SIGTERM, SIGKILL};
 
-pub fn kill(pid: u32, signal: u8) -> Result<()> {
+pub fn kill(pid: u32, signal: i32) -> Result<()> {
     check_err(unsafe {
-        libc::kill(pid as libc::c_int, signal as libc::c_int)
+        libc::kill(pid as libc::c_int, signal)
     })?;
     Ok(())
 }

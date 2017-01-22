@@ -13,6 +13,8 @@ use communicate;
 
 use self::ChildState::*;
 
+pub use self::os::ext as os_ext;
+
 /// Interface to a running subprocess.
 ///
 /// `Popen` is the parent's interface to a running subprocess.  The
@@ -591,6 +593,7 @@ trait PopenOs {
     fn os_kill(&mut self) -> IoResult<()>;
 }
 
+
 #[cfg(unix)]
 mod os {
     use super::*;
@@ -606,6 +609,7 @@ mod os {
 
     use super::ChildState::*;
     use super::fileref::FileRef;
+    use unix::PopenExt;
 
     pub type ExtChildState = ();
 
@@ -702,7 +706,6 @@ mod os {
                    child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>))
                    -> IoResult<()>;
         fn waitpid(&mut self, block: bool) -> IoResult<()>;
-        fn send_signal(&self, signal: u8) -> IoResult<()>;
     }
 
     impl PopenOsImpl for Popen {
@@ -760,16 +763,6 @@ mod os {
             }
             Ok(())
         }
-
-        fn send_signal(&self, signal: u8) -> IoResult<()> {
-            match self.child_state {
-                Preparing => panic!("child_state == Preparing"),
-                Running { pid, .. } => {
-                    posix::kill(pid, signal)
-                },
-                Finished(..) => Ok(()),
-            }
-        }
     }
 
     pub fn set_inheritable(f: &mut File, inheritable: bool) -> IoResult<()> {
@@ -788,6 +781,41 @@ mod os {
     }
 
     pub use posix::get_standard_stream;
+
+    pub mod ext {
+        use std::io::Result as IoResult;
+        use popen::Popen;
+        use popen::ChildState::*;
+        use posix;
+
+        /// Unix-specific extension methods for `Popen`
+        pub trait PopenExt {
+            /// Send the specified signal to the child process.
+            ///
+            /// The signal numbers are best obtained from the [`libc`]
+            /// crate.
+            ///
+            /// If the child process is known to have finished (due to e.g.
+            /// a previous call to [`wait`] or [`poll`]), this will do
+            /// nothing and return `Ok`.
+            ///
+            /// [`poll`]: ../struct.Popen.html#method.poll
+            /// [`wait`]: ../struct.Popen.html#method.wait
+            /// [`libc`]: https://docs.rs/libc/
+            fn send_signal(&self, signal: i32) -> IoResult<()>;
+        }
+        impl PopenExt for Popen {
+            fn send_signal(&self, signal: i32) -> IoResult<()> {
+                match self.child_state {
+                    Preparing => panic!("child_state == Preparing"),
+                    Running { pid, .. } => {
+                        posix::kill(pid, signal)
+                    },
+                    Finished(..) => Ok(()),
+                }
+            }
+        }
+    }
 }
 
 
@@ -1025,6 +1053,8 @@ mod os {
     }
 
     pub use win32::get_standard_stream;
+
+    pub mod ext {}
 }
 
 
