@@ -1,6 +1,3 @@
-use std::fs::File;
-use std::io::{Result as IoResult, Read, Write};
-
 #[cfg(unix)]
 mod os {
     use posix;
@@ -26,19 +23,19 @@ mod os {
             fds[2].test(posix::POLLIN | posix::POLLHUP)))
     }
 
-    pub fn rw3way(stdin_ref: &mut Option<File>, stdout_ref: &mut Option<File>,
-                  stderr_ref: &mut Option<File>, input_data: Option<&[u8]>)
-                  -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+    fn comm_poll(stdin_ref: &mut Option<File>,
+                 stdout_ref: &mut Option<File>,
+                 stderr_ref: &mut Option<File>,
+                 mut input_data: &[u8])
+                 -> IoResult<(Vec<u8>, Vec<u8>)> {
+        // Note: chunk size for writing must be smaller than the pipe
+        // buffer size.  A large enough write to a blocking deadlocks
+        // despite the use of poll() to check that it's ok to write.
         const WRITE_SIZE: usize = 4096;
-
-        if stdin_ref.is_some() {
-            input_data.expect("must provide input to redirected stdin");
-        }
 
         let mut stdout_ref = stdout_ref.as_ref();
         let mut stderr_ref = stderr_ref.as_ref();
 
-        let mut input_data = input_data.unwrap_or(b"");
         let mut out = Vec::<u8>::new();
         let mut err = Vec::<u8>::new();
 
@@ -49,6 +46,7 @@ mod os {
                 // remains, we are done.
                 (Some(..), None, None) => {
                     stdin_ref.as_ref().unwrap().write_all(input_data)?;
+                    // close stdin when done writing, so the child receives EOF
                     stdin_ref.take();
                     break;
                 }
@@ -71,6 +69,7 @@ mod os {
                 let n = stdin_ref.as_ref().unwrap().write(chunk)?;
                 input_data = &input_data[n..];
                 if input_data.is_empty() {
+                    // close stdin when done writing, so the child receives EOF
                     stdin_ref.take();
                 }
             }
@@ -94,7 +93,25 @@ mod os {
             }
         }
 
-        Ok((Some(out), Some(err)))
+        Ok((out, err))
+    }
+
+    pub fn communicate(stdin_ref: &mut Option<File>,
+                       stdout_ref: &mut Option<File>,
+                       stderr_ref: &mut Option<File>,
+                       input_data: Option<&[u8]>)
+                       -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        if stdin_ref.is_some() {
+            input_data.expect("must provide input to redirected stdin");
+        } else {
+            assert!(input_data.is_none(),
+                    "cannot provide input to non-redirected stdin");
+        }
+        let input_data = input_data.unwrap_or(b"");
+        let (out, err) = comm_poll(stdin_ref, stdout_ref, stderr_ref,
+                                   input_data)?;
+        Ok((stdout_ref.as_ref().map(|_| out),
+            stderr_ref.as_ref().map(|_| err)))
     }
 }
 
@@ -103,13 +120,28 @@ mod os {
     extern crate crossbeam;
 
     use std::fs::File;
-    use std::io::Result as IoResult;
+    use std::io::{Read, Write, Result as IoResult};
 
-    use super::{comm_read, comm_write};
+    fn comm_read(outfile: &mut Option<File>) -> IoResult<Vec<u8>> {
+        // take() ensures stdin is closed when done writing, so the
+        // child receives EOF
+        let mut outfile = outfile.take().expect("file missing");
+        let mut contents = Vec::new();
+        outfile.read_to_end(&mut contents)?;
+        Ok(contents)
+    }
 
-    pub fn rw3way(stdin_ref: &mut Option<File>, stdout_ref: &mut Option<File>,
-                  stderr_ref: &mut Option<File>, input_data: Option<&[u8]>)
-                  -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+    fn comm_write(infile: &mut Option<File>, input_data: &[u8]) -> IoResult<()> {
+        let mut infile = infile.take().expect("file missing");
+        infile.write_all(input_data)?;
+        Ok(())
+    }
+
+    pub fn comm_threaded(stdin_ref: &mut Option<File>,
+                         stdout_ref: &mut Option<File>,
+                         stderr_ref: &mut Option<File>,
+                         input_data: Option<&[u8]>)
+                         -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         crossbeam::scope(move |scope| {
             let (mut out_thr, mut err_thr) = (None, None);
             if stdout_ref.is_some() {
@@ -131,46 +163,35 @@ mod os {
                 { Some(err_thr.join()?) } else { None }))
         })
     }
-}
 
-fn comm_read(outfile: &mut Option<File>) -> IoResult<Vec<u8>> {
-    let mut outfile = outfile.take().expect("file missing");
-    let mut contents = Vec::new();
-    outfile.read_to_end(&mut contents)?;
-    Ok(contents)
-}
-
-fn comm_write(infile: &mut Option<File>, input_data: &[u8]) -> IoResult<()> {
-    let mut infile = infile.take().expect("file missing");
-    infile.write_all(input_data)?;
-    Ok(())
-}
-
-pub fn communicate_bytes(stdin: &mut Option<File>,
-                         stdout: &mut Option<File>,
-                         stderr: &mut Option<File>,
-                         input_data: Option<&[u8]>)
-                         -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-    match (stdin, stdout, stderr) {
-        (mut stdin_ref @ &mut Some(..), &mut None, &mut None) => {
-            let input_data = input_data.expect(
-                "must provide input to redirected stdin");
-            comm_write(stdin_ref, input_data)?;
-            Ok((None, None))
+    pub fn communicate(stdin: &mut Option<File>,
+                       stdout: &mut Option<File>,
+                       stderr: &mut Option<File>,
+                       input_data: Option<&[u8]>)
+                       -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        match (stdin, stdout, stderr) {
+            (mut stdin_ref @ &mut Some(..), &mut None, &mut None) => {
+                let input_data = input_data.expect(
+                    "must provide input to redirected stdin");
+                comm_write(stdin_ref, input_data)?;
+                Ok((None, None))
+            }
+            (&mut None, mut stdout_ref @ &mut Some(..), &mut None) => {
+                assert!(input_data.is_none(),
+                        "cannot provide input to non-redirected stdin");
+                let out = comm_read(stdout_ref)?;
+                Ok((Some(out), None))
+            }
+            (&mut None, &mut None, mut stderr_ref @ &mut Some(..)) => {
+                assert!(input_data.is_none(),
+                        "cannot provide input to non-redirected stdin");
+                let err = comm_read(stderr_ref)?;
+                Ok((None, Some(err)))
+            }
+            (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) =>
+                comm_threaded(stdin_ref, stdout_ref, stderr_ref, input_data)
         }
-        (&mut None, mut stdout_ref @ &mut Some(..), &mut None) => {
-            assert!(input_data.is_none(),
-                    "cannot provide input to non-redirected stdin");
-            let out = comm_read(stdout_ref)?;
-            Ok((Some(out), None))
-        }
-        (&mut None, &mut None, mut stderr_ref @ &mut Some(..)) => {
-            assert!(input_data.is_none(),
-                    "cannot provide input to non-redirected stdin");
-            let err = comm_read(stderr_ref)?;
-            Ok((None, Some(err)))
-        }
-        (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) =>
-            os::rw3way(stdin_ref, stdout_ref, stderr_ref, input_data)
     }
 }
+
+pub use self::os::communicate;

@@ -482,8 +482,8 @@ impl Popen {
     /// a pipe.
     pub fn communicate_bytes(&mut self, input_data: Option<&[u8]>)
                              -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        communicate::communicate_bytes(&mut self.stdin, &mut self.stdout,
-                                       &mut self.stderr, input_data)
+        communicate::communicate(&mut self.stdin, &mut self.stdout,
+                                 &mut self.stderr, input_data)
     }
 
     /// Feed and capture the piped data of the subprocess as strings.
