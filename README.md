@@ -108,7 +108,9 @@ Execute an external command and wait for it to complete:
 let exit_status = Exec::cmd("umount").arg(dirname).join()?;
 ```
 
-Execute the command using the OS shell, like C's `system`:
+To prevent quoting and security issues, subprocess will not spawn a
+shell unless explicitly requested.  To execute a command using the OS
+shell, like C's `system`, use `Exec::shell`:
 
 ```rust
 Exec::shell("shutdown -h now").join()?;

@@ -125,8 +125,14 @@ mod exec {
     impl Exec {
         /// Constructs a new `Exec`, configured to run `command`.
         ///
+        /// The command will be run directly in the OS, without an
+        /// intervening shell.  To run it through a shell, use
+        /// [`Exec::shell`] instead.
+        ///
         /// By default, the command will be run without arguments, and
         /// none of the standard streams will be modified.
+        ///
+        /// [`Exec::shell`]: struct.Exec.html#method.shell
         pub fn cmd<S: AsRef<OsStr>>(command: S) -> Exec {
             Exec {
                 command: command.as_ref().to_owned(),
@@ -139,9 +145,21 @@ mod exec {
         /// Constructs a new `Exec`, configured to run `cmdstr` with
         /// the system shell.
         ///
-        /// On Unix-like systems, this is equivalent to
-        /// `Exec::cmd("sh").arg("-c").arg(cmdstr)`.  On Windows,
-        /// `cmd.exe /c` is used instead.
+        /// `subprocess` never spawns shells without an explicit
+        /// request.  This command requests the shell to be used; on
+        /// Unix-like systems, this is equivalent to
+        /// `Exec::cmd("sh").arg("-c").arg(cmdstr)`.  On Windows, it
+        /// runs `Exec::cmd("cmd.exe").arg("/c")`.
+        ///
+        /// `shell` is useful for porting code that uses the C
+        /// `system` function, which also spawns a shell.
+        ///
+        /// When invoking this function, be careful not to interpolate
+        /// arguments into the string run by the shell, such as
+        /// `Exec::shell(format!("sort {}", filename))`.  Such code is
+        /// prone to errors and, if `filename` comes from an untrusted
+        /// source, to shell injection attacks.  Instead, use
+        /// `Exec::cmd("sort").arg(filename)`.
         pub fn shell<S: AsRef<OsStr>>(cmdstr: S) -> Exec {
             Exec::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
         }
