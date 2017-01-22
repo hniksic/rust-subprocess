@@ -32,10 +32,10 @@ pub use self::os::ext as os_ext;
 /// [`communicate`] methods, which guarantee deadlock-free
 /// communication with the subprocess.
 ///
-/// `Popen` instances can be obtained their [`create`] method, or
+/// `Popen` instances can be obtained with the [`create`] method, or
 /// using the [`popen`] method of the [`Exec`] class.  Subprocesses
-/// can be connected into pipes, but this is also easier to achieve
-/// using [`Exec`].
+/// can be connected into pipes, most easily achieved using using
+/// [`Exec`].
 ///
 /// [`Exec`]: struct.Exec.html
 /// [`stdin`]: struct.Popen.html#structfield.stdin
