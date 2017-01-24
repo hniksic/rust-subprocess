@@ -14,11 +14,11 @@ module, with Rust-specific extensions.
 
 [dependencies]
 libc = "0.2"
-kernel32-sys = "0.2.2"
-winapi = "0.2.8"
 
 [target.'cfg(windows)'.dependencies]
 crossbeam = "0.2.10"
+kernel32-sys = "0.2.2"
+winapi = "0.2.8"
 
 [dev-dependencies]
 tempdir = "0.3.5"
