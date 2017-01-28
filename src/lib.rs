@@ -14,9 +14,9 @@
 //! * The [`communicate`] method for deadlock-free reading of subprocess
 //!   output/error, while simultaneously providing it stdin.
 //!
-//! * Advanced redirection options, such as connecting standard
-//!   streams to arbitary open files, or merging output streams like
-//!   shell's `2>&1` and `1>&2` operators.
+//! * Advanced [redirection options], such as connecting standard
+//!   streams to arbitary [open files], or [merging] output streams
+//!   like shell's `2>&1` and `1>&2` operators.
 //!
 //! * Non-blocking and timeout methods to wait on the process:
 //!   [`poll`], [`wait`], and [`wait_timeout`].
@@ -63,6 +63,9 @@
 //! [`Popen`]: struct.Popen.html
 //! [`Exec`]: struct.Exec.html
 //! [`communicate`]: struct.Popen.html#method.communicate
+//! [redirection options]: enum.Redirection.html
+//! [open files]: enum.Redirection.html#variant.File
+//! [merging]: enum.Redirection.html#variant.Merge
 //! [`poll`]: struct.Popen.html#method.poll
 //! [`wait`]: struct.Popen.html#method.wait
 //! [`wait_timeout`]: struct.Popen.html#method.wait_timeout

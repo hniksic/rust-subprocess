@@ -236,30 +236,34 @@ pub enum Redirection {
 
     /// Redirect the stream to a pipe.
     ///
-    /// This creates a unidirectional pipe for the standard stream.
-    /// One end is passed to the child process and configured as one
-    /// of its standard streams, and the other end is available to the
-    /// parent as a `File` in the corresponding field of the `Popen`
-    /// struct.
+    /// This variant requests that a stream be redirected to a
+    /// unidirectional pipe.  One end of the pipe is passed to the
+    /// child process and configured as one of its standard streams,
+    /// and the other end is available to the parent for communicating
+    /// with the child.
     ///
-    /// The field in `Popen` corresponding to the stream will be
-    /// `None`.
+    /// The field with `Popen` corresponding to the stream will be
+    /// `Some(file)`, `File` being the parent's end of the pipe.
     Pipe,
 
     /// Merge the stream to the other output stream.
     ///
-    /// This is only valid for output streams.  Using
+    /// This variant is only valid when configuring redirection of
+    /// standard output and standard error.  Using
     /// `Redirection::Merge` for `PopenConfig::stderr` requests the
-    /// child's stderr to be the same underlying file as the child's
-    /// output stream (whatever that is), equivalent to the `2>&1`
-    /// operator of the Bourne shell.  Analogously, using
-    /// `Redirection::Merge` for `PopenConfig::stdout` is equivalent
-    /// to `1>&2` in the shell.
+    /// child's stderr to refer to the same underlying file as the
+    /// child's stdout (which may or may not itself be redirected),
+    /// equivalent to the `2>&1` operator of the Bourne shell.
+    /// Analogously, using `Redirection::Merge` for
+    /// `PopenConfig::stdout` is equivalent to `1>&2` in the shell.
     ///
     /// Specifying `Redirection::Merge` for `PopenConfig::stdin` or
     /// specifying it for both `stdout` and `stderr` is invalid and
     /// will cause `Popen::create` to return
     /// `Err(PopenError::LogicError)`.
+    ///
+    /// The field in `Popen` corresponding to the stream will be
+    /// `None`.
     Merge,
 }
 
