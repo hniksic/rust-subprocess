@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 fn just_echo_path() -> String {
     let prog = PathBuf::from(&::std::env::args().next().unwrap());
-    prog.parent().unwrap().join("just-echo").to_str().unwrap().to_owned()
+    prog.parent().unwrap().join("../just-echo").to_str().unwrap().to_owned()
 }
 
 #[test]
