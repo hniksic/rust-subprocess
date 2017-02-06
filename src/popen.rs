@@ -601,18 +601,17 @@ trait PopenOs {
 #[cfg(unix)]
 mod os {
     use super::*;
+
     use std::io;
     use std::io::{Read, Write, Result as IoResult};
     use std::fs::File;
     use posix;
     use std::mem;
     use std::os::unix::io::AsRawFd;
-    use os_common::ExitStatus;
     use std::ffi::OsString;
     use std::time::{Duration, Instant};
 
-    use super::ChildState::*;
-    use super::fileref::FileRef;
+    use os_common::ExitStatus;
     use unix::PopenExt;
 
     pub type ExtChildState = ();
@@ -826,19 +825,18 @@ mod os {
 #[cfg(windows)]
 mod os {
     use super::*;
+
     use std::io;
     use std::fs::{self, File};
     use std::env;
-    use win32;
-    use os_common::{ExitStatus, StandardStream};
     use std::ffi::{OsStr, OsString};
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::os::windows::io::{RawHandle, AsRawHandle};
     use std::time::Duration;
     use std::io::Result as IoResult;
 
-    use super::ChildState::*;
-    use super::fileref::FileRef;
+    use win32;
+    use os_common::{ExitStatus, StandardStream};
 
     #[derive(Debug)]
     pub struct ExtChildState(win32::Handle);
