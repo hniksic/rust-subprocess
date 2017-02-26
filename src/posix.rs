@@ -1,11 +1,11 @@
 use std::io::{Result, Error};
-use std::ffi::OsStr;
+use std::ffi::{OsStr, CString};
 use std::os::unix::ffi::OsStrExt;
 use std::fs::File;
 use std::os::unix::io::FromRawFd;
 use std::ptr;
-use std::ffi::CString;
 use std::mem;
+use std::iter;
 
 use libc;
 
@@ -46,18 +46,44 @@ fn cstring_ptr(s: &CString) -> *const libc::c_char {
     s.as_bytes_with_nul().as_ptr() as _
 }
 
-pub fn execvp<S1, S2>(cmd: S1, args: &[S2]) -> Result<()>
-    where S1: AsRef<OsStr>, S2: AsRef<OsStr> {
-    let try_args_cstring: Result<Vec<CString>> = args.iter()
-        .map(|x| os_to_cstring(x.as_ref())).collect();
-    let args_cstring: Vec<CString> = try_args_cstring?;
-    let mut args_ptr: Vec<*const libc::c_char> = args_cstring.iter()
-        .map(cstring_ptr).collect();
-    args_ptr.push(ptr::null());
+#[derive(Debug)]
+struct CVec {
+    // Individual C strings; they are not unused as rustc thinks, they
+    // are pointed to by elements of self.ptrs.
+    #[allow(dead_code)]
+    strings: Vec<CString>,
 
-    let c_argv = args_ptr.as_ptr();
+    // nullptr-terminated vector of pointers to data inside
+    // self.strings.
+    ptrs: Vec<*const libc::c_char>,
+}
+
+impl CVec {
+    fn new<S>(slice: &[S]) -> Result<CVec>
+        where S: AsRef<OsStr>
+    {
+        let maybe_vec_cstring: Result<Vec<CString>> = slice.iter()
+            .map(|x| os_to_cstring(x.as_ref())).collect();
+        let vec_cstring = maybe_vec_cstring?;
+        let ptrs: Vec<_> = vec_cstring.iter().map(cstring_ptr)
+            .chain(iter::once(ptr::null())).collect();
+        Ok(CVec { strings: vec_cstring, ptrs: ptrs })
+    }
+
+    pub fn as_c_vec(&self) -> *const *const libc::c_char {
+        self.ptrs.as_ptr()
+    }
+}
+
+pub fn execvp<S1, S2>(cmd: S1, args: &[S2]) -> Result<()>
+    where S1: AsRef<OsStr>, S2: AsRef<OsStr>
+{
     let cmd_cstring = os_to_cstring(cmd.as_ref())?;
-    check_err(unsafe { libc::execvp(cstring_ptr(&cmd_cstring), c_argv) })?;
+    let argvec = CVec::new(args)?;
+
+    check_err(unsafe {
+        libc::execvp(cstring_ptr(&cmd_cstring), argvec.as_c_vec())
+    })?;
 
     Ok(())
 }
