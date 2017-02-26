@@ -296,4 +296,3 @@ fn setup_executable() {
                               }).unwrap();
     assert_eq!(read_whole_file(p.stdout.take().unwrap()), "foobar");
 }
-

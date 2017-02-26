@@ -20,6 +20,7 @@ mod exec {
     use std::io::{Result as IoResult, Read, Write};
     use std::fs::{File, OpenOptions};
     use std::ops::BitOr;
+    use std::env;
 
     use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
     use os_common::ExitStatus;
@@ -183,6 +184,24 @@ mod exec {
         /// scope.
         pub fn detached(mut self) -> Exec {
             self.config.detached = true;
+            self
+        }
+
+        fn inherited_env() -> Vec<(OsString, OsString)> {
+            env::vars_os()
+                .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                .collect()
+        }
+
+        pub fn env<K, V>(mut self, key: K, value: V) -> Exec
+            where K: AsRef<OsStr>,
+                  V: AsRef<OsStr>
+        {
+            if self.config.env.is_none() {
+                self.config.env = Some(Exec::inherited_env());
+            }
+            self.config.env.as_mut().unwrap().push((key.as_ref().to_owned(),
+                                                    value.as_ref().to_owned()));
             self
         }
 

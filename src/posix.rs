@@ -6,6 +6,7 @@ use std::os::unix::io::FromRawFd;
 use std::ptr;
 use std::mem;
 use std::iter;
+use std::env;
 
 use libc;
 
@@ -85,7 +86,40 @@ pub fn execvp<S1, S2>(cmd: S1, args: &[S2]) -> Result<()>
         libc::execvp(cstring_ptr(&cmd_cstring), argvec.as_c_vec())
     })?;
 
-    Ok(())
+    unreachable!();
+}
+
+pub fn execvpe<S1, S2, S3>(cmd: S1, args: &[S2], env: &[S3]) -> Result<()>
+    where S1: AsRef<OsStr>,
+          S2: AsRef<OsStr>,
+          S3: AsRef<OsStr>
+{
+    let cmd_osstr = cmd.as_ref();
+    let argvec = CVec::new(args)?;
+    let envvec = CVec::new(env)?;
+
+    // execvpe is not POSIX, so we must emulate it
+
+    if cmd_osstr.as_bytes().iter().any(|&c| c == b'/') {
+        let cmd_cstring = os_to_cstring(cmd_osstr)?;
+        check_err(unsafe {
+            libc::execve(cstring_ptr(&cmd_cstring),
+                         argvec.as_c_vec(), envvec.as_c_vec())
+        })?;
+        unreachable!();
+    } else {
+        if let Some(path) = env::var_os("PATH") {
+            for pathdir in env::split_paths(&path) {
+                let exe_path = pathdir.join(cmd_osstr);
+                let exe_cstring = os_to_cstring(exe_path.as_os_str())?;
+                unsafe {
+                    libc::execve(cstring_ptr(&exe_cstring),
+                                 argvec.as_c_vec(), envvec.as_c_vec());
+                }
+            }
+        }
+        return Err(Error::from_raw_os_error(libc::ENOENT));
+    }
 }
 
 pub fn _exit(status: u8) -> ! {

@@ -165,6 +165,8 @@ pub struct PopenConfig {
     /// even though `executable` is actually running.
     pub executable: Option<OsString>,
 
+    pub env: Option<Vec<(OsString, OsString)>>,
+
     // force construction using ..Default::default()
     #[doc(hidden)]
     pub _use_default_to_construct: (),
@@ -190,6 +192,7 @@ impl PopenConfig {
             stderr: self.stderr.try_clone()?,
             detached: self.detached,
             executable: self.executable.as_ref().cloned(),
+            env: self.env.clone(),
         })
     }
 }
@@ -203,6 +206,7 @@ impl Default for PopenConfig {
             stderr: Redirection::None,
             detached: false,
             executable: None,
+            env: None,
         }
     }
 }
@@ -321,7 +325,7 @@ impl Popen {
             child_state: ChildState::Preparing,
             detached: config.detached,
         };
-        inst.os_start(argv, config.executable,
+        inst.os_start(argv, config.executable, config.env,
                       config.stdin, config.stdout, config.stderr)?;
         Ok(inst)
     }
@@ -589,6 +593,7 @@ impl Popen {
 
 trait PopenOs {
     fn os_start(&mut self, argv: Vec<OsString>, executable: Option<OsString>,
+                env: Option<Vec<(OsString, OsString)>>,
                 stdin: Redirection, stdout: Redirection, stderr: Redirection)
                 -> Result<()>;
     fn os_wait(&mut self) -> Result<ExitStatus>;
@@ -619,6 +624,7 @@ mod os {
     impl super::PopenOs for Popen {
         fn os_start(&mut self,
                     argv: Vec<OsString>, executable: Option<OsString>,
+                    env: Option<Vec<(OsString, OsString)>>,
                     stdin: Redirection, stdout: Redirection, stderr: Redirection)
                     -> Result<()> {
             let mut exec_fail_pipe = posix::pipe()?;
@@ -626,11 +632,12 @@ mod os {
             set_inheritable(&mut exec_fail_pipe.1, false)?;
             {
                 let child_ends = self.setup_streams(stdin, stdout, stderr)?;
+                let child_env = env.map(format_env);
                 let child_pid = posix::fork()?;
                 if child_pid == 0 {
                     mem::drop(exec_fail_pipe.0);
                     let result: IoResult<()> = self.do_exec(
-                        argv, executable, child_ends);
+                        argv, executable, child_env, child_ends);
                     // If we are here, it means that exec has failed.  Notify
                     // the parent and exit.
                     let error_code = match result {
@@ -704,8 +711,24 @@ mod os {
         }
     }
 
+    fn format_env(env: Vec<(OsString, OsString)>) -> Vec<OsString> {
+        // Convert Vec of (key, val) pairs to Vec of key=val, as
+        // required by execvpe.  Also eliminate dups, with the
+        // later-appearing one taking precedence.
+        //let seen = HashMap::new();
+        let mut formatted: Vec<OsString> = env.iter().rev().map(|&(ref k, ref v)| {
+            let mut fmt = k.clone();
+            fmt.push("=");
+            fmt.push(v);
+            fmt
+        }).collect();
+        formatted.reverse();
+        formatted
+    }
+
     trait PopenOsImpl: super::PopenOs {
         fn do_exec(&self, argv: Vec<OsString>, executable: Option<OsString>,
+                   env: Option<Vec<OsString>>,
                    child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>))
                    -> IoResult<()>;
         fn waitpid(&mut self, block: bool) -> IoResult<()>;
@@ -713,6 +736,7 @@ mod os {
 
     impl PopenOsImpl for Popen {
         fn do_exec(&self, argv: Vec<OsString>, executable: Option<OsString>,
+                   env: Option<Vec<OsString>>,
                    child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>))
                    -> IoResult<()> {
             let (stdin, stdout, stderr) = child_ends;
@@ -732,7 +756,12 @@ mod os {
                 }
             }
             posix::reset_sigpipe()?;
-            posix::execvp(executable.as_ref().unwrap_or(&argv[0]), &argv)
+            let cmd_to_exec = executable.as_ref().unwrap_or(&argv[0]);
+            if let Some(env) = env {
+                posix::execvpe(cmd_to_exec, &argv, &env)
+            } else {
+                posix::execvp(cmd_to_exec, &argv)
+            }
         }
 
         fn waitpid(&mut self, block: bool) -> IoResult<()> {

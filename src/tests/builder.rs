@@ -188,3 +188,9 @@ fn reject_input_data_stream_stderr() {
 fn reject_input_data_stream_stdin() {
     Exec::cmd("true").stdin("xxx").stream_stdin().unwrap();
 }
+
+#[test]
+fn env_var() {
+    assert!(Exec::shell(r#"test "$somevar" = "foo""#)
+            .env("somevar", "foo").join().unwrap().success());
+}
