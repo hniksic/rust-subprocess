@@ -615,6 +615,7 @@ mod os {
     use std::os::unix::io::AsRawFd;
     use std::ffi::OsString;
     use std::time::{Duration, Instant};
+    use std::collections::HashSet;
 
     use os_common::ExitStatus;
     use unix::PopenExt;
@@ -715,13 +716,15 @@ mod os {
         // Convert Vec of (key, val) pairs to Vec of key=val, as
         // required by execvpe.  Also eliminate dups, with the
         // later-appearing one taking precedence.
-        //let seen = HashMap::new();
-        let mut formatted: Vec<OsString> = env.iter().rev().map(|&(ref k, ref v)| {
-            let mut fmt = k.clone();
-            fmt.push("=");
-            fmt.push(v);
-            fmt
-        }).collect();
+        let mut seen = HashSet::<OsString>::new();
+        let mut formatted: Vec<_> = env.into_iter().rev()
+            .filter(|&(ref k, ref _v)| seen.insert(k.clone()))
+            .map(|(ref k, ref v)| {
+                let mut fmt = k.clone();
+                fmt.push("=");
+                fmt.push(v);
+                fmt
+            }).collect();
         formatted.reverse();
         formatted
     }

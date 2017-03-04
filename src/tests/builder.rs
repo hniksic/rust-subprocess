@@ -1,6 +1,7 @@
 extern crate tempdir;
 
 use std::fs::File;
+use std::env;
 
 use super::super::{Exec, Redirection, NullFile, ExitStatus};
 
@@ -190,7 +191,36 @@ fn reject_input_data_stream_stdin() {
 }
 
 #[test]
-fn env_var() {
+fn env_set() {
     assert!(Exec::shell(r#"test "$somevar" = "foo""#)
             .env("somevar", "foo").join().unwrap().success());
+}
+
+#[test]
+fn env_inherit() {
+    // use a unique name to avoid interference with other tests
+    let varname = "test_env_inherit_varname";
+    env::set_var(varname, "inherited");
+    assert!(Exec::shell(format!(r#"test "${}" = "inherited""#, varname))
+            .join().unwrap().success());
+    env::remove_var(varname);
+}
+
+#[test]
+fn env_inherit_set() {
+    // use a unique name to avoid interference with other tests
+    let varname = "test_env_inherit_set_varname";
+    env::set_var(varname, "inherited");
+    assert!(Exec::shell(format!(r#"test "${}" = "new""#, varname))
+            .env(varname, "new")
+            .join().unwrap().success());
+    env::remove_var(varname);
+}
+
+#[test]
+fn env_set_dup() {
+    assert!(Exec::shell(r#"test "$somevar" = "bar""#)
+            .env("somevar", "foo")
+            .env("somevar", "bar")
+            .join().unwrap().success());
 }
