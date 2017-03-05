@@ -13,10 +13,11 @@ use std::iter;
 use kernel32;
 
 use winapi;
-use winapi::minwindef::{BOOL, DWORD};
+use winapi::minwindef::{BOOL, DWORD, LPVOID};
 use winapi::minwinbase::{SECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES};
 use winapi::processthreadsapi::*;
 use winapi::winnt::PHANDLE;
+use winapi::winbase::CREATE_UNICODE_ENVIRONMENT;
 
 pub use winapi::winerror::{ERROR_BAD_PATHNAME, ERROR_ACCESS_DENIED};
 pub const STILL_ACTIVE: u32 = 259;
@@ -91,8 +92,9 @@ pub fn SetHandleInformation(handle: &mut File, dwMask: u32, dwFlags: u32) -> Res
 
 pub fn CreateProcess(appname: Option<&OsStr>,
                      cmdline: &OsStr,
+                     env_block: &Option<Vec<u16>>,
                      inherit_handles: bool,
-                     creation_flags: u32,
+                     mut creation_flags: u32,
                      stdin: Option<RawHandle>,
                      stdout: Option<RawHandle>,
                      stderr: Option<RawHandle>,
@@ -106,6 +108,9 @@ pub fn CreateProcess(appname: Option<&OsStr>,
     let mut pinfo: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let mut cmdline = to_nullterm(cmdline);
     let wc_appname = appname.map(to_nullterm);
+    let env_block_ptr = env_block.as_ref().map(|v| v.as_ptr())
+        .unwrap_or(ptr::null()) as LPVOID;
+    creation_flags |= CREATE_UNICODE_ENVIRONMENT;
     check(unsafe {
         kernel32::CreateProcessW(wc_appname
                                      .as_ref().map(|v| v.as_ptr())
@@ -115,7 +120,7 @@ pub fn CreateProcess(appname: Option<&OsStr>,
                                  ptr::null_mut(),   // lpThreadAttributes
                                  inherit_handles as BOOL,  // bInheritHandles
                                  creation_flags,    // dwCreationFlags
-                                 ptr::null_mut(),   // lpEnvironment
+                                 env_block_ptr,     // lpEnvironment
                                  ptr::null_mut(),   // lpCurrentDirectory
                                  &mut sinfo,
                                  &mut pinfo)

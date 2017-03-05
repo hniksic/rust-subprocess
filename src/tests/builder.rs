@@ -192,16 +192,18 @@ fn reject_input_data_stream_stdin() {
 
 #[test]
 fn env_set() {
-    assert!(Exec::shell(r#"test "$somevar" = "foo""#)
-            .env("somevar", "foo").join().unwrap().success());
+    assert!(Exec::cmd("sh").args(&["-c", r#"test "$SOMEVAR" = "foo""#])
+            .env("SOMEVAR", "foo").join().unwrap().success());
 }
 
 #[test]
 fn env_inherit() {
     // use a unique name to avoid interference with other tests
-    let varname = "test_env_inherit_varname";
+    let varname = "TEST_ENV_INHERIT_VARNAME";
     env::set_var(varname, "inherited");
-    assert!(Exec::shell(format!(r#"test "${}" = "inherited""#, varname))
+    assert!(Exec::cmd("sh").args(
+        &["-c".to_owned(),
+          format!(r#"test "${}" = "inherited""#, varname)])
             .join().unwrap().success());
     env::remove_var(varname);
 }
@@ -209,9 +211,11 @@ fn env_inherit() {
 #[test]
 fn env_inherit_set() {
     // use a unique name to avoid interference with other tests
-    let varname = "test_env_inherit_set_varname";
+    let varname = "TEST_ENV_INHERIT_SET_VARNAME";
     env::set_var(varname, "inherited");
-    assert!(Exec::shell(format!(r#"test "${}" = "new""#, varname))
+    assert!(Exec::cmd("sh").args(
+        &["-c".to_owned(),
+          format!(r#"test "${}" = "new""#, varname)])
             .env(varname, "new")
             .join().unwrap().success());
     env::remove_var(varname);
@@ -219,8 +223,9 @@ fn env_inherit_set() {
 
 #[test]
 fn env_set_dup() {
-    assert!(Exec::shell(r#"test "$somevar" = "bar""#)
-            .env("somevar", "foo")
-            .env("somevar", "bar")
+    assert!(Exec::cmd("sh").args(&[
+        "-c", r#"test "$SOMEVAR" = "bar""#])
+            .env("SOMEVAR", "foo")
+            .env("SOMEVAR", "bar")
             .join().unwrap().success());
 }

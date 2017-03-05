@@ -866,6 +866,7 @@ mod os {
     use std::os::windows::io::{RawHandle, AsRawHandle};
     use std::time::Duration;
     use std::io::Result as IoResult;
+    use std::collections::HashSet;
 
     use win32;
     use os_common::{ExitStatus, StandardStream};
@@ -876,6 +877,7 @@ mod os {
     impl super::PopenOs for Popen {
         fn os_start(&mut self,
                     argv: Vec<OsString>, executable: Option<OsString>,
+                    env: Option<Vec<(OsString, OsString)>>,
                     stdin: Redirection, stdout: Redirection, stderr: Redirection)
                     -> Result<()> {
             fn raw(opt: &Option<FileRef>) -> Option<RawHandle> {
@@ -887,12 +889,14 @@ mod os {
             ensure_child_stream(&mut child_stdout, StandardStream::Output)?;
             ensure_child_stream(&mut child_stderr, StandardStream::Error)?;
             let cmdline = assemble_cmdline(argv)?;
+            let env_block = env.map(format_env_block);
             // CreateProcess doesn't search for appname in the PATH.
             // We do it ourselves to match the Unix behavior.
             let executable = executable.map(locate_in_path);
             let (handle, pid)
                 = win32::CreateProcess(executable.as_ref().map(OsString::as_ref),
-                                       &cmdline, true, 0,
+                                       &cmdline, &env_block,
+                                       true, 0,
                                        raw(&child_stdin),
                                        raw(&child_stdout),
                                        raw(&child_stderr),
@@ -956,6 +960,34 @@ mod os {
         fn os_kill(&mut self) -> IoResult<()> {
             self.terminate()
         }
+    }
+
+    fn format_env_block(env: Vec<(OsString, OsString)>) -> Vec<u16> {
+        fn to_uppercase(s: &OsStr) -> OsString {
+            use std::ascii::AsciiExt;
+            OsString::from_wide(&s.encode_wide()
+                .map(|c| if c < 128 {
+                    (c as u8 as char).to_ascii_uppercase() as u16
+                } else {
+                    c
+                }).collect::<Vec<u16>>())
+        }
+        let mut pruned = {
+            let mut seen = HashSet::<OsString>::new();
+            env.into_iter().rev()
+                .filter(|&(ref k, ref _v)| seen.insert(to_uppercase(&k)))
+                .collect::<Vec<_>>()
+        };
+        pruned.reverse();
+        let mut block = Vec::<u16>::new();
+        for (k, v) in pruned {
+            block.extend(k.encode_wide());
+            block.push('=' as u16);
+            block.extend(v.encode_wide());
+            block.push(0);
+        }
+        block.push(0);
+        block
     }
 
     trait PopenOsImpl: super::PopenOs {
