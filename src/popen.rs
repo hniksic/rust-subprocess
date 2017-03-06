@@ -165,6 +165,13 @@ pub struct PopenConfig {
     /// even though `executable` is actually running.
     pub executable: Option<OsString>,
 
+    /// Environment variables to pass to the subprocess.
+    ///
+    /// If this is None, environment variables are inherited from the calling
+    /// process. Otherwise, the specified variables are used instead.
+    ///
+    /// Duplicates are eliminated, with the variable appearing later in the
+    /// list deciding the value.
     pub env: Option<Vec<(OsString, OsString)>>,
 
     // force construction using ..Default::default()

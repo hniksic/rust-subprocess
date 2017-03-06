@@ -165,13 +165,13 @@ mod exec {
             Exec::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
         }
 
-        /// Append `arg` to argument list.
+        /// Appends `arg` to argument list.
         pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Exec {
             self.args.push(arg.as_ref().to_owned());
             self
         }
 
-        /// Extend the argument list with `args`.
+        /// Extends the argument list with `args`.
         pub fn args<S: AsRef<OsStr>>(mut self, args: &[S]) -> Exec {
             self.args.extend(args.iter().map(|x| x.as_ref().to_owned()));
             self
@@ -187,21 +187,47 @@ mod exec {
             self
         }
 
-        fn inherited_env() -> Vec<(OsString, OsString)> {
-            env::vars_os()
-                .map(|(k, v)| (k.to_owned(), v.to_owned()))
-                .collect()
+        fn ensure_env(&mut self) {
+            if self.config.env.is_none() {
+                let inherited = env::vars_os()
+                    .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                    .collect();
+                self.config.env = Some(inherited);
+            }
         }
 
+        /// Clear the environment of the subprocess.
+        ///
+        /// When this is invoked, the subprocess will not inherit the
+        /// environment of this process.
+        pub fn env_clear(mut self) -> Exec {
+            self.config.env = Some(Vec::new());
+            self
+        }
+
+        /// Specifies the value of an environment variable in the child process.
+        ///
+        /// Other environment variables are inherited by default.  If
+        /// this is undesirable, call `env_clear` first.
         pub fn env<K, V>(mut self, key: K, value: V) -> Exec
             where K: AsRef<OsStr>,
                   V: AsRef<OsStr>
         {
-            if self.config.env.is_none() {
-                self.config.env = Some(Exec::inherited_env());
-            }
+            self.ensure_env();
             self.config.env.as_mut().unwrap().push((key.as_ref().to_owned(),
                                                     value.as_ref().to_owned()));
+            self
+        }
+
+        /// Removes an environment variable from the child process.
+        ///
+        /// Other environment variables are inherited by default.
+        pub fn env_remove<K>(mut self, key: K) -> Exec
+            where K: AsRef<OsStr>
+        {
+            self.ensure_env();
+            self.config.env.as_mut().unwrap().retain(
+                |&(ref k, ref _v)| k != key.as_ref());
             self
         }
 
