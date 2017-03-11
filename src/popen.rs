@@ -641,11 +641,13 @@ mod os {
             {
                 let child_ends = self.setup_streams(stdin, stdout, stderr)?;
                 let child_env = env.map(format_env);
+                let cmd_to_exec = executable.as_ref().unwrap_or(&argv[0]);
+                let just_exec = posix::stage_exec(cmd_to_exec, &argv[..],
+                                                  child_env.as_ref().map(|x| &x[..]))?;
                 let child_pid = posix::fork()?;
                 if child_pid == 0 {
                     mem::drop(exec_fail_pipe.0);
-                    let result: IoResult<()> = self.do_exec(
-                        argv, executable, child_env, child_ends);
+                    let result: IoResult<()> = self.do_exec(just_exec, child_ends);
                     // If we are here, it means that exec has failed.  Notify
                     // the parent and exit.
                     let error_code = match result {
@@ -737,16 +739,14 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn do_exec(&self, argv: Vec<OsString>, executable: Option<OsString>,
-                   env: Option<Vec<OsString>>,
+        fn do_exec(&self, just_exec: Box<FnMut() -> IoResult<()>>,
                    child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>))
                    -> IoResult<()>;
         fn waitpid(&mut self, block: bool) -> IoResult<()>;
     }
 
     impl PopenOsImpl for Popen {
-        fn do_exec(&self, argv: Vec<OsString>, executable: Option<OsString>,
-                   env: Option<Vec<OsString>>,
+        fn do_exec(&self, mut just_exec: Box<FnMut() -> IoResult<()>>,
                    child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>))
                    -> IoResult<()> {
             let (stdin, stdout, stderr) = child_ends;
@@ -766,12 +766,8 @@ mod os {
                 }
             }
             posix::reset_sigpipe()?;
-            let cmd_to_exec = executable.as_ref().unwrap_or(&argv[0]);
-            if let Some(env) = env {
-                posix::execvpe(cmd_to_exec, &argv, &env)
-            } else {
-                posix::execvp(cmd_to_exec, &argv)
-            }
+            just_exec()?;
+            unreachable!();
         }
 
         fn waitpid(&mut self, block: bool) -> IoResult<()> {

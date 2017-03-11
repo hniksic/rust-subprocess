@@ -1,5 +1,5 @@
 use std::io::{Result, Error};
-use std::ffi::{OsStr, CString};
+use std::ffi::{OsStr, OsString, CString};
 use std::os::unix::ffi::OsStrExt;
 use std::fs::File;
 use std::os::unix::io::FromRawFd;
@@ -76,50 +76,133 @@ impl CVec {
     }
 }
 
-pub fn execvp<S1, S2>(cmd: S1, args: &[S2]) -> Result<()>
-    where S1: AsRef<OsStr>, S2: AsRef<OsStr>
-{
-    let cmd_cstring = os_to_cstring(cmd.as_ref())?;
-    let argvec = CVec::new(args)?;
-
-    check_err(unsafe {
-        libc::execvp(cstring_ptr(&cmd_cstring), argvec.as_c_vec())
-    })?;
-
-    unreachable!();
+struct SplitPath<'a> {
+    path: &'a OsStr,
+    last: usize,
+    current: usize,
 }
 
-pub fn execvpe<S1, S2, S3>(cmd: S1, args: &[S2], env: &[S3]) -> Result<()>
-    where S1: AsRef<OsStr>,
-          S2: AsRef<OsStr>,
-          S3: AsRef<OsStr>
-{
-    let cmd_osstr = cmd.as_ref();
-    let argvec = CVec::new(args)?;
-    let envvec = CVec::new(env)?;
+impl<'a> Iterator for SplitPath<'a> {
+    type Item = &'a OsStr;
 
-    // execvpe is not POSIX, so we must emulate it
-
-    if cmd_osstr.as_bytes().iter().any(|&c| c == b'/') {
-        let cmd_cstring = os_to_cstring(cmd_osstr)?;
-        check_err(unsafe {
-            libc::execve(cstring_ptr(&cmd_cstring),
-                         argvec.as_c_vec(), envvec.as_c_vec())
-        })?;
-        unreachable!();
-    } else {
-        if let Some(path) = env::var_os("PATH") {
-            for pathdir in env::split_paths(&path) {
-                let exe_path = pathdir.join(cmd_osstr);
-                let exe_cstring = os_to_cstring(exe_path.as_os_str())?;
-                unsafe {
-                    libc::execve(cstring_ptr(&exe_cstring),
-                                 argvec.as_c_vec(), envvec.as_c_vec());
-                }
+    fn next(&mut self) -> Option<&'a OsStr> {
+        let bytes = self.path.as_bytes();
+        for i in self.current..bytes.len() {
+            if bytes[i] == b':' && i != self.last {
+                let piece = OsStr::from_bytes(&bytes[self.last..i]);
+                self.last = i + 1;
+                self.current = i + 1;
+                return Some(piece);
             }
         }
-        return Err(Error::from_raw_os_error(libc::ENOENT));
+        if self.last != bytes.len() {
+            let piece = OsStr::from_bytes(&bytes[self.last..]);
+            self.last = bytes.len();
+            self.current = bytes.len();
+            return Some(piece);
+        }
+        return None;
     }
+}
+
+fn split_path(path: &OsStr) -> SplitPath {
+    // Can't use env::split_path because it allocates OsString
+    // objects, and we need to iterate over PATH after fork() when
+    // allocations are strictly verboten.
+    SplitPath {
+        path: path,
+        last: 0,
+        current: 0,
+    }
+}
+
+struct FinishExec {
+    cmd: OsString,
+    argvec: CVec,
+    envvec: Option<CVec>,
+    search_path: Option<OsString>,
+    exe_buf: Vec<u8>,
+}
+
+impl FinishExec {
+    fn new(cmd: OsString, argvec: CVec, envvec: Option<CVec>,
+           search_path: Option<OsString>)
+           -> FinishExec {
+        let exe_buf = Vec::with_capacity(
+            search_path.as_ref().map_or(0, |path| path.len())
+                + 1 + cmd.len() + 1);
+        FinishExec {
+            cmd: cmd,
+            argvec: argvec,
+            envvec: envvec,
+            search_path: search_path,
+            exe_buf: exe_buf,
+        }
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        // no allocations below this point
+
+        let mut exe_buf = &mut self.exe_buf;
+
+        if let Some(ref search_path) = self.search_path {
+            // POSIX specifies execvp and execve, but not execvpe
+            // (although glibc has one), so we have to iterate over
+            // PATH ourselves
+            for dir in split_path(search_path.as_os_str()) {
+                exe_buf.truncate(0);
+                exe_buf.extend_from_slice(dir.as_bytes());
+                exe_buf.push(b'/');
+                exe_buf.extend_from_slice(self.cmd.as_bytes());
+                exe_buf.push(0);
+                FinishExec::exec(exe_buf.as_slice(),
+                                 &self.argvec, &self.envvec).ok();
+            }
+            return Err(Error::last_os_error())
+        }
+
+        exe_buf.truncate(0);
+        exe_buf.extend_from_slice(self.cmd.as_bytes());
+        exe_buf.push(0);
+        FinishExec::exec(exe_buf.as_slice(), &self.argvec, &self.envvec)?;
+        // either exec succeeded and we're no longer running, or exec
+        // failed, and we returned Err(..)
+        unreachable!();
+    }
+
+    fn exec(exe: &[u8], argvec: &CVec, envvec: &Option<CVec>) -> Result<()> {
+        check_err(unsafe {
+            match envvec.as_ref() {
+                Some(ref envvec) =>
+                    libc::execve(exe.as_ptr() as *const i8,
+                                 argvec.as_c_vec(), envvec.as_c_vec()),
+                None =>
+                    libc::execv(exe.as_ptr() as *const i8,
+                                argvec.as_c_vec()),
+            }
+        })?;
+        Ok(())
+    }
+}
+
+pub fn stage_exec<S1, S2, S3>(cmd: S1, args: &[S2], env: Option<&[S3]>)
+                             -> Result<Box<FnMut() -> Result<()>>>
+    where S1: AsRef<OsStr>, S2: AsRef<OsStr>, S3: AsRef<OsStr>
+{
+    let cmd = cmd.as_ref().to_owned();
+    let argvec = CVec::new(args)?;
+    let envvec = if let Some(env) = env { Some(CVec::new(env)?) } else { None };
+
+    let search_path = if !cmd.as_bytes().iter().any(|&b| b == b'/') {
+        env::var_os("PATH")
+            // treat empty path as non-existent
+            .and_then(|p| if p.len() == 0 { None } else { Some(p) })
+    } else {
+        None
+    };
+
+    let mut exec = FinishExec::new(cmd, argvec, envvec, search_path);
+    Ok(Box::new(move || exec.finish()))
 }
 
 pub fn _exit(status: u8) -> ! {
