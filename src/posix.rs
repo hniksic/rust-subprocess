@@ -116,6 +116,35 @@ fn split_path(path: &OsStr) -> SplitPath {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::split_path;
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    use std;
+
+    fn s(s: &str) -> Vec<&str> {
+        split_path(OsStr::new(s))
+            .map(|osstr| std::str::from_utf8(osstr.as_bytes()).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn test_split_path() {
+        let empty = Vec::<&OsStr>::new();
+
+        assert_eq!(s("a:b"), vec!["a", "b"]);
+        assert_eq!(s("one:twothree"), vec!["one", "twothree"]);
+        assert_eq!(s("a:"), vec!["a"]);
+        assert_eq!(s(""), empty);
+        assert_eq!(s(":"), empty);
+        assert_eq!(s("::"), empty);
+        assert_eq!(s("::"), empty);
+        assert_eq!(s("a::b"), vec!["a", "b"]);
+        assert_eq!(s(":a::::b:"), vec!["a", "b"]);
+    }
+}
+
 struct FinishExec {
     cmd: OsString,
     argvec: CVec,
