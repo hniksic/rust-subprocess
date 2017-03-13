@@ -7,6 +7,7 @@ use std::ptr;
 use std::mem;
 use std::iter;
 use std::env;
+use std::cell::RefCell;
 
 use libc;
 
@@ -141,7 +142,7 @@ mod tests {
         assert_eq!(s(""), empty);
         assert_eq!(s(":"), empty);
         assert_eq!(s("::"), empty);
-        assert_eq!(s("::"), empty);
+        assert_eq!(s(":::"), empty);
         assert_eq!(s("a::b"), vec!["a", "b"]);
         assert_eq!(s(":a::::b:"), vec!["a", "b"]);
     }
@@ -152,67 +153,81 @@ struct FinishExec {
     argvec: CVec,
     envvec: Option<CVec>,
     search_path: Option<OsString>,
-    exe_buf: Vec<u8>,
+    exe_buf: RefCell<Vec<u8>>,
 }
 
 impl FinishExec {
     fn new(cmd: OsString, argvec: CVec, envvec: Option<CVec>,
            search_path: Option<OsString>)
            -> FinishExec {
-        let exe_buf = Vec::with_capacity(
-            search_path.as_ref().map_or(0, |path| path.len())
-                + 1 + cmd.len() + 1);
+        // Avoid allocation after fork() by pre-allocating the buffer
+        // that will be used for constructing the executable C string.
+
+        // Allocate enough room for "<pathdir>/<command>\0", pathdir
+        // being the longest component of PATH.
+        let mut max_exe_len = cmd.len() + 1;
+        if let Some(ref search_path) = search_path {
+            // make sure enough room is present for the largest of the
+            // PATH components, plus 1 for the intervening '/'.
+            max_exe_len += 1 + split_path(search_path)
+                .map(|dir| dir.len())
+                .max().unwrap_or(0);
+        }
+
         FinishExec {
             cmd: cmd,
             argvec: argvec,
             envvec: envvec,
             search_path: search_path,
-            exe_buf: exe_buf,
+            exe_buf: RefCell::new(Vec::with_capacity(max_exe_len)),
         }
     }
 
     fn finish(&mut self) -> Result<()> {
-        // no allocations below this point
-
-        let mut exe_buf = &mut self.exe_buf;
+        // Invoked after fork() - no heap allocation allowed
 
         if let Some(ref search_path) = self.search_path {
             // POSIX specifies execvp and execve, but not execvpe
             // (although glibc has one), so we have to iterate over
             // PATH ourselves
             for dir in split_path(search_path.as_os_str()) {
-                exe_buf.truncate(0);
-                exe_buf.extend_from_slice(dir.as_bytes());
-                exe_buf.push(b'/');
-                exe_buf.extend_from_slice(self.cmd.as_bytes());
-                exe_buf.push(0);
-                FinishExec::exec(exe_buf.as_slice(),
-                                 &self.argvec, &self.envvec).ok();
+                self.set_exe(&[dir.as_bytes(), "/".as_bytes(),
+                               self.cmd.as_bytes()]);
+                self.exec().ok();
             }
             return Err(Error::last_os_error())
         }
 
-        exe_buf.truncate(0);
-        exe_buf.extend_from_slice(self.cmd.as_bytes());
-        exe_buf.push(0);
-        FinishExec::exec(exe_buf.as_slice(), &self.argvec, &self.envvec)?;
-        // either exec succeeded and we're no longer running, or exec
-        // failed, and we returned Err(..)
+        self.set_exe(&[self.cmd.as_bytes()]);
+        self.exec()?;
+
+        // failed exec can only return Err(..)
         unreachable!();
     }
 
-    fn exec(exe: &[u8], argvec: &CVec, envvec: &Option<CVec>) -> Result<()> {
-        check_err(unsafe {
-            match envvec.as_ref() {
+    fn set_exe(&self, byte_slices: &[&[u8]]) {
+        let mut exe_buf = self.exe_buf.borrow_mut();
+        exe_buf.truncate(0);
+        for byte_slice in byte_slices {
+            exe_buf.extend_from_slice(byte_slice);
+        }
+        exe_buf.push(0);
+    }
+
+    fn exec(&self) -> Result<()> {
+        let exe_buf = self.exe_buf.borrow();
+
+        unsafe {
+            match self.envvec.as_ref() {
                 Some(ref envvec) =>
-                    libc::execve(exe.as_ptr() as *const i8,
-                                 argvec.as_c_vec(), envvec.as_c_vec()),
+                    libc::execve(exe_buf.as_ptr() as *const i8,
+                                 self.argvec.as_c_vec(), envvec.as_c_vec()),
                 None =>
-                    libc::execv(exe.as_ptr() as *const i8,
-                                argvec.as_c_vec()),
+                    libc::execv(exe_buf.as_ptr() as *const i8,
+                                self.argvec.as_c_vec()),
             }
-        })?;
-        Ok(())
+        };
+        Err(Error::last_os_error())
     }
 }
 
