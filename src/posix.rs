@@ -88,17 +88,19 @@ impl<'a> Iterator for SplitPath<'a> {
     fn next(&mut self) -> Option<&'a OsStr> {
         let bytes = self.path.as_bytes();
         for i in self.current..bytes.len() {
-            if bytes[i] == b':' && i != self.last {
+            if bytes[i] == b':' {
                 let piece = OsStr::from_bytes(&bytes[self.last..i]);
                 self.last = i + 1;
-                self.current = i + 1;
-                return Some(piece);
+                if piece.len() != 0 {
+                    self.current = i + 1;
+                    return Some(piece);
+                }
             }
         }
+        self.current = bytes.len();
         if self.last != bytes.len() {
             let piece = OsStr::from_bytes(&bytes[self.last..]);
             self.last = bytes.len();
-            self.current = bytes.len();
             return Some(piece);
         }
         return None;
