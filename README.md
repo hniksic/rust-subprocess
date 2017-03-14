@@ -20,9 +20,9 @@ The following features are available:
 * Waiting for the process to finish and polling its status: `poll`,
   `wait`, and `wait_timeout`.
 
-* Advanced redirection options, such as connecting standard streams to
-  arbitrary files, or merging errors into output like shell's `2>&1`
-  operator.
+* Advanced redirection options, such as redirecting standard streams
+  to arbitrary files, or merging error and output into a single stream
+  like `2>&1` and `1>&2` in the shell.
 
 * The `communicate` method for deadlock-free reading of output while
   simultaneously providing input to the subprocess.
@@ -33,10 +33,10 @@ The following features are available:
   collecting their results.
 
 The crate has minimal dependencies to third-party crates, only
-requiring `libc`, `crossbeam`, and Win32-related crates on Windows.
+requiring `libc` on POSIX and `crossbeam` and Win32 crates on Windows.
 It is intended to work on Unix-like platforms as well as on recent
-Windows 7 and later.  It is regularly tested on Linux and Windows, and
-occasionally on FreeBSD and MacOS.
+Windows, 7 and later.  It is regularly tested on Linux, MacOS and
+Windows, and occasionally on FreeBSD.
 
 ## API Overview
 
