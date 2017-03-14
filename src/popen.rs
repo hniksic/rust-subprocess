@@ -739,14 +739,14 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn do_exec(&self, just_exec: Box<FnMut() -> IoResult<()>>,
+        fn do_exec(&self, just_exec: Box<Fn() -> IoResult<()>>,
                    child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>))
                    -> IoResult<()>;
         fn waitpid(&mut self, block: bool) -> IoResult<()>;
     }
 
     impl PopenOsImpl for Popen {
-        fn do_exec(&self, mut just_exec: Box<FnMut() -> IoResult<()>>,
+        fn do_exec(&self, just_exec: Box<Fn() -> IoResult<()>>,
                    child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>))
                    -> IoResult<()> {
             let (stdin, stdout, stderr) = child_ends;

@@ -153,6 +153,11 @@ struct FinishExec {
     argvec: CVec,
     envvec: Option<CVec>,
     search_path: Option<OsString>,
+
+    // Use of interior mutability for exe_buf makes it much easier to
+    // implement and use FinishExec::set_exe.  Also, exe_buf only
+    // exists due to the prohibition of allocation after fork() -
+    // FinishExec::finish() doesn't observably mutate FinishExec.
     exe_buf: RefCell<Vec<u8>>,
 }
 
@@ -183,7 +188,7 @@ impl FinishExec {
         }
     }
 
-    fn finish(&mut self) -> Result<()> {
+    fn finish(&self) -> Result<()> {
         // Invoked after fork() - no heap allocation allowed
 
         if let Some(ref search_path) = self.search_path {
@@ -232,7 +237,7 @@ impl FinishExec {
 }
 
 pub fn stage_exec<S1, S2, S3>(cmd: S1, args: &[S2], env: Option<&[S3]>)
-                             -> Result<Box<FnMut() -> Result<()>>>
+                             -> Result<Box<Fn() -> Result<()>>>
     where S1: AsRef<OsStr>, S2: AsRef<OsStr>, S3: AsRef<OsStr>
 {
     let cmd = cmd.as_ref().to_owned();
@@ -247,7 +252,7 @@ pub fn stage_exec<S1, S2, S3>(cmd: S1, args: &[S2], env: Option<&[S3]>)
         None
     };
 
-    let mut exec = FinishExec::new(cmd, argvec, envvec, search_path);
+    let exec = FinishExec::new(cmd, argvec, envvec, search_path);
     Ok(Box::new(move || exec.finish()))
 }
 
