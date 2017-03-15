@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::Read;
 use std::io::Write;
 use std::time::Duration;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 
 
 use super::super::{Popen, PopenConfig, ExitStatus, Redirection, PopenError};
@@ -295,4 +295,54 @@ fn setup_executable() {
                                   ..Default::default()
                               }).unwrap();
     assert_eq!(read_whole_file(p.stdout.take().unwrap()), "foobar");
+}
+
+#[test]
+fn env_add() {
+    let mut env = PopenConfig::current_env();
+    env.push((OsString::from("SOMEVAR"), OsString::from("foo")));
+    let mut p = Popen::create(&["sh", "-c", r#"test "$SOMEVAR" = "foo""#],
+                              PopenConfig {
+                                  env: Some(env),
+                                  ..Default::default()
+                              }).unwrap();
+    assert!(p.wait().unwrap().success());
+}
+
+#[test]
+fn env_set_all_1() {
+    let mut p = Popen::create(&["env"],
+                              PopenConfig {
+                                  stdout: Redirection::Pipe,
+                                  env: Some(Vec::new()),
+                                  ..Default::default()
+                              }).unwrap();
+    let (out, _err) = p.communicate(None).unwrap();
+    assert_eq!(out.unwrap(), "");
+}
+
+#[test]
+fn env_set_all_2() {
+    let mut p = Popen::create(&["env"],
+                              PopenConfig {
+                                  stdout: Redirection::Pipe,
+                                  env: Some(vec![(OsString::from("FOO"),
+                                                  OsString::from("bar"))]),
+                                  ..Default::default()
+                              }).unwrap();
+    let (out, _err) = p.communicate(None).unwrap();
+    assert_eq!(out.unwrap().trim_right(), "FOO=bar");
+}
+
+#[test]
+fn env_dup() {
+    let dups = vec![(OsString::from("SOMEVAR"), OsString::from("foo")),
+                    (OsString::from("SOMEVAR"), OsString::from("bar"))];
+    let mut p = Popen::create(&["sh", "-c", r#"test "$SOMEVAR" = "bar""#],
+                              PopenConfig {
+                                  stdout: Redirection::Pipe,
+                                  env: Some(dups),
+                                  ..Default::default()
+                              }).unwrap();
+    assert!(p.wait().unwrap().success());
 }

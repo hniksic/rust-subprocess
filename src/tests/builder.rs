@@ -220,12 +220,3 @@ fn env_inherit_set() {
             .join().unwrap().success());
     env::remove_var(varname);
 }
-
-#[test]
-fn env_set_dup() {
-    assert!(Exec::cmd("sh").args(&[
-        "-c", r#"test "$SOMEVAR" = "bar""#])
-            .env("SOMEVAR", "foo")
-            .env("SOMEVAR", "bar")
-            .join().unwrap().success());
-}

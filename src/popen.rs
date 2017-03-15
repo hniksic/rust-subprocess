@@ -7,6 +7,7 @@ use std::string::FromUtf8Error;
 use std::fmt;
 use std::ffi::{OsStr, OsString};
 use std::time::Duration;
+use std::env;
 
 use os_common::{ExitStatus, StandardStream};
 use communicate;
@@ -170,8 +171,8 @@ pub struct PopenConfig {
     /// If this is None, environment variables are inherited from the calling
     /// process. Otherwise, the specified variables are used instead.
     ///
-    /// Duplicates are eliminated, with the variable appearing later in the
-    /// list deciding the value.
+    /// Duplicates are eliminated, with the value taken from the
+    /// variable appearing later in the vector.
     pub env: Option<Vec<(OsString, OsString)>>,
 
     // force construction using ..Default::default()
@@ -201,6 +202,16 @@ impl PopenConfig {
             executable: self.executable.as_ref().cloned(),
             env: self.env.clone(),
         })
+    }
+
+    /// Returns the environment of the current process.
+    ///
+    /// The returned value is in the format accepted by the `env`
+    /// member of `PopenConfig`.
+    pub fn current_env() -> Vec<(OsString, OsString)> {
+        env::vars_os()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect()
     }
 }
 

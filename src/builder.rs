@@ -20,7 +20,6 @@ mod exec {
     use std::io::{Result as IoResult, Read, Write};
     use std::fs::{File, OpenOptions};
     use std::ops::BitOr;
-    use std::env;
 
     use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
     use os_common::ExitStatus;
@@ -189,10 +188,7 @@ mod exec {
 
         fn ensure_env(&mut self) {
             if self.config.env.is_none() {
-                let inherited = env::vars_os()
-                    .map(|(k, v)| (k.to_owned(), v.to_owned()))
-                    .collect();
-                self.config.env = Some(inherited);
+                self.config.env = Some(PopenConfig::current_env());
             }
         }
 
