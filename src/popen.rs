@@ -175,6 +175,11 @@ pub struct PopenConfig {
     /// variable appearing later in the vector.
     pub env: Option<Vec<(OsString, OsString)>>,
 
+    /// Initial current working directory of the subprocess.
+    ///
+    /// None means inherit the working directory from the parent.
+    pub cwd: Option<OsString>,
+
     // force construction using ..Default::default()
     #[doc(hidden)]
     pub _use_default_to_construct: (),
@@ -194,13 +199,14 @@ impl PopenConfig {
     /// [`Redirection::File`]: enum.Redirection.html#variant.File
     pub fn try_clone(&self) -> IoResult<PopenConfig> {
         Ok(PopenConfig {
-            _use_default_to_construct: (),
             stdin: self.stdin.try_clone()?,
             stdout: self.stdout.try_clone()?,
             stderr: self.stderr.try_clone()?,
             detached: self.detached,
             executable: self.executable.as_ref().cloned(),
             env: self.env.clone(),
+            cwd: self.cwd.clone(),
+            _use_default_to_construct: (),
         })
     }
 
@@ -218,13 +224,14 @@ impl PopenConfig {
 impl Default for PopenConfig {
     fn default() -> PopenConfig {
         PopenConfig {
-            _use_default_to_construct: (),
             stdin: Redirection::None,
             stdout: Redirection::None,
             stderr: Redirection::None,
             detached: false,
             executable: None,
             env: None,
+            cwd: None,
+            _use_default_to_construct: (),
         }
     }
 }
@@ -343,8 +350,7 @@ impl Popen {
             child_state: ChildState::Preparing,
             detached: config.detached,
         };
-        inst.os_start(argv, config.executable, config.env,
-                      config.stdin, config.stdout, config.stderr)?;
+        inst.os_start(argv, config)?;
         Ok(inst)
     }
 
@@ -610,9 +616,7 @@ impl Popen {
 }
 
 trait PopenOs {
-    fn os_start(&mut self, argv: Vec<OsString>, executable: Option<OsString>,
-                env: Option<Vec<(OsString, OsString)>>,
-                stdin: Redirection, stdout: Redirection, stderr: Redirection)
+    fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig)
                 -> Result<()>;
     fn os_wait(&mut self) -> Result<ExitStatus>;
     fn os_wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>>;
@@ -641,24 +645,23 @@ mod os {
     pub type ExtChildState = ();
 
     impl super::PopenOs for Popen {
-        fn os_start(&mut self,
-                    argv: Vec<OsString>, executable: Option<OsString>,
-                    env: Option<Vec<(OsString, OsString)>>,
-                    stdin: Redirection, stdout: Redirection, stderr: Redirection)
+        fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig)
                     -> Result<()> {
             let mut exec_fail_pipe = posix::pipe()?;
             set_inheritable(&mut exec_fail_pipe.0, false)?;
             set_inheritable(&mut exec_fail_pipe.1, false)?;
             {
-                let child_ends = self.setup_streams(stdin, stdout, stderr)?;
-                let child_env = env.map(format_env);
-                let cmd_to_exec = executable.as_ref().unwrap_or(&argv[0]);
+                let child_ends = self.setup_streams(config.stdin, config.stdout,
+                                                    config.stderr)?;
+                let child_env = config.env.map(format_env);
+                let cmd_to_exec = config.executable.as_ref().unwrap_or(&argv[0]);
                 let just_exec = posix::stage_exec(cmd_to_exec, &argv[..],
-                                                  child_env.as_ref().map(|x| &x[..]))?;
+                                                  child_env.as_ref().map(::std::ops::Deref::deref))?;
                 let child_pid = posix::fork()?;
                 if child_pid == 0 {
                     mem::drop(exec_fail_pipe.0);
-                    let result: IoResult<()> = self.do_exec(just_exec, child_ends);
+                    let result = self.do_exec(just_exec, child_ends,
+                                              config.cwd.as_ref().map(|x| &x[..]));
                     // If we are here, it means that exec has failed.  Notify
                     // the parent and exit.
                     let error_code = match result {
@@ -751,15 +754,21 @@ mod os {
 
     trait PopenOsImpl: super::PopenOs {
         fn do_exec(&self, just_exec: Box<Fn() -> IoResult<()>>,
-                   child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>))
+                   child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>),
+                   cwd: Option<&OsStr>)
                    -> IoResult<()>;
         fn waitpid(&mut self, block: bool) -> IoResult<()>;
     }
 
     impl PopenOsImpl for Popen {
         fn do_exec(&self, just_exec: Box<Fn() -> IoResult<()>>,
-                   child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>))
+                   child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>),
+                   cwd: Option<&OsStr>)
                    -> IoResult<()> {
+            if let Some(cwd) = cwd {
+                env::set_current_dir(cwd)?;
+            }
+
             let (stdin, stdout, stderr) = child_ends;
             if let Some(stdin) = stdin {
                 if stdin.as_raw_fd() != 0 {
@@ -889,24 +898,21 @@ mod os {
     pub struct ExtChildState(win32::Handle);
 
     impl super::PopenOs for Popen {
-        fn os_start(&mut self,
-                    argv: Vec<OsString>, executable: Option<OsString>,
-                    env: Option<Vec<(OsString, OsString)>>,
-                    stdin: Redirection, stdout: Redirection, stderr: Redirection)
+        fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig)
                     -> Result<()> {
             fn raw(opt: &Option<FileRef>) -> Option<RawHandle> {
                  opt.as_ref().map(|f| f.as_raw_handle())
             }
             let (mut child_stdin, mut child_stdout, mut child_stderr)
-                = self.setup_streams(stdin, stdout, stderr)?;
+                = self.setup_streams(config.stdin, config.stdout, config.stderr)?;
             ensure_child_stream(&mut child_stdin, StandardStream::Input)?;
             ensure_child_stream(&mut child_stdout, StandardStream::Output)?;
             ensure_child_stream(&mut child_stderr, StandardStream::Error)?;
             let cmdline = assemble_cmdline(argv)?;
-            let env_block = env.map(format_env_block);
+            let env_block = config.env.map(format_env_block);
             // CreateProcess doesn't search for appname in the PATH.
             // We do it ourselves to match the Unix behavior.
-            let executable = executable.map(locate_in_path);
+            let executable = config.executable.map(locate_in_path);
             let (handle, pid)
                 = win32::CreateProcess(executable.as_ref().map(OsString::as_ref),
                                        &cmdline, &env_block,

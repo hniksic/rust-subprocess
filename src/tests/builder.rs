@@ -202,8 +202,8 @@ fn env_inherit() {
     let varname = "TEST_ENV_INHERIT_VARNAME";
     env::set_var(varname, "inherited");
     assert!(Exec::cmd("sh").args(
-        &["-c".to_owned(),
-          format!(r#"test "${}" = "inherited""#, varname)])
+        &["-c",
+          &format!(r#"test "${}" = "inherited""#, varname)])
             .join().unwrap().success());
     env::remove_var(varname);
 }
@@ -214,8 +214,8 @@ fn env_inherit_set() {
     let varname = "TEST_ENV_INHERIT_SET_VARNAME";
     env::set_var(varname, "inherited");
     assert!(Exec::cmd("sh").args(
-        &["-c".to_owned(),
-          format!(r#"test "${}" = "new""#, varname)])
+        &["-c",
+          &format!(r#"test "${}" = "new""#, varname)])
             .env(varname, "new")
             .join().unwrap().success());
     env::remove_var(varname);

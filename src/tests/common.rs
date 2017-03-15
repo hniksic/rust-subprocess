@@ -346,3 +346,18 @@ fn env_dup() {
                               }).unwrap();
     assert!(p.wait().unwrap().success());
 }
+
+#[test]
+fn cwd() {
+    let tmpdir = TempDir::new("test").unwrap();
+    let tmpdir_name = tmpdir.path().as_os_str().to_owned();
+    let mut p = Popen::create(&["pwd"],
+                              PopenConfig {
+                                  stdout: Redirection::Pipe,
+                                  cwd: Some(tmpdir_name.clone()),
+                                  ..Default::default()
+                              }).unwrap();
+    assert_eq!(
+        OsStr::new(read_whole_file(p.stdout.take().unwrap()).trim_right()),
+        tmpdir_name);
+}

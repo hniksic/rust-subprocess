@@ -20,6 +20,7 @@ mod exec {
     use std::io::{Result as IoResult, Read, Write};
     use std::fs::{File, OpenOptions};
     use std::ops::BitOr;
+    use std::path::Path;
 
     use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
     use os_common::ExitStatus;
@@ -224,6 +225,17 @@ mod exec {
             self.ensure_env();
             self.config.env.as_mut().unwrap().retain(
                 |&(ref k, ref _v)| k != key.as_ref());
+            self
+        }
+
+        /// Specifies the current working directory of the child process.
+        ///
+        /// If unspecified, the current working directory is inherited
+        /// from the parent.
+        pub fn cwd<P>(mut self, dir: P) -> Exec
+            where P: AsRef<Path>
+        {
+            self.config.cwd = Some(dir.as_ref().as_os_str().to_owned());
             self
         }
 
