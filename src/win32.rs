@@ -93,6 +93,7 @@ pub fn SetHandleInformation(handle: &mut File, dwMask: u32, dwFlags: u32) -> Res
 pub fn CreateProcess(appname: Option<&OsStr>,
                      cmdline: &OsStr,
                      env_block: &Option<Vec<u16>>,
+                     cwd: &Option<&OsStr>,
                      inherit_handles: bool,
                      mut creation_flags: u32,
                      stdin: Option<RawHandle>,
@@ -110,6 +111,7 @@ pub fn CreateProcess(appname: Option<&OsStr>,
     let wc_appname = appname.map(to_nullterm);
     let env_block_ptr = env_block.as_ref().map(|v| v.as_ptr())
         .unwrap_or(ptr::null()) as LPVOID;
+    let cwd = cwd.map(to_nullterm);
     creation_flags |= CREATE_UNICODE_ENVIRONMENT;
     check(unsafe {
         kernel32::CreateProcessW(wc_appname
@@ -121,7 +123,7 @@ pub fn CreateProcess(appname: Option<&OsStr>,
                                  inherit_handles as BOOL,  // bInheritHandles
                                  creation_flags,    // dwCreationFlags
                                  env_block_ptr,     // lpEnvironment
-                                 ptr::null_mut(),   // lpCurrentDirectory
+                                 cwd.as_ref().map(|v| v.as_ptr()).unwrap_or(ptr::null()),   // lpCurrentDirectory
                                  &mut sinfo,
                                  &mut pinfo)
     })?;

@@ -916,6 +916,7 @@ mod os {
             let (handle, pid)
                 = win32::CreateProcess(executable.as_ref().map(OsString::as_ref),
                                        &cmdline, &env_block,
+                                       &config.cwd.as_ref().map(|os| &os[..]),
                                        true, 0,
                                        raw(&child_stdin),
                                        raw(&child_stdout),
