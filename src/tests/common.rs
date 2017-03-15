@@ -310,31 +310,6 @@ fn env_add() {
 }
 
 #[test]
-fn env_set_all_1() {
-    let mut p = Popen::create(&["env"],
-                              PopenConfig {
-                                  stdout: Redirection::Pipe,
-                                  env: Some(Vec::new()),
-                                  ..Default::default()
-                              }).unwrap();
-    let (out, _err) = p.communicate(None).unwrap();
-    assert_eq!(out.unwrap(), "");
-}
-
-#[test]
-fn env_set_all_2() {
-    let mut p = Popen::create(&["env"],
-                              PopenConfig {
-                                  stdout: Redirection::Pipe,
-                                  env: Some(vec![(OsString::from("FOO"),
-                                                  OsString::from("bar"))]),
-                                  ..Default::default()
-                              }).unwrap();
-    let (out, _err) = p.communicate(None).unwrap();
-    assert_eq!(out.unwrap().trim_right(), "FOO=bar");
-}
-
-#[test]
 fn env_dup() {
     let dups = vec![(OsString::from("SOMEVAR"), OsString::from("foo")),
                     (OsString::from("SOMEVAR"), OsString::from("bar"))];

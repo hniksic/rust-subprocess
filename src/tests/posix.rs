@@ -33,3 +33,28 @@ fn send_signal() {
     p.send_signal(libc::SIGUSR1).unwrap();
     assert_eq!(p.wait().unwrap(), ExitStatus::Signaled(libc::SIGUSR1 as u8));
 }
+
+#[test]
+fn env_set_all_1() {
+    let mut p = Popen::create(&["env"],
+                              PopenConfig {
+                                  stdout: Redirection::Pipe,
+                                  env: Some(Vec::new()),
+                                  ..Default::default()
+                              }).unwrap();
+    let (out, _err) = p.communicate(None).unwrap();
+    assert_eq!(out.unwrap(), "");
+}
+
+#[test]
+fn env_set_all_2() {
+    let mut p = Popen::create(&["env"],
+                              PopenConfig {
+                                  stdout: Redirection::Pipe,
+                                  env: Some(vec![(OsString::from("FOO"),
+                                                  OsString::from("bar"))]),
+                                  ..Default::default()
+                              }).unwrap();
+    let (out, _err) = p.communicate(None).unwrap();
+    assert_eq!(out.unwrap().trim_right(), "FOO=bar");
+}
