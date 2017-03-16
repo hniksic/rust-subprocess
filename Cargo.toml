@@ -22,6 +22,7 @@ winapi = "0.2.8"
 
 [dev-dependencies]
 tempdir = "0.3.5"
+same-file = "0.1"
 
 [lib]
 name = "subprocess"

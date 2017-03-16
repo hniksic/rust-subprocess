@@ -1,4 +1,6 @@
 extern crate tempdir;
+extern crate same_file;
+
 use self::tempdir::TempDir;
 
 use std::fs::File;
@@ -326,24 +328,20 @@ fn env_dup() {
 fn cwd() {
     let tmpdir = TempDir::new("test").unwrap();
     let tmpdir_name = tmpdir.path().as_os_str().to_owned();
+    println!("trying to CWD to: {:?}", tmpdir);
 
     // Test that CWD works by cwd-ing into a temporary directory.
     // Compare the PWD output with a known good output.  (We cannot
     // just compare pwd output with tmpdir_name because they might be
     // printed slightly differently, e.g. "C:/tmp" vs "C:\\tmp".)
 
-    let mut pwd1 = Popen::create(&["sh", "-c",
-        &format!("cd '{}' && command pwd", tmpdir.path().display())],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            ..Default::default()
-        }).unwrap();
-    let mut pwd2 = Popen::create(&["pwd"],
-                              PopenConfig {
-                                  stdout: Redirection::Pipe,
-                                  cwd: Some(tmpdir_name),
-                                  ..Default::default()
-                              }).unwrap();
-    assert_eq!(read_whole_file(pwd1.stdout.take().unwrap()),
-               read_whole_file(pwd2.stdout.take().unwrap()));
+    let mut pwd = Popen::create(&["pwd"],
+                                PopenConfig {
+                                    stdout: Redirection::Pipe,
+                                    cwd: Some(tmpdir_name.clone()),
+                                    ..Default::default()
+                                }).unwrap();
+    let output = read_whole_file(pwd.stdout.take().unwrap()).trim_right().to_owned();
+    println!("comparing {:?} and {:?}", tmpdir, output);
+    assert!(same_file::is_same_file(tmpdir_name, output).unwrap());
 }
