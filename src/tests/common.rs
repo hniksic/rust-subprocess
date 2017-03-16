@@ -327,8 +327,13 @@ fn cwd() {
     let tmpdir = TempDir::new("test").unwrap();
     let tmpdir_name = tmpdir.path().as_os_str().to_owned();
 
+    // Test that CWD works by cwd-ing into a temporary directory.
+    // Compare the PWD output with a known good output.  (We cannot
+    // just compare pwd output with tmpdir_name because they might be
+    // printed slightly differently, e.g. "C:/tmp" vs "C:\\tmp".)
+
     let mut pwd1 = Popen::create(&["sh", "-c",
-        &format!("cd '{}' && pwd", tmpdir.path().display())],
+        &format!("cd '{}' && command pwd", tmpdir.path().display())],
         PopenConfig {
             stdout: Redirection::Pipe,
             ..Default::default()
