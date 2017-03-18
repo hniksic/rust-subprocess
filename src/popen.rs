@@ -180,11 +180,11 @@ pub struct PopenConfig {
     /// None means inherit the working directory from the parent.
     pub cwd: Option<OsString>,
 
+    // preexec_fn, close_fds...
+
     // force construction using ..Default::default()
     #[doc(hidden)]
     pub _use_default_to_construct: (),
-
-    // cwd, env, preexec_fn, close_fds...
 }
 
 impl PopenConfig {

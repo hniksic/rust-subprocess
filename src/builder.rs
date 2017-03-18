@@ -193,7 +193,7 @@ mod exec {
             }
         }
 
-        /// Clear the environment of the subprocess.
+        /// Clears the environment of the subprocess.
         ///
         /// When this is invoked, the subprocess will not inherit the
         /// environment of this process.
@@ -202,10 +202,14 @@ mod exec {
             self
         }
 
-        /// Specifies the value of an environment variable in the child process.
+        /// Sets an environment variable in the child process.
         ///
-        /// Other environment variables are inherited by default.  If
-        /// this is undesirable, call `env_clear` first.
+        /// If the same variable is set more than once, the last value
+        /// is used.
+        ///
+        /// Other environment variables are by default inherited from
+        /// the current process.  If this is undesirable, call
+        /// `env_clear` first.
         pub fn env<K, V>(mut self, key: K, value: V) -> Exec
             where K: AsRef<OsStr>,
                   V: AsRef<OsStr>
