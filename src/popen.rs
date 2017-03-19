@@ -18,20 +18,20 @@ pub use self::os::ext as os_ext;
 
 /// Interface to a running subprocess.
 ///
-/// `Popen` is the parent's interface to a running subprocess.  The
-/// child process is started in the constructor, so owning `Popen`
-/// means that the program has been successfully executed.  To prevent
-/// accumulation of zombie processes, the child is automatically
-/// waited upon when a `Popen` goes out of scope, which can be
+/// `Popen` is the parent's interface to a created subprocess.  The
+/// child process is started in the constructor, so owning a `Popen`
+/// value indicates that the specified program has been successfully
+/// launched.  To prevent accumulation of zombie processes, the child
+/// is waited upon when a `Popen` goes out of scope, which can be
 /// prevented using the [`detach`] method.
 ///
 /// Depending on how the subprocess was configured, its input, output,
 /// and error streams can be connected to the parent and available as
-/// [`stdin`], [`stdout`], and [`stderr`] public fields.  To simply
-/// read the output and errors into memory (and optionally provide
-/// input the same way), use the [`communicate_bytes`] or
-/// [`communicate`] methods, which guarantee deadlock-free
-/// communication with the subprocess.
+/// [`stdin`], [`stdout`], and [`stderr`] public fields.  If you need
+/// to read the output and errors into memory (or provide input as a
+/// memory slice), use the [`communicate_bytes`] or [`communicate`]
+/// methods, which guarantee deadlock-free communication with the
+/// subprocess.
 ///
 /// `Popen` instances can be obtained with the [`create`] method, or
 /// using the [`popen`] method of the [`Exec`] class.  Subprocesses
@@ -317,7 +317,7 @@ impl Popen {
     /// arguments, such as `&["ps", "x"]`. `config` specifies details
     /// how to create and interface to the process.
     ///
-    /// For example, this simply runs `cargo update`:
+    /// For example, this launches the `cargo update` command:
     ///
     /// ```no_run
     /// # use subprocess::*;
