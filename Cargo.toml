@@ -26,9 +26,3 @@ tempdir = "0.3.5"
 [lib]
 name = "subprocess"
 path = "src/lib.rs"
-
-[[bin]]
-name = "sample"
-
-[[bin]]
-name = "just-echo"
