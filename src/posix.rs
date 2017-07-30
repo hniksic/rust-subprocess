@@ -225,10 +225,10 @@ impl FinishExec {
         unsafe {
             match self.envvec.as_ref() {
                 Some(ref envvec) =>
-                    libc::execve(exe_buf.as_ptr() as *const i8,
+                    libc::execve(exe_buf.as_ptr() as *const libc::c_char,
                                  self.argvec.as_c_vec(), envvec.as_c_vec()),
                 None =>
-                    libc::execv(exe_buf.as_ptr() as *const i8,
+                    libc::execv(exe_buf.as_ptr() as *const libc::c_char,
                                 self.argvec.as_c_vec()),
             }
         };
