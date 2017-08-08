@@ -10,6 +10,7 @@ use std::env;
 use std::cell::RefCell;
 
 use libc;
+use libc::{c_char, c_int};
 
 use os_common::{ExitStatus, StandardStream, Undropped};
 
@@ -23,7 +24,7 @@ fn check_err<T: Ord + Default>(num: T) -> Result<T> {
 }
 
 pub fn pipe() -> Result<(File, File)> {
-    let mut fds = [0 as libc::c_int; 2];
+    let mut fds = [0 as c_int; 2];
     check_err(unsafe { libc::pipe(fds.as_mut_ptr()) })?;
     Ok(unsafe {
         (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1]))
@@ -44,7 +45,7 @@ fn os_to_cstring(s: &OsStr) -> Result<CString> {
        .expect("converting Unix path to C string"))
 }
 
-fn cstring_ptr(s: &CString) -> *const libc::c_char {
+fn cstring_ptr(s: &CString) -> *const c_char {
     s.as_bytes_with_nul().as_ptr() as _
 }
 
@@ -57,7 +58,7 @@ struct CVec {
 
     // nullptr-terminated vector of pointers to data inside
     // self.strings.
-    ptrs: Vec<*const libc::c_char>,
+    ptrs: Vec<*const c_char>,
 }
 
 impl CVec {
@@ -72,7 +73,7 @@ impl CVec {
         Ok(CVec { strings: vec_cstring, ptrs: ptrs })
     }
 
-    pub fn as_c_vec(&self) -> *const *const libc::c_char {
+    pub fn as_c_vec(&self) -> *const *const c_char {
         self.ptrs.as_ptr()
     }
 }
@@ -225,10 +226,10 @@ impl FinishExec {
         unsafe {
             match self.envvec.as_ref() {
                 Some(ref envvec) =>
-                    libc::execve(exe_buf.as_ptr() as *const libc::c_char,
+                    libc::execve(exe_buf.as_ptr() as *const c_char,
                                  self.argvec.as_c_vec(), envvec.as_c_vec()),
                 None =>
-                    libc::execv(exe_buf.as_ptr() as *const libc::c_char,
+                    libc::execv(exe_buf.as_ptr() as *const c_char,
                                 self.argvec.as_c_vec()),
             }
         };
@@ -257,16 +258,16 @@ pub fn stage_exec<S1, S2, S3>(cmd: S1, args: &[S2], env: Option<&[S3]>)
 }
 
 pub fn _exit(status: u8) -> ! {
-    unsafe { libc::_exit(status as libc::c_int) }
+    unsafe { libc::_exit(status as c_int) }
 }
 
 pub const WNOHANG: i32 = libc::WNOHANG;
 
 pub fn waitpid(pid: u32, flags: i32) -> Result<(u32, ExitStatus)> {
-    let mut status = 0 as libc::c_int;
+    let mut status = 0 as c_int;
     let pid = check_err(unsafe {
-        libc::waitpid(pid as libc::pid_t, &mut status as *mut libc::c_int,
-                      flags as libc::c_int)
+        libc::waitpid(pid as libc::pid_t, &mut status as *mut c_int,
+                      flags as c_int)
     })?;
     Ok((pid as u32, decode_exit_status(status)))
 }
@@ -287,7 +288,7 @@ pub use libc::{SIGTERM, SIGKILL};
 
 pub fn kill(pid: u32, signal: i32) -> Result<()> {
     check_err(unsafe {
-        libc::kill(pid as libc::c_int, signal)
+        libc::kill(pid as c_int, signal)
     })?;
     Ok(())
 }
