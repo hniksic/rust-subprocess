@@ -47,6 +47,7 @@ impl FromRawHandle for Handle {
 
 pub const HANDLE_FLAG_INHERIT: u32 = 1;
 pub const STARTF_USESTDHANDLES: DWORD = winapi::winbase::STARTF_USESTDHANDLES;
+pub const CREATE_NO_WINDOW: DWORD = winapi::winbase::CREATE_NO_WINDOW;
 
 fn check(status: BOOL) -> Result<()> {
     if status != 0 {
