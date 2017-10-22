@@ -257,8 +257,8 @@ mod exec {
         ///
         /// [`Redirection`]: struct.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
-        pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T) -> Exec {
-            match (&self.config.stdin, stdin.into_input_redirection()) {
+        pub fn stdin<T: Into<InputRedirection>>(mut self, stdin: T) -> Exec {
+            match (&self.config.stdin, stdin.into()) {
                 (&Redirection::None, InputRedirection::AsRedirection(new))
                     => self.config.stdin = new,
                 (&Redirection::Pipe,
@@ -283,8 +283,8 @@ mod exec {
         ///
         /// [`Redirection`]: struct.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
-        pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T) -> Exec {
-            match (&self.config.stdout, stdout.into_output_redirection()) {
+        pub fn stdout<T: Into<OutputRedirection>>(mut self, stdout: T) -> Exec {
+            match (&self.config.stdout, stdout.into().to_redirection()) {
                 (&Redirection::None, new) => self.config.stdout = new,
                 (&Redirection::Pipe, Redirection::Pipe) => (),
                 (_, _) => panic!("stdout is already set"),
@@ -303,8 +303,8 @@ mod exec {
         ///
         /// [`Redirection`]: struct.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
-        pub fn stderr<T: IntoOutputRedirection>(mut self, stderr: T) -> Exec {
-            match (&self.config.stderr, stderr.into_output_redirection()) {
+        pub fn stderr<T: Into<OutputRedirection>>(mut self, stderr: T) -> Exec {
+            match (&self.config.stderr, stderr.into().to_redirection()) {
                 (&Redirection::None, new) => self.config.stderr = new,
                 (&Redirection::Pipe, Redirection::Pipe) => (),
                 (_, _) => panic!("stderr is already set"),
@@ -513,12 +513,8 @@ mod exec {
         FeedData(Vec<u8>),
     }
 
-    pub trait IntoInputRedirection {
-        fn into_input_redirection(self) -> InputRedirection;
-    }
-
-    impl IntoInputRedirection for Redirection {
-        fn into_input_redirection(self) -> InputRedirection {
+    impl Into<InputRedirection> for Redirection {
+        fn into(self) -> InputRedirection {
             if let Redirection::Merge = self {
                 panic!("Redirection::Merge is only allowed for output streams");
             }
@@ -526,8 +522,8 @@ mod exec {
         }
     }
 
-    impl IntoInputRedirection for File {
-        fn into_input_redirection(self) -> InputRedirection {
+    impl Into<InputRedirection> for File {
+        fn into(self) -> InputRedirection {
             InputRedirection::AsRedirection(Redirection::File(self))
         }
     }
@@ -543,49 +539,55 @@ mod exec {
     /// [`stderr`]: struct.Exec.html#method.stderr
     /// [`Exec`]: struct.Exec.html
     /// [`Pipeline`]: struct.Pipeline.html
+    #[derive(Debug)]
     pub struct NullFile;
 
-    impl IntoInputRedirection for NullFile {
-        fn into_input_redirection(self) -> InputRedirection {
+    impl Into<InputRedirection> for NullFile {
+        fn into(self) -> InputRedirection {
             let null_file = OpenOptions::new().read(true)
                 .open(NULL_DEVICE).unwrap();
             InputRedirection::AsRedirection(Redirection::File(null_file))
         }
     }
 
-    impl IntoInputRedirection for Vec<u8> {
-        fn into_input_redirection(self) -> InputRedirection {
+    impl Into<InputRedirection> for Vec<u8> {
+        fn into(self) -> InputRedirection {
             InputRedirection::FeedData(self)
         }
     }
 
-    impl<'a> IntoInputRedirection for &'a str {
-        fn into_input_redirection(self) -> InputRedirection {
+    impl<'a> Into<InputRedirection> for &'a str {
+        fn into(self) -> InputRedirection {
             InputRedirection::FeedData(self.as_bytes().to_vec())
         }
     }
 
-    pub trait IntoOutputRedirection {
-        fn into_output_redirection(self) -> Redirection;
-    }
+    #[derive(Debug)]
+    pub struct OutputRedirection(Redirection);
 
-    impl IntoOutputRedirection for Redirection {
-        fn into_output_redirection(self) -> Redirection {
-            self
+    impl OutputRedirection {
+        pub fn to_redirection(self) -> Redirection {
+            self.0
         }
     }
 
-    impl IntoOutputRedirection for File {
-        fn into_output_redirection(self) -> Redirection {
-            Redirection::File(self)
+    impl Into<OutputRedirection> for Redirection {
+        fn into(self) -> OutputRedirection {
+            OutputRedirection(self)
         }
     }
 
-    impl IntoOutputRedirection for NullFile {
-        fn into_output_redirection(self) -> Redirection {
+    impl Into<OutputRedirection> for File {
+        fn into(self) -> OutputRedirection {
+            OutputRedirection(Redirection::File(self))
+        }
+    }
+
+    impl Into<OutputRedirection> for NullFile {
+        fn into(self) -> OutputRedirection {
             let null_file = OpenOptions::new().write(true)
                 .open(NULL_DEVICE).unwrap();
-            Redirection::File(null_file)
+            OutputRedirection(Redirection::File(null_file))
         }
     }
 }
@@ -600,8 +602,7 @@ mod pipeline {
     use communicate;
     use os_common::ExitStatus;
 
-    use super::exec::{Exec, IntoInputRedirection, InputRedirection,
-                      IntoOutputRedirection};
+    use super::exec::{Exec, InputRedirection, OutputRedirection};
 
     /// A builder for multiple [`Popen`] instances connected via
     /// pipes.
@@ -680,9 +681,9 @@ mod pipeline {
         ///    /dev/null.
         ///
         /// [`Redirection`]: struct.Redirection.html
-        pub fn stdin<T: IntoInputRedirection>(mut self, stdin: T)
-                                              -> Pipeline {
-            match stdin.into_input_redirection() {
+        pub fn stdin<T: Into<InputRedirection>>(mut self, stdin: T)
+                                                -> Pipeline {
+            match stdin.into() {
                 InputRedirection::AsRedirection(r) => self.stdin = r,
                 InputRedirection::FeedData(data) => {
                     self.stdin = Redirection::Pipe;
@@ -703,9 +704,9 @@ mod pipeline {
         ///    /dev/null.
         ///
         /// [`Redirection`]: struct.Redirection.html
-        pub fn stdout<T: IntoOutputRedirection>(mut self, stdout: T)
-                                                -> Pipeline {
-            self.stdout = stdout.into_output_redirection();
+        pub fn stdout<T: Into<OutputRedirection>>(mut self, stdout: T)
+                                                  -> Pipeline {
+            self.stdout = stdout.into().to_redirection();
             self
         }
 
