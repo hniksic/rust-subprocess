@@ -513,18 +513,18 @@ mod exec {
         FeedData(Vec<u8>),
     }
 
-    impl Into<InputRedirection> for Redirection {
-        fn into(self) -> InputRedirection {
-            if let Redirection::Merge = self {
+    impl From<Redirection> for InputRedirection {
+        fn from(r: Redirection) -> Self {
+            if let Redirection::Merge = r {
                 panic!("Redirection::Merge is only allowed for output streams");
             }
-            InputRedirection::AsRedirection(self)
+            InputRedirection::AsRedirection(r)
         }
     }
 
-    impl Into<InputRedirection> for File {
-        fn into(self) -> InputRedirection {
-            InputRedirection::AsRedirection(Redirection::File(self))
+    impl From<File> for InputRedirection {
+        fn from(f: File) -> Self {
+            InputRedirection::AsRedirection(Redirection::File(f))
         }
     }
 
@@ -542,23 +542,23 @@ mod exec {
     #[derive(Debug)]
     pub struct NullFile;
 
-    impl Into<InputRedirection> for NullFile {
-        fn into(self) -> InputRedirection {
+    impl From<NullFile> for InputRedirection {
+        fn from(_nf: NullFile) -> Self {
             let null_file = OpenOptions::new().read(true)
                 .open(NULL_DEVICE).unwrap();
             InputRedirection::AsRedirection(Redirection::File(null_file))
         }
     }
 
-    impl Into<InputRedirection> for Vec<u8> {
-        fn into(self) -> InputRedirection {
-            InputRedirection::FeedData(self)
+    impl From<Vec<u8>> for InputRedirection {
+        fn from(v: Vec<u8>) -> Self {
+            InputRedirection::FeedData(v)
         }
     }
 
-    impl<'a> Into<InputRedirection> for &'a str {
-        fn into(self) -> InputRedirection {
-            InputRedirection::FeedData(self.as_bytes().to_vec())
+    impl<'a> From<&'a str> for InputRedirection {
+        fn from(s: &'a str) -> Self {
+            InputRedirection::FeedData(s.as_bytes().to_vec())
         }
     }
 
@@ -571,20 +571,20 @@ mod exec {
         }
     }
 
-    impl Into<OutputRedirection> for Redirection {
-        fn into(self) -> OutputRedirection {
-            OutputRedirection(self)
+    impl From<Redirection> for OutputRedirection {
+        fn from(r: Redirection) -> Self {
+            OutputRedirection(r)
         }
     }
 
-    impl Into<OutputRedirection> for File {
-        fn into(self) -> OutputRedirection {
-            OutputRedirection(Redirection::File(self))
+    impl From<File> for OutputRedirection {
+        fn from(f: File) -> Self {
+            OutputRedirection(Redirection::File(f))
         }
     }
 
-    impl Into<OutputRedirection> for NullFile {
-        fn into(self) -> OutputRedirection {
+    impl From<NullFile> for OutputRedirection {
+        fn from(_nf: NullFile) -> Self {
             let null_file = OpenOptions::new().write(true)
                 .open(NULL_DEVICE).unwrap();
             OutputRedirection(Redirection::File(null_file))
