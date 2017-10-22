@@ -122,17 +122,15 @@ mod os {
     use std::fs::File;
     use std::io::{Read, Write, Result as IoResult};
 
-    fn comm_read(outfile: &mut Option<File>) -> IoResult<Vec<u8>> {
+    fn comm_read(mut outfile: File) -> IoResult<Vec<u8>> {
         // take() ensures stdin is closed when done writing, so the
         // child receives EOF
-        let mut outfile = outfile.take().expect("file missing");
         let mut contents = Vec::new();
         outfile.read_to_end(&mut contents)?;
         Ok(contents)
     }
 
-    fn comm_write(infile: &mut Option<File>, input_data: &[u8]) -> IoResult<()> {
-        let mut infile = infile.take().expect("file missing");
+    fn comm_write(mut infile: File, input_data: &[u8]) -> IoResult<()> {
         infile.write_all(input_data)?;
         Ok(())
     }
@@ -145,17 +143,17 @@ mod os {
         crossbeam::scope(move |scope| {
             let (mut out_thr, mut err_thr) = (None, None);
             if stdout_ref.is_some() {
-                out_thr = Some(scope.spawn(move
-                                           || comm_read(stdout_ref)))
+                out_thr = Some(scope.spawn(
+                    move || comm_read(stdout_ref.take().unwrap())))
             }
             if stderr_ref.is_some() {
-                err_thr = Some(scope.spawn(move
-                                           || comm_read(stderr_ref)))
+                err_thr = Some(scope.spawn(
+                    move || comm_read(stderr_ref.take().unwrap())))
             }
             if stdin_ref.is_some() {
                 let input_data = input_data.expect(
                     "must provide input to redirected stdin");
-                comm_write(stdin_ref, input_data)?;
+                comm_write(stdin_ref.take().unwrap(), input_data)?;
             }
             Ok((if let Some(out_thr) = out_thr
                 { Some(out_thr.join()?) } else { None },
@@ -170,22 +168,22 @@ mod os {
                        input_data: Option<&[u8]>)
                        -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         match (stdin, stdout, stderr) {
-            (mut stdin_ref @ &mut Some(..), &mut None, &mut None) => {
+            (stdin_ref @ &mut Some(..), &mut None, &mut None) => {
                 let input_data = input_data.expect(
                     "must provide input to redirected stdin");
-                comm_write(stdin_ref, input_data)?;
+                comm_write(stdin_ref.take().unwrap(), input_data)?;
                 Ok((None, None))
             }
-            (&mut None, mut stdout_ref @ &mut Some(..), &mut None) => {
+            (&mut None, stdout_ref @ &mut Some(..), &mut None) => {
                 assert!(input_data.is_none(),
                         "cannot provide input to non-redirected stdin");
-                let out = comm_read(stdout_ref)?;
+                let out = comm_read(stdout_ref.take().unwrap())?;
                 Ok((Some(out), None))
             }
-            (&mut None, &mut None, mut stderr_ref @ &mut Some(..)) => {
+            (&mut None, &mut None, stderr_ref @ &mut Some(..)) => {
                 assert!(input_data.is_none(),
                         "cannot provide input to non-redirected stdin");
-                let err = comm_read(stderr_ref)?;
+                let err = comm_read(stderr_ref.take().unwrap())?;
                 Ok((None, Some(err)))
             }
             (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) =>
