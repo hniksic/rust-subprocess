@@ -684,8 +684,8 @@ mod os {
                 Ok(())
             } else if read_cnt == 4 {
                 let error_code: u32 =
-                    error_buf[0] as u32 + (error_buf[1] as u32) << 8
-                    + (error_buf[2] as u32) << 16 + (error_buf[3] as u32) << 24;
+                    error_buf[0] as u32 | (error_buf[1] as u32) << 8
+                    | (error_buf[2] as u32) << 16 | (error_buf[3] as u32) << 24;
                 Err(PopenError::from(io::Error::from_raw_os_error(error_code as i32)))
             } else {
                 Err(PopenError::LogicError("invalid read_count from exec pipe"))

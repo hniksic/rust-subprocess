@@ -1,4 +1,6 @@
 extern crate tempdir;
+extern crate libc;
+
 use self::tempdir::TempDir;
 
 use std::fs::File;
@@ -340,4 +342,22 @@ fn cwd() {
                   }).unwrap();
 
     assert!(tmpdir.path().join("here").exists());
+}
+
+#[test]
+fn failed_cwd() {
+    use popen::PopenError::IoError;
+    let ret = Popen::create(&["anything"],
+                            PopenConfig {
+                                stdout: Redirection::Pipe,
+                                cwd: Some("/nosuchdir".into()),
+                                ..Default::default()
+                            });
+    let err_num = match ret {
+        Err(IoError(e)) => {
+            e.raw_os_error().unwrap_or(-1)
+        }
+        _ => panic!("expected error return"),
+    };
+    assert_eq!(err_num, libc::ENOENT);
 }
