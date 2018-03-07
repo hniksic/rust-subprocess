@@ -21,6 +21,7 @@ mod exec {
     use std::fs::{File, OpenOptions};
     use std::ops::BitOr;
     use std::path::Path;
+    use std::fmt;
 
     use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
     use os_common::ExitStatus;
@@ -443,6 +444,16 @@ mod exec {
         }
     }
 
+    impl fmt::Display for Exec {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            let mut args = Vec::new();
+            for a in &self.args {
+                args.push(format!(r#""{}""#, a.to_str().unwrap_or("")));
+            }
+            write!(f, "{} {}", self.command.to_str().unwrap_or(""), args.join(" "))
+        }
+    }
+
     #[derive(Debug)]
     struct ReadOutAdapter(Popen);
 
@@ -597,6 +608,7 @@ mod pipeline {
     use std::io::{Result as IoResult, Read, Write};
     use std::ops::BitOr;
     use std::fs::File;
+    use std::fmt;
 
     use popen::{Popen, Redirection, Result as PopenResult};
     use communicate;
@@ -866,6 +878,16 @@ mod pipeline {
             self.cmds.extend(rhs.cmds);
             self.stdout = rhs.stdout;
             self
+        }
+    }
+
+    impl fmt::Display for Pipeline {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            let mut args = Vec::new();
+            for cmd in &self.cmds {
+                args.push(cmd.to_string());
+            }
+            write!(f, "{}", args.join(" | "))
         }
     }
 
