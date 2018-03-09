@@ -32,7 +32,7 @@ pub enum ExitStatus {
 }
 
 impl ExitStatus {
-    /// True if the exit status is of the process is 0.
+    /// True if the exit status of the process is 0.
     pub fn success(&self) -> bool {
         if let &ExitStatus::Exited(0) = self {
             true
