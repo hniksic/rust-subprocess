@@ -220,3 +220,23 @@ fn env_inherit_set() {
             .join().unwrap().success());
     env::remove_var(varname);
 }
+
+#[test]
+fn exec_to_string() {
+    let cmd = Exec::cmd("sh")
+        .arg("arg1")
+        .arg("don't")
+        .arg("arg3 arg4")
+        .arg("?")
+        .arg(" ") // regular space
+        .arg(""); // U+009C, STRING TERMINATOR
+    assert_eq!(cmd.to_string(), r#"sh arg1 'don'\''t' 'arg3 arg4' '?' ' ' ''"#)
+}
+
+#[test]
+fn pipeline_to_string() {
+    let pipeline = {
+        Exec::cmd("echo").arg("foo") | Exec::cmd("wc").arg("-l")
+    };
+    assert_eq!(pipeline.to_string(), "echo foo | wc '-l'")
+}
