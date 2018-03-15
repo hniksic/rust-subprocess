@@ -454,18 +454,19 @@ mod exec {
                     _ => false,
                 }
             }
-            let mut args = Vec::new();
-            for a in &self.args {
-                let arg_as_str = a.to_string_lossy();
-                if !arg_as_str.chars().all(nice_char) {
-                    args.push(
-                        format!("'{}'", arg_as_str.replace("'", r#"'\''"#))
-                    )
+            fn write_quoted(f: &mut fmt::Formatter, s: &str) -> fmt::Result {
+                if !s.chars().all(nice_char) {
+                    write!(f, "'{}'", s.replace("'", r#"'\''"#))
                 } else {
-                    args.push(arg_as_str.to_string());
+                    write!(f, "{}", s)
                 }
             }
-            write!(f, "{} {}", self.command.to_string_lossy(), args.join(" "))
+            write_quoted(f, &self.command.to_string_lossy())?;
+            for arg in &self.args {
+                write!(f, " ")?;
+                write_quoted(f, &arg.to_string_lossy())?;
+            }
+            Ok(())
         }
     }
 
