@@ -444,13 +444,20 @@ mod exec {
         }
     }
 
+
     impl fmt::Display for Exec {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn nice_char(c: char) -> bool {
+                match c {
+                    '-' | '_' | '.' | ',' | '/' => true,
+                    c if c.is_ascii_alphanumeric() => true,
+                    _ => false,
+                }
+            }
             let mut args = Vec::new();
             for a in &self.args {
                 let arg_as_str = a.to_string_lossy();
-                let needs_quote = arg_as_str.chars().any(|c| !c.is_ascii_alphanumeric());
-                if needs_quote  {
+                if !arg_as_str.chars().all(nice_char) {
                     args.push(
                         format!("'{}'", arg_as_str.replace("'", r#"'\''"#))
                     )
@@ -458,7 +465,7 @@ mod exec {
                     args.push(arg_as_str.to_string());
                 }
             }
-            write!(f, "{} {}", self.command.to_str().unwrap_or(""), args.join(" "))
+            write!(f, "{} {}", self.command.to_string_lossy(), args.join(" "))
         }
     }
 
