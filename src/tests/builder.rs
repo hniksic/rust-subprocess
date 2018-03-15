@@ -227,9 +227,10 @@ fn exec_to_string() {
         .arg("arg1")
         .arg("don't")
         .arg("arg3 arg4")
+        .arg("?")
         .arg(" ") // regular space
         .arg(""); // U+009C, STRING TERMINATOR
-    assert_eq!(cmd.to_string(), r#"sh arg1 'don'\''t' 'arg3 arg4' ' ' ''"#)
+    assert_eq!(cmd.to_string(), r#"sh arg1 'don'\''t' 'arg3 arg4' '?' ' ' ''"#)
 }
 
 #[test]
@@ -237,5 +238,5 @@ fn pipeline_to_string() {
     let pipeline = {
         Exec::cmd("echo").arg("foo") | Exec::cmd("wc").arg("-l")
     };
-    assert_eq!(pipeline.to_string(), "echo foo | wc -l")
+    assert_eq!(pipeline.to_string(), "echo foo | wc '-l'")
 }
