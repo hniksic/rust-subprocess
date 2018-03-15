@@ -448,7 +448,16 @@ mod exec {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             let mut args = Vec::new();
             for a in &self.args {
-                args.push(format!(r#""{}""#, a.to_str().unwrap_or("")));
+                let arg_as_str = a.to_str().unwrap_or("");
+                let contains_quote = arg_as_str.contains("'");
+                let contains_metachar = arg_as_str.chars().any(|c| c.is_control() || c.is_whitespace());
+                if contains_quote || contains_metachar  {
+                    args.push(
+                        format!("'{}'", arg_as_str.replace("'", r#"'\''"#))
+                    )
+                } else {
+                    args.push(arg_as_str.to_string());
+                }
             }
             write!(f, "{} {}", self.command.to_str().unwrap_or(""), args.join(" "))
         }

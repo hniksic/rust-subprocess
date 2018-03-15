@@ -223,8 +223,13 @@ fn env_inherit_set() {
 
 #[test]
 fn exec_to_string() {
-    let cmd = Exec::cmd("sh").arg("arg1").arg("arg2").arg("arg3 arg4");
-    assert_eq!(cmd.to_string(), r#"sh "arg1" "arg2" "arg3 arg4""#)
+    let cmd = Exec::cmd("sh")
+        .arg("arg1")
+        .arg("don't")
+        .arg("arg3 arg4")
+        .arg(" ") // regular space
+        .arg(""); // U+009C, STRING TERMINATOR
+    assert_eq!(cmd.to_string(), r#"sh arg1 'don'\''t' 'arg3 arg4' ' ' ''"#)
 }
 
 #[test]
