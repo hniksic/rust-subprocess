@@ -116,7 +116,6 @@ mod exec {
     /// [`Popen`]: struct.Popen.html
     /// [`Popen::create`]: struct.Popen.html#method.create
 
-    #[derive(Debug)]
     pub struct Exec {
         command: OsString,
         args: Vec<OsString>,
@@ -414,6 +413,31 @@ mod exec {
                 stdout: out, stderr: err, exit_status: status
             })
         }
+
+        /// Show Exec as command-line string quoted in the Unix style.
+        pub fn to_cmdline_lossy(&self) -> String {
+            fn nice_char(c: char) -> bool {
+                match c {
+                    '-' | '_' | '.' | ',' | '/' => true,
+                    c if c.is_ascii_alphanumeric() => true,
+                    _ => false,
+                }
+            }
+            fn write_quoted(out: &mut String, s: &str) {
+                if !s.chars().all(nice_char) {
+                    out.push_str(&format!("'{}'", s.replace("'", r#"'\''"#)));
+                } else {
+                    out.push_str(s);
+                }
+            }
+            let mut out = String::new();
+            write_quoted(&mut out, &self.command.to_string_lossy());
+            for arg in &self.args {
+                out.push(' ');
+                write_quoted(&mut out, &arg.to_string_lossy());
+            }
+            out
+        }
     }
 
     impl Clone for Exec {
@@ -445,28 +469,9 @@ mod exec {
     }
 
 
-    impl fmt::Display for Exec {
+    impl fmt::Debug for Exec {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            fn nice_char(c: char) -> bool {
-                match c {
-                    '-' | '_' | '.' | ',' | '/' => true,
-                    c if c.is_ascii_alphanumeric() => true,
-                    _ => false,
-                }
-            }
-            fn write_quoted(f: &mut fmt::Formatter, s: &str) -> fmt::Result {
-                if !s.chars().all(nice_char) {
-                    write!(f, "'{}'", s.replace("'", r#"'\''"#))
-                } else {
-                    write!(f, "{}", s)
-                }
-            }
-            write_quoted(f, &self.command.to_string_lossy())?;
-            for arg in &self.args {
-                write!(f, " ")?;
-                write_quoted(f, &arg.to_string_lossy())?;
-            }
-            Ok(())
+            write!(f, "Exec {{ {} }}", self.to_cmdline_lossy())
         }
     }
 
@@ -679,7 +684,7 @@ mod pipeline {
     /// [`Popen`]: struct.Popen.html
     /// [`Exec`]: struct.Exec.html
     /// [`Pipeline`]: struct.Pipeline.html
-    #[derive(Debug)]
+
     pub struct Pipeline {
         cmds: Vec<Exec>,
         stdin: Redirection,
@@ -902,13 +907,13 @@ mod pipeline {
         }
     }
 
-    impl fmt::Display for Pipeline {
+    impl fmt::Debug for Pipeline {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             let mut args = Vec::new();
             for cmd in &self.cmds {
-                args.push(cmd.to_string());
+                args.push(cmd.to_cmdline_lossy());
             }
-            write!(f, "{}", args.join(" | "))
+            write!(f, "Pipeline {{ {} }}", args.join(" | "))
         }
     }
 
