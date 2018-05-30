@@ -27,6 +27,8 @@ use os_common::{StandardStream, Undropped};
 #[derive(Debug)]
 pub struct Handle(RawHandle);
 
+unsafe impl Send for Handle {}
+
 impl Drop for Handle {
     fn drop(&mut self) {
         unsafe { kernel32::CloseHandle(self.as_raw_handle()); }
