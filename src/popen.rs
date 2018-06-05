@@ -917,7 +917,7 @@ mod os {
                 = win32::CreateProcess(executable.as_ref().map(OsString::as_ref),
                                        &cmdline, &env_block,
                                        &config.cwd.as_ref().map(|os| &os[..]),
-                                       true, 0,
+                                       true, win32::CREATE_NO_WINDOW,
                                        raw(&child_stdin),
                                        raw(&child_stdout),
                                        raw(&child_stderr),
