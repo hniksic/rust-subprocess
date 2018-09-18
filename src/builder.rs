@@ -220,6 +220,30 @@ mod exec {
             self
         }
 
+        /// Sets multiple environment variables in the child process.
+        ///
+        /// The keys and values of the variables are specified by the
+        /// slice.  If the same variable is set more than once, the
+        /// last value is used.
+        ///
+        /// Other environment variables are by default inherited from
+        /// the current process.  If this is undesirable, call
+        /// `env_clear` first.
+        pub fn env_extend<K, V>(mut self, vars: &[(K, V)]) -> Exec
+            where K: AsRef<OsStr>,
+                  V: AsRef<OsStr>
+        {
+            self.ensure_env();
+            {
+                let envvec = self.config.env.as_mut().unwrap();
+                for &(ref k, ref v) in vars {
+                    envvec.push((k.as_ref().to_owned(),
+                                 v.as_ref().to_owned()));
+                }
+            }
+            self
+        }
+
         /// Removes an environment variable from the child process.
         ///
         /// Other environment variables are inherited by default.

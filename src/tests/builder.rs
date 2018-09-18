@@ -197,6 +197,16 @@ fn env_set() {
 }
 
 #[test]
+fn env_extend() {
+    assert!(
+        Exec::cmd("sh").args(
+            &["-c", r#"test "$VAR1" = "foo" && test "$VAR2" = "bar""#])
+            .env_extend(&[("VAR1", "foo"), ("VAR2", "bar")])
+            .join().unwrap().success()
+    );
+}
+
+#[test]
 fn env_inherit() {
     // use a unique name to avoid interference with other tests
     let varname = "TEST_ENV_INHERIT_VARNAME";
