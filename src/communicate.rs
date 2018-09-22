@@ -117,7 +117,7 @@ mod os {
 
 #[cfg(windows)]
 mod os {
-    extern crate crossbeam;
+    extern crate crossbeam_utils;
 
     use std::fs::File;
     use std::io::{Read, Write, Result as IoResult};
@@ -140,7 +140,7 @@ mod os {
                          stderr_ref: &mut Option<File>,
                          input_data: Option<&[u8]>)
                          -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        crossbeam::scope(move |scope| {
+        crossbeam_utils::thread::scope(move |scope| {
             let (mut out_thr, mut err_thr) = (None, None);
             if stdout_ref.is_some() {
                 out_thr = Some(scope.spawn(
