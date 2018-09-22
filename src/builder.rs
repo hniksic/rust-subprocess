@@ -682,7 +682,7 @@ mod pipeline {
     ///
     /// # Examples
     ///
-    /// Execite a pipeline and return the exit status of the last command:
+    /// Execute a pipeline and return the exit status of the last command:
     ///
     /// ```no_run
     /// # use subprocess::*;
