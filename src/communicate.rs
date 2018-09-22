@@ -156,9 +156,9 @@ mod os {
                 comm_write(stdin_ref.take().unwrap(), input_data)?;
             }
             Ok((if let Some(out_thr) = out_thr
-                { Some(out_thr.join()?) } else { None },
+                { Some(out_thr.join().unwrap()?) } else { None },
                 if let Some(err_thr) = err_thr
-                { Some(err_thr.join()?) } else { None }))
+                { Some(err_thr.join().unwrap()?) } else { None }))
         })
     }
 

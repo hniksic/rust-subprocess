@@ -77,8 +77,6 @@
 extern crate libc;
 
 #[cfg(windows)]
-extern crate kernel32;
-#[cfg(windows)]
 extern crate winapi;
 
 mod popen;

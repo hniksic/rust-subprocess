@@ -17,8 +17,7 @@ libc = "0.2.43"
 
 [target.'cfg(windows)'.dependencies]
 crossbeam = "0.4.1"
-kernel32-sys = "0.2.2"
-winapi = "0.3.6"
+winapi = { version = "0.3.6", features = ["namedpipeapi", "synchapi", "processenv"] }
 
 [dev-dependencies]
 tempdir = "0.3.7"
