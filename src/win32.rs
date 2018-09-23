@@ -85,7 +85,7 @@ pub fn CreatePipe(inherit_handle: bool) -> Result<(File, File)> {
     Ok(unsafe { (File::from_raw_handle(r), File::from_raw_handle(w)) })
 }
  
-pub fn SetHandleInformation(handle: &mut File, dwMask: u32, dwFlags: u32) -> Result<()> {
+pub fn SetHandleInformation(handle: &File, dwMask: u32, dwFlags: u32) -> Result<()> {
     check(unsafe {
         handleapi::SetHandleInformation(handle.as_raw_handle(), dwMask, dwFlags)
     })?;

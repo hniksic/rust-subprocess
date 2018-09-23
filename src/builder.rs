@@ -659,6 +659,7 @@ mod pipeline {
     use std::ops::BitOr;
     use std::fs::File;
     use std::fmt;
+    use std::rc::Rc;
 
     use popen::{Popen, Redirection, Result as PopenResult};
     use communicate;
@@ -863,8 +864,14 @@ mod pipeline {
         /// all commands to finish.
         ///
         /// The return value provides the standard output of the last
-        /// command error as bytes or optionally strings, as well as
-        /// the exit status of the last command.
+        /// command as bytes or optionally strings, as well as the
+        /// exit status of the last command.  Errors from all commands
+        /// in the pipeline are merged into a single string and
+        /// provided in the capture data.
+        ///
+        /// The return value provides the standard output of the last
+        /// command as bytes or optionally strings, as well as the
+        /// exit status of the last command.
         ///
         /// Unlike `Popen::communicate`, this method actually waits
         /// for the processes to finish, rather than simply waiting
@@ -873,11 +880,13 @@ mod pipeline {
         pub fn capture(mut self) -> PopenResult<Capture> {
             assert!(self.cmds.len() >= 2);
 
-            use posix;
-            let (err_read, err_write) = posix::pipe()?;
+            use popen::make_pipe;
+
+            let (err_read, err_write) = make_pipe()?;
+            let err_write = Rc::new(err_write);
 
             self.cmds = self.cmds.into_iter()
-                .map(|cmd| cmd.stderr(Redirection::File(err_write.try_clone().unwrap())))
+                .map(|cmd| cmd.stderr(Redirection::RcFile(err_write.clone())))
                 .collect();
             ::std::mem::drop(err_write);
 

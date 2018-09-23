@@ -8,6 +8,7 @@ use std::fmt;
 use std::ffi::{OsStr, OsString};
 use std::time::Duration;
 use std::env;
+use std::rc::Rc;
 
 use os_common::{ExitStatus, StandardStream};
 use communicate;
@@ -15,6 +16,7 @@ use communicate;
 use self::ChildState::*;
 
 pub use self::os::ext as os_ext;
+pub use self::os::make_pipe;
 
 /// Interface to a running subprocess.
 ///
@@ -91,7 +93,8 @@ mod fileref {
 
     #[derive(Debug)]
     enum InnerFile {
-        Owned(File),
+        OwnedFile(File),
+        RcFile(Rc<File>),
         System(Undropped<File>),
     }
 
@@ -100,7 +103,10 @@ mod fileref {
 
     impl FileRef {
         pub fn from_owned(f: File) -> FileRef {
-            FileRef(Rc::new(InnerFile::Owned(f)))
+            FileRef(Rc::new(InnerFile::OwnedFile(f)))
+        }
+        pub fn from_rc(f: Rc<File>) -> FileRef {
+            FileRef(Rc::new(InnerFile::RcFile(f)))
         }
         pub fn from_system(f: Undropped<File>) -> FileRef {
             FileRef(Rc::new(InnerFile::System(f)))
@@ -112,7 +118,8 @@ mod fileref {
 
         fn deref(&self) -> &File {
             match *self.0.deref() {
-                InnerFile::Owned(ref f) => f,
+                InnerFile::OwnedFile(ref f) => f,
+                InnerFile::RcFile(ref f) => f.deref(),
                 InnerFile::System(ref f) => f.get_ref(),
             }
         }
@@ -252,17 +259,6 @@ pub enum Redirection {
     /// in `Popen` corresponding to the stream will be `None`.
     None,
 
-    /// Redirect the stream to the specified open `File`.
-    ///
-    /// This does not create a pipe, it simply spawns the child so
-    /// that the specified stream sees that file.  The child can read
-    /// from or write to the provided file on its own, without any
-    /// intervention by the parent.
-    ///
-    /// The field in `Popen` corresponding to the stream will be
-    /// `None`.
-    File(File),
-
     /// Redirect the stream to a pipe.
     ///
     /// This variant requests that a stream be redirected to a
@@ -294,6 +290,22 @@ pub enum Redirection {
     /// The field in `Popen` corresponding to the stream will be
     /// `None`.
     Merge,
+
+    /// Redirect the stream to the specified open `File`.
+    ///
+    /// This does not create a pipe, it simply spawns the child so
+    /// that the specified stream sees that file.  The child can read
+    /// from or write to the provided file on its own, without any
+    /// intervention by the parent.
+    ///
+    /// The field in `Popen` corresponding to the stream will be
+    /// `None`.
+    File(File),
+
+    /// Like `File`, but the file is specified as `Rc`.
+    ///
+    /// This allows the same file to be used in multiple redirections.
+    RcFile(Rc<File>),
 }
 
 impl Redirection {
@@ -302,10 +314,11 @@ impl Redirection {
     /// Can fail in `File` variant.
     pub fn try_clone(&self) -> IoResult<Redirection> {
         Ok(match *self {
-            Redirection::File(ref f) => Redirection::File(f.try_clone()?),
             Redirection::None => Redirection::None,
             Redirection::Pipe => Redirection::Pipe,
             Redirection::Merge => Redirection::Merge,
+            Redirection::File(ref f) => Redirection::File(f.try_clone()?),
+            Redirection::RcFile(ref f) => Redirection::RcFile(f.clone()),
         })
     }
 }
@@ -373,18 +386,26 @@ impl Popen {
             // Store the parent's end of the pipe into the given
             // reference, and store the child end.
             let (read, write) = os::make_pipe()?;
-            let (mut parent_end, child_end) =
+            let (parent_end, child_end) =
                 if parent_writes {(write, read)} else {(read, write)};
-            os::set_inheritable(&mut parent_end, false)?;
+            os::set_inheritable(&parent_end, false)?;
             *parent_ref = Some(parent_end);
             *child_ref = Some(FileRef::from_owned(child_end));
             Ok(())
         }
-        fn prepare_file(mut file: File, child_ref: &mut Option<FileRef>)
+        fn prepare_file(file: File, child_ref: &mut Option<FileRef>)
                         -> IoResult<()> {
             // Make the File inheritable and store it for use in the child.
-            os::set_inheritable(&mut file, true)?;
+            os::set_inheritable(&file, true)?;
             *child_ref = Some(FileRef::from_owned(file));
+            Ok(())
+        }
+        fn prepare_rc_file(file: Rc<File>, child_ref: &mut Option<FileRef>)
+                        -> IoResult<()> {
+            // Like prepare_file, but for Rc<File>
+            use std::ops::Deref;
+            os::set_inheritable(file.deref(), true)?;
+            *child_ref = Some(FileRef::from_rc(file));
             Ok(())
         }
         fn reuse_stream(dest: &mut Option<FileRef>, src: &mut Option<FileRef>,
@@ -413,6 +434,7 @@ impl Popen {
             Redirection::Pipe => prepare_pipe(true, &mut self.stdin,
                                               &mut child_stdin)?,
             Redirection::File(file) => prepare_file(file, &mut child_stdin)?,
+            Redirection::RcFile(file) => prepare_rc_file(file, &mut child_stdin)?,
             Redirection::Merge => {
                 return Err(PopenError::LogicError("Redirection::Merge not valid for stdin"));
             }
@@ -422,6 +444,7 @@ impl Popen {
             Redirection::Pipe => prepare_pipe(false, &mut self.stdout,
                                               &mut child_stdout)?,
             Redirection::File(file) => prepare_file(file, &mut child_stdout)?,
+            Redirection::RcFile(file) => prepare_rc_file(file, &mut child_stdout)?,
             Redirection::Merge => merge = MergeKind::OutToErr,
             Redirection::None => (),
         };
@@ -429,6 +452,7 @@ impl Popen {
             Redirection::Pipe => prepare_pipe(false, &mut self.stderr,
                                               &mut child_stderr)?,
             Redirection::File(file) => prepare_file(file, &mut child_stderr)?,
+            Redirection::RcFile(file) => prepare_rc_file(file, &mut child_stderr)?,
             Redirection::Merge => merge = MergeKind::ErrToOut,
             Redirection::None => (),
         };
@@ -648,8 +672,8 @@ mod os {
         fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig)
                     -> Result<()> {
             let mut exec_fail_pipe = posix::pipe()?;
-            set_inheritable(&mut exec_fail_pipe.0, false)?;
-            set_inheritable(&mut exec_fail_pipe.1, false)?;
+            set_inheritable(&exec_fail_pipe.0, false)?;
+            set_inheritable(&exec_fail_pipe.1, false)?;
             {
                 let child_ends = self.setup_streams(config.stdin, config.stdout,
                                                     config.stderr)?;
@@ -823,7 +847,7 @@ mod os {
         }
     }
 
-    pub fn set_inheritable(f: &mut File, inheritable: bool) -> IoResult<()> {
+    pub fn set_inheritable(f: &File, inheritable: bool) -> IoResult<()> {
         if inheritable {
             // Unix pipes are inheritable by default.
         } else {
@@ -1058,7 +1082,7 @@ mod os {
         Ok(())
     }
 
-    pub fn set_inheritable(f: &mut File, inheritable: bool) -> IoResult<()> {
+    pub fn set_inheritable(f: &File, inheritable: bool) -> IoResult<()> {
         win32::SetHandleInformation(f, win32::HANDLE_FLAG_INHERIT,
                                     if inheritable {1} else {0})?;
         Ok(())
