@@ -664,7 +664,7 @@ mod pipeline {
     use communicate;
     use os_common::ExitStatus;
 
-    use super::exec::{Exec, InputRedirection, OutputRedirection};
+    use super::exec::{Exec, InputRedirection, OutputRedirection, Capture};
 
     /// A builder for multiple [`Popen`] instances connected via
     /// pipes.
@@ -870,8 +870,16 @@ mod pipeline {
         /// for the processes to finish, rather than simply waiting
         /// for the output to close.  If this is undesirable, use
         /// `detached()`.
-        pub fn capture(mut self) -> PopenResult<CaptureOutput> {
+        pub fn capture(mut self) -> PopenResult<Capture> {
             assert!(self.cmds.len() >= 2);
+
+            use posix;
+            let (err_read, err_write) = posix::pipe()?;
+
+            self.cmds = self.cmds.into_iter()
+                .map(|cmd| cmd.stderr(Redirection::File(err_write.try_clone().unwrap())))
+                .collect();
+            ::std::mem::drop(err_write);
 
             let stdin_data = self.stdin_data.take();
             let mut v = self.stdout(Redirection::Pipe).popen()?;
@@ -880,14 +888,15 @@ mod pipeline {
             let vlen = v.len();
             let mut last = v.drain(vlen - 1..).next().unwrap();
 
-            let (maybe_out, _) = communicate::communicate(
-                &mut first.stdin, &mut last.stdout, &mut None,
+            let (out, err) = communicate::communicate(
+                &mut first.stdin, &mut last.stdout, &mut Some(err_read),
                 stdin_data.as_ref().map(|v| &v[..]))?;
-            let out = maybe_out.unwrap_or_else(Vec::new);
+            let out = out.unwrap_or_else(Vec::new);
+            let err = err.unwrap();
 
             let status = last.wait()?;
 
-            Ok(CaptureOutput { stdout: out, exit_status: status })
+            Ok(Capture { stdout: out, stderr: err, exit_status: status })
         }
     }
 
@@ -975,33 +984,6 @@ mod pipeline {
         fn drop(&mut self) {
             let first = &mut self.0[0];
             first.stdin.take();
-        }
-    }
-
-    /// Output of the last command in the pipeline.
-    pub struct CaptureOutput {
-        /// Output as bytes.
-        pub stdout: Vec<u8>,
-        /// Exit status of the pipeline.
-        ///
-        /// Following the shell convention, the exit status of the
-        /// pipeline is defined as the exit status of the last command
-        /// in the pipeline.  If you need the exit statuses of all
-        /// processes, use `Pipeline::popen()` and collect the exit
-        /// statuses e.g. with `map(Popen::wait).collect::<Vec<_>>()`.
-        pub exit_status: ExitStatus
-    }
-
-    impl CaptureOutput {
-        /// Returns pipeline output as string, converted from bytes
-        /// using `String::from_utf8_lossy`.
-        pub fn stdout_str(&self) -> String {
-            String::from_utf8_lossy(&self.stdout).into_owned()
-        }
-
-        /// True if the exit status of the pipeline is 0.
-        pub fn success(&self) -> bool {
-            self.exit_status.success()
         }
     }
 }
