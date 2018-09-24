@@ -858,6 +858,11 @@ mod os {
         Ok(())
     }
 
+    /// Create a pipe.
+    ///
+    /// This is a safe wrapper over `libc::pipe` or
+    /// `winapi::um::namedpipeapi::CreatePipe`, depending on the operating
+    /// system.
     pub fn make_pipe() -> IoResult<(File, File)> {
         posix::pipe()
     }
@@ -1088,6 +1093,11 @@ mod os {
         Ok(())
     }
 
+    /// Create a pipe.
+    ///
+    /// This is a safe wrapper over `libc::pipe` or
+    /// `winapi::um::namedpipeapi::CreatePipe`, depending on the operating
+    /// system.
     pub fn make_pipe() -> IoResult<(File, File)> {
         win32::CreatePipe(true)
     }

@@ -714,6 +714,7 @@ mod pipeline {
         cmds: Vec<Exec>,
         stdin: Redirection,
         stdout: Redirection,
+        stderr_file: Option<File>,
         stdin_data: Option<Vec<u8>>,
     }
 
@@ -726,6 +727,7 @@ mod pipeline {
                 cmds: vec![cmd1, cmd2],
                 stdin: Redirection::None,
                 stdout: Redirection::None,
+                stderr_file: None,
                 stdin_data: None,
             }
         }
@@ -773,6 +775,22 @@ mod pipeline {
             self
         }
 
+        /// Specifies a file to which to redirect the standard error of all
+        /// the commands in the pipeline.
+        ///
+        /// It is useful for capturing the standard error of the pipeline as a
+        /// whole.  Unlike `stdout()`, which only affects the last command in
+        /// the pipeline, this affects all commands.  The difference is
+        /// because standard output is piped from one command to the next, so
+        /// only the output of the last command is "free".  In contrast, the
+        /// standard errors are not connected in any way.  This is also the
+        /// reason only a `File` is supported - it allows for efficient
+        /// sharing of the same file by all commands.
+        pub fn stderr_to(mut self, to: File) -> Pipeline {
+            self.stderr_file = Some(to);
+            self
+        }
+
         fn check_no_stdin_data(&self, meth: &str) {
             if self.stdin_data.is_some() {
                 panic!("{} called with input data specified", meth);
@@ -794,7 +812,15 @@ mod pipeline {
         pub fn popen(mut self) -> PopenResult<Vec<Popen>> {
             self.check_no_stdin_data("popen");
             assert!(self.cmds.len() >= 2);
-            let cnt = self.cmds.len();
+
+            if let Some(stderr_to) = self.stderr_file {
+                let stderr_to = Rc::new(stderr_to);
+                self.cmds = self.cmds.into_iter()
+                    .map(|cmd| cmd.stderr(Redirection::RcFile(stderr_to.clone())))
+                    .collect();
+            }
+
+            let cnt = self.cmds.len(); // XXX NLL
 
             let first_cmd = self.cmds.drain(..1).next().unwrap();
             self.cmds.insert(0, first_cmd.stdin(self.stdin));
@@ -863,32 +889,19 @@ mod pipeline {
         /// Starts the pipeline, collects its output, and waits for
         /// all commands to finish.
         ///
-        /// The return value provides the standard output of the last
-        /// command as bytes or optionally strings, as well as the
-        /// exit status of the last command.  Errors from all commands
-        /// in the pipeline are merged into a single string and
-        /// provided in the capture data.
+        /// The return value provides the standard output of the last command,
+        /// the combined standard error of all commands, and the exit status
+        /// of the last command.  The captured outputs can be accessed as
+        /// bytes or strings.
         ///
-        /// The return value provides the standard output of the last
-        /// command as bytes or optionally strings, as well as the
-        /// exit status of the last command.
-        ///
-        /// Unlike `Popen::communicate`, this method actually waits
-        /// for the processes to finish, rather than simply waiting
-        /// for the output to close.  If this is undesirable, use
-        /// `detached()`.
+        /// Unlike `Popen::communicate`, this method actually waits for the
+        /// processes to finish, rather than simply waiting for the output to
+        /// close.  If this is undesirable, use `detached()`.
         pub fn capture(mut self) -> PopenResult<Capture> {
             assert!(self.cmds.len() >= 2);
 
-            use popen::make_pipe;
-
-            let (err_read, err_write) = make_pipe()?;
-            let err_write = Rc::new(err_write);
-
-            self.cmds = self.cmds.into_iter()
-                .map(|cmd| cmd.stderr(Redirection::RcFile(err_write.clone())))
-                .collect();
-            ::std::mem::drop(err_write);
+            let (err_read, err_write) = ::popen::make_pipe()?;
+            self = self.stderr_to(err_write);
 
             let stdin_data = self.stdin_data.take();
             let mut v = self.stdout(Redirection::Pipe).popen()?;
@@ -923,6 +936,8 @@ mod pipeline {
                 cmds: self.cmds.clone(),
                 stdin: self.stdin.try_clone().unwrap(),
                 stdout: self.stdout.try_clone().unwrap(),
+                stderr_file: self.stderr_file
+                    .as_ref().map(|f| f.try_clone().unwrap()),
                 stdin_data: self.stdin_data.clone()
             }
         }
