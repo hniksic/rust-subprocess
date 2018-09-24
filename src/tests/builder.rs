@@ -140,9 +140,10 @@ fn pipeline_capture() {
 #[test]
 fn pipeline_capture_error() {
     let c = {
-        Exec::cmd("cat") | Exec::shell("echo foo >&2; cat") | Exec::shell("wc -l")
-    }.stdin("foo\nbar\nbaz\n").capture().unwrap();
-    assert_eq!(c.stdout_str().trim(), "3");
+        Exec::cmd("sh").arg("-c").arg("echo foo >&2; printf 'bar\nbaz\n'")
+        | Exec::shell("wc -l")
+    }.capture().unwrap();
+    assert_eq!(c.stdout_str().trim(), "2");
     assert_eq!(c.stderr_str().trim(), "foo");
 }
 
