@@ -1,13 +1,13 @@
 #[cfg(unix)]
 mod os {
-    pub const NULL_DEVICE: &'static str = "/dev/null";
-    pub const SHELL: [&'static str; 2] = ["sh", "-c"];
+    pub const NULL_DEVICE: &str = "/dev/null";
+    pub const SHELL: [&str; 2] = ["sh", "-c"];
 }
 
 #[cfg(windows)]
 mod os {
-    pub const NULL_DEVICE: &'static str = "nul";
-    pub const SHELL: [&'static str; 2] = ["cmd.exe", "/c"];
+    pub const NULL_DEVICE: &str = "nul";
+    pub const SHELL: [&str; 2] = ["cmd.exe", "/c"];
 }
 
 pub use self::os::*;
@@ -308,7 +308,7 @@ mod exec {
         /// [`Redirection`]: struct.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
         pub fn stdout<T: Into<OutputRedirection>>(mut self, stdout: T) -> Exec {
-            match (&self.config.stdout, stdout.into().to_redirection()) {
+            match (&self.config.stdout, stdout.into().into_redirection()) {
                 (&Redirection::None, new) => self.config.stdout = new,
                 (&Redirection::Pipe, Redirection::Pipe) => (),
                 (_, _) => panic!("stdout is already set"),
@@ -328,7 +328,7 @@ mod exec {
         /// [`Redirection`]: struct.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
         pub fn stderr<T: Into<OutputRedirection>>(mut self, stderr: T) -> Exec {
-            match (&self.config.stderr, stderr.into().to_redirection()) {
+            match (&self.config.stderr, stderr.into().into_redirection()) {
                 (&Redirection::None, new) => self.config.stderr = new,
                 (&Redirection::Pipe, Redirection::Pipe) => (),
                 (_, _) => panic!("stderr is already set"),
@@ -631,7 +631,7 @@ mod exec {
     pub struct OutputRedirection(Redirection);
 
     impl OutputRedirection {
-        pub fn to_redirection(self) -> Redirection {
+        pub fn into_redirection(self) -> Redirection {
             self.0
         }
     }
@@ -775,7 +775,7 @@ mod pipeline {
         /// [`Redirection`]: struct.Redirection.html
         pub fn stdout<T: Into<OutputRedirection>>(mut self, stdout: T)
                                                   -> Pipeline {
-            self.stdout = stdout.into().to_redirection();
+            self.stdout = stdout.into().into_redirection();
             self
         }
 

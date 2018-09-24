@@ -1,3 +1,3 @@
 fn main() {
-    print!("{}", ::std::env::args().skip(1).next().unwrap());
+    print!("{}", ::std::env::args().nth(1).unwrap());
 }

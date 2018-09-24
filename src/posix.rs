@@ -70,7 +70,7 @@ impl CVec {
         let vec_cstring = maybe_vec_cstring?;
         let ptrs: Vec<_> = vec_cstring.iter().map(cstring_ptr)
             .chain(iter::once(ptr::null())).collect();
-        Ok(CVec { strings: vec_cstring, ptrs: ptrs })
+        Ok(CVec { strings: vec_cstring, ptrs })
     }
 
     pub fn as_c_vec(&self) -> *const *const c_char {
@@ -93,7 +93,7 @@ impl<'a> Iterator for SplitPath<'a> {
             if bytes[i] == b':' {
                 let piece = OsStr::from_bytes(&bytes[self.last..i]);
                 self.last = i + 1;
-                if piece.len() != 0 {
+                if !piece.is_empty() {
                     self.current = i + 1;
                     return Some(piece);
                 }
@@ -105,7 +105,7 @@ impl<'a> Iterator for SplitPath<'a> {
             self.last = bytes.len();
             return Some(piece);
         }
-        return None;
+        None
     }
 }
 
@@ -114,7 +114,7 @@ fn split_path(path: &OsStr) -> SplitPath {
     // objects, and we need to iterate over PATH after fork() when
     // allocations are strictly verboten.
     SplitPath {
-        path: path,
+        path,
         last: 0,
         current: 0,
     }
@@ -181,10 +181,7 @@ impl FinishExec {
         }
 
         FinishExec {
-            cmd: cmd,
-            argvec: argvec,
-            envvec: envvec,
-            search_path: search_path,
+            cmd, argvec, envvec, search_path,
             exe_buf: RefCell::new(Vec::with_capacity(max_exe_len)),
         }
     }
@@ -197,8 +194,7 @@ impl FinishExec {
             // (although glibc has one), so we have to iterate over
             // PATH ourselves
             for dir in split_path(search_path.as_os_str()) {
-                self.set_exe(&[dir.as_bytes(), "/".as_bytes(),
-                               self.cmd.as_bytes()]);
+                self.set_exe(&[dir.as_bytes(), b"/", self.cmd.as_bytes()]);
                 self.exec().ok();
             }
             return Err(Error::last_os_error())
@@ -356,12 +352,12 @@ impl PollFd {
     pub fn new(fd: Option<i32>, events: i16) -> PollFd {
         PollFd(libc::pollfd {
             fd: fd.unwrap_or(-1),
-            events: events,
+            events,
             revents: 0,
         })
     }
     pub fn test(&self, mask: i16) -> bool {
-        return self.0.revents & mask != 0
+        self.0.revents & mask != 0
     }
 }
 
