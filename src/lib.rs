@@ -94,7 +94,7 @@ mod os_common;
 pub use self::os_common::ExitStatus;
 pub use self::popen::{Popen, PopenConfig, Redirection, PopenError, Result,
                       make_pipe};
-pub use self::builder::{Exec, NullFile, Pipeline};
+pub use self::builder::{Exec, NullFile, Pipeline, CaptureData};
 
 /// Subprocess extensions for Unix platforms.
 pub mod unix {

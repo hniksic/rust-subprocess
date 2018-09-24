@@ -11,7 +11,7 @@ mod os {
 }
 
 pub use self::os::*;
-pub use self::exec::{Exec, NullFile};
+pub use self::exec::{Exec, NullFile, CaptureData};
 pub use self::pipeline::Pipeline;
 
 
@@ -421,7 +421,7 @@ mod exec {
         /// for the process to finish, rather than simply waiting for
         /// its standard streams to close.  If this is undesirable,
         /// use `detached()`.
-        pub fn capture(mut self) -> PopenResult<Capture> {
+        pub fn capture(mut self) -> PopenResult<CaptureData> {
             let stdin_data = self.stdin_data.take();
             if let (&Redirection::None, &Redirection::None)
                 = (&self.config.stdout, &self.config.stderr) {
@@ -433,7 +433,7 @@ mod exec {
             let out = maybe_out.unwrap_or_else(Vec::new);
             let err = maybe_err.unwrap_or_else(Vec::new);
             let status = p.wait()?;
-            Ok(Capture {
+            Ok(CaptureData {
                 stdout: out, stderr: err, exit_status: status
             })
         }
@@ -541,29 +541,33 @@ mod exec {
         }
     }
 
-    pub struct Capture {
+    /// Data captured by [`Exec::capture`] and [`Pipeline::capture`].
+    ///
+    /// [`Exec::capture`]: struct.Exec.html#method.capture
+    /// [`Pipeline::capture`]: struct.Pipeline.html#method.capture
+    pub struct CaptureData {
         /// Standard output as bytes.
         pub stdout: Vec<u8>,
         /// Standard error as bytes.
         pub stderr: Vec<u8>,
-        /// Exit status of the process.
+        /// Exit status.
         pub exit_status: ExitStatus,
     }
 
-    impl Capture {
-        /// Returns the process's standard output as string, converted
-        /// from bytes using `String::from_utf8_lossy`.
+    impl CaptureData {
+        /// Returns the standard output as string, converted from bytes using
+        /// `String::from_utf8_lossy`.
         pub fn stdout_str(&self) -> String {
             String::from_utf8_lossy(&self.stdout).into_owned()
         }
 
-        /// Returns the process's standard error as string, converted
-        /// from bytes using `String::from_utf8_lossy`.
+        /// Returns the standard error as string, converted from bytes using
+        /// `String::from_utf8_lossy`.
         pub fn stderr_str(&self) -> String {
             String::from_utf8_lossy(&self.stderr).into_owned()
         }
 
-        /// True if the exit status of the pipeline is 0.
+        /// True if the exit status of the process or pipeline is 0.
         pub fn success(&self) -> bool {
             self.exit_status.success()
         }
@@ -665,7 +669,7 @@ mod pipeline {
     use communicate;
     use os_common::ExitStatus;
 
-    use super::exec::{Exec, InputRedirection, OutputRedirection, Capture};
+    use super::exec::{Exec, InputRedirection, OutputRedirection, CaptureData};
 
     /// A builder for multiple [`Popen`] instances connected via
     /// pipes.
@@ -897,7 +901,7 @@ mod pipeline {
         /// Unlike `Popen::communicate`, this method actually waits for the
         /// processes to finish, rather than simply waiting for the output to
         /// close.  If this is undesirable, use `detached()`.
-        pub fn capture(mut self) -> PopenResult<Capture> {
+        pub fn capture(mut self) -> PopenResult<CaptureData> {
             assert!(self.cmds.len() >= 2);
 
             let (err_read, err_write) = ::popen::make_pipe()?;
@@ -918,7 +922,7 @@ mod pipeline {
 
             let status = last.wait()?;
 
-            Ok(Capture { stdout: out, stderr: err, exit_status: status })
+            Ok(CaptureData { stdout: out, stderr: err, exit_status: status })
         }
     }
 
