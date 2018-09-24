@@ -1014,7 +1014,6 @@ mod os {
 
     fn format_env_block(env: Vec<(OsString, OsString)>) -> Vec<u16> {
         fn to_uppercase(s: &OsStr) -> OsString {
-            use std::ascii::AsciiExt;
             OsString::from_wide(&s.encode_wide()
                 .map(|c| if c < 128 {
                     (c as u8 as char).to_ascii_uppercase() as u16
