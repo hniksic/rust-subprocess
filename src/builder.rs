@@ -763,7 +763,7 @@ mod pipeline {
         ///
         /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-        /// * `NullFile`, which will redirect the standard input to read from
+        /// * `NullFile`, which will redirect the standard output to write to
         ///    /dev/null.
         ///
         /// [`Redirection`]: struct.Redirection.html
