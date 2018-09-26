@@ -93,7 +93,7 @@ fn pipeline_open() {
     }
     .stdout(Redirection::Pipe).popen().unwrap();
     let (output, _) = processes[1].communicate(None).unwrap();
-    assert!(output.unwrap().trim() == "2");
+    assert_eq!(output.unwrap().trim(), "2");
 }
 
 #[test]
