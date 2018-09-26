@@ -1,6 +1,8 @@
 use std::fs::File;
 use std::env;
 
+use std::io::prelude::*;
+
 use crate::{Exec, Redirection, NullFile, ExitStatus};
 
 use tempdir::TempDir;

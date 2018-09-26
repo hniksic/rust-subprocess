@@ -359,8 +359,8 @@ mod exec {
             self.popen()?.wait()
         }
 
-        /// Starts the process and returns a `Read` trait object that
-        /// reads from the standard output of the child process.
+        /// Starts the process and returns a value implementing the `Read`
+        /// trait that reads from the standard output of the child process.
         ///
         /// This will automatically set up
         /// `stdout(Redirection::Pipe)`, so it is not necessary to do
@@ -369,14 +369,14 @@ mod exec {
         /// When the trait object is dropped, it will wait for the
         /// process to finish.  If this is undesirable, use
         /// `detached()`.
-        pub fn stream_stdout(self) -> PopenResult<Box<dyn Read>> {
+        pub fn stream_stdout(self) -> PopenResult<impl Read> {
             self.check_no_stdin_data("stream_stdout");
             let p = self.stdout(Redirection::Pipe).popen()?;
-            Ok(Box::new(ReadOutAdapter(p)))
+            Ok(ReadOutAdapter(p))
         }
 
-        /// Starts the process and returns a `Read` trait object that
-        /// reads from the standard error of the child process.
+        /// Starts the process and returns a value implementing the `Read`
+        /// trait that reads from the standard error of the child process.
         ///
         /// This will automatically set up
         /// `stderr(Redirection::Pipe)`, so it is not necessary to do
@@ -385,14 +385,14 @@ mod exec {
         /// When the trait object is dropped, it will wait for the
         /// process to finish.  If this is undesirable, use
         /// `detached()`.
-        pub fn stream_stderr(self) -> PopenResult<Box<dyn Read>> {
+        pub fn stream_stderr(self) -> PopenResult<impl Read> {
             self.check_no_stdin_data("stream_stderr");
             let p = self.stderr(Redirection::Pipe).popen()?;
-            Ok(Box::new(ReadErrAdapter(p)))
+            Ok(ReadErrAdapter(p))
         }
 
-        /// Starts the process and returns a `Write` trait object that
-        /// writes to the standard input of the child process.
+        /// Starts the process and returns a value implementing the `Write`
+        /// trait that writes to the standard input of the child process.
         ///
         /// This will automatically set up `stdin(Redirection::Pipe)`,
         /// so it is not necessary to do that beforehand.
@@ -400,10 +400,10 @@ mod exec {
         /// When the trait object is dropped, it will wait for the
         /// process to finish.  If this is undesirable, use
         /// `detached()`.
-        pub fn stream_stdin(self) -> PopenResult<Box<dyn Write>> {
+        pub fn stream_stdin(self) -> PopenResult<impl Write> {
             self.check_no_stdin_data("stream_stdin");
             let p = self.stdin(Redirection::Pipe).popen()?;
-            Ok(Box::new(WriteAdapter(p)))
+            Ok(WriteAdapter(p))
         }
 
         /// Starts the process, collects its output, and waits for it
@@ -854,8 +854,8 @@ mod pipeline {
             v.last_mut().unwrap().wait()
         }
 
-        /// Starts the pipeline and returns a `Read` trait object that
-        /// reads from the standard output of the last command.
+        /// Starts the pipeline and returns a value implementing the `Read`
+        /// trait that reads from the standard output of the last command.
         ///
         /// This will automatically set up
         /// `stdout(Redirection::Pipe)`, so it is not necessary to do
@@ -864,14 +864,14 @@ mod pipeline {
         /// When the trait object is dropped, it will wait for the
         /// pipeline to finish.  If this is undesirable, use
         /// `detached()`.
-        pub fn stream_stdout(self) -> PopenResult<Box<dyn Read>> {
+        pub fn stream_stdout(self) -> PopenResult<impl Read> {
             self.check_no_stdin_data("stream_stdout");
             let v = self.stdout(Redirection::Pipe).popen()?;
-            Ok(Box::new(ReadPipelineAdapter(v)))
+            Ok(ReadPipelineAdapter(v))
         }
 
-        /// Starts the pipeline and returns a `Write` trait object
-        /// that writes to the standard input of the first command.
+        /// Starts the pipeline and returns a value implementing the `Write`
+        /// trait that writes to the standard input of the last command.
         ///
         /// This will automatically set up `stdin(Redirection::Pipe)`,
         /// so it is not necessary to do that beforehand.
@@ -879,10 +879,10 @@ mod pipeline {
         /// When the trait object is dropped, it will wait for the
         /// process to finish.  If this is undesirable, use
         /// `detached()`.
-        pub fn stream_stdin(self) -> PopenResult<Box<dyn Write>> {
+        pub fn stream_stdin(self) -> PopenResult<impl Write> {
             self.check_no_stdin_data("stream_stdin");
             let v = self.stdin(Redirection::Pipe).popen()?;
-            Ok(Box::new(WritePipelineAdapter(v)))
+            Ok(WritePipelineAdapter(v))
         }
 
         /// Starts the pipeline, collects its output, and waits for
