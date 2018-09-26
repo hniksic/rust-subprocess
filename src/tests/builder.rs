@@ -138,13 +138,26 @@ fn pipeline_capture() {
 }
 
 #[test]
-fn pipeline_capture_error() {
+fn pipeline_capture_error_1() {
     let c = {
         Exec::cmd("sh").arg("-c").arg("echo foo >&2; printf 'bar\nbaz\n'")
         | Exec::shell("wc -l")
     }.capture().unwrap();
     assert_eq!(c.stdout_str().trim(), "2");
     assert_eq!(c.stderr_str().trim(), "foo");
+}
+
+#[test]
+fn pipeline_capture_error_2() {
+    let c = {
+        Exec::cmd("cat")
+        | Exec::cmd("sh").arg("-c").arg("cat; echo foo >&2; printf 'four\nfive\n'")
+        | Exec::cmd("sh").arg("-c").arg("echo bar >&2; cat")
+        | Exec::shell("wc -l")
+    }.stdin("one\ntwo\nthree\n").capture().unwrap();
+    assert_eq!(c.stdout_str().trim(), "5");
+    assert!(c.stderr_str().trim() == "foo\nbar" || c.stderr_str().trim() == "bar\nfoo",
+            "got {:?}", c.stderr_str());
 }
 
 #[test]
