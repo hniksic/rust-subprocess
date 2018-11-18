@@ -18,6 +18,9 @@ use self::ChildState::*;
 pub use self::os::ext as os_ext;
 pub use self::os::make_pipe;
 
+#[cfg(unix)]
+use libc::{uid_t, gid_t};
+
 /// Interface to a running subprocess.
 ///
 /// `Popen` is the parent's interface to a created subprocess.  The
@@ -187,6 +190,14 @@ pub struct PopenConfig {
     /// None means inherit the working directory from the parent.
     pub cwd: Option<OsString>,
 
+    /// User ID under which to run the subprocess.
+    #[cfg(unix)]
+    pub uid: Option<uid_t>,
+
+    /// Group ID under which to run the subprocess.
+    #[cfg(unix)]
+    pub gid: Option<gid_t>,
+
     // preexec_fn, close_fds...
 
     // force construction using ..Default::default()
@@ -213,6 +224,10 @@ impl PopenConfig {
             executable: self.executable.as_ref().cloned(),
             env: self.env.clone(),
             cwd: self.cwd.clone(),
+            #[cfg(unix)]
+            uid: None,
+            #[cfg(unix)]
+            gid: None,
             _use_default_to_construct: (),
         })
     }
@@ -238,6 +253,10 @@ impl Default for PopenConfig {
             executable: None,
             env: None,
             cwd: None,
+            #[cfg(unix)]
+            uid: None,
+            #[cfg(unix)]
+            gid: None,
             _use_default_to_construct: (),
         }
     }
@@ -653,6 +672,8 @@ trait PopenOs {
 mod os {
     use super::*;
 
+    use libc::{setuid,setgid};
+
     use std::io;
     use std::io::{Read, Write, Result as IoResult};
     use std::fs::File;
@@ -684,6 +705,23 @@ mod os {
                 let child_pid = posix::fork()?;
                 if child_pid == 0 {
                     mem::drop(exec_fail_pipe.0);
+
+                    if let Some(gid) = config.gid {
+                        unsafe {
+                            if setgid(gid) == -1 {
+                                return Err(PopenError::PermissionError("setgid failed"));
+                            }
+                        }
+                    }
+
+                    if let Some(uid) = config.uid {
+                        unsafe {
+                            if setuid(uid) == -1 {
+                                return Err(PopenError::PermissionError("setuid failed"));
+                            }
+                        }
+                    }
+
                     let result = self.do_exec(just_exec, child_ends,
                                               config.cwd.as_ref().map(|x| &x[..]));
                     // If we are here, it means that exec has failed.  Notify
@@ -1201,6 +1239,9 @@ pub enum PopenError {
     IoError(io::Error),
     /// A logical error was made, e.g. invalid arguments detected at run-time.
     LogicError(&'static str),
+    /// A `setuid` or `setgid` call failed.
+    #[cfg(unix)]
+    PermissionError(&'static str),
 }
 
 impl From<FromUtf8Error> for PopenError {
@@ -1221,6 +1262,8 @@ impl Error for PopenError {
             PopenError::Utf8Error(ref err) => err.description(),
             PopenError::IoError(ref err) => err.description(),
             PopenError::LogicError(description) => description,
+            #[cfg(unix)]
+            PopenError::PermissionError(description) => description,
         }
     }
 
@@ -1229,6 +1272,8 @@ impl Error for PopenError {
             PopenError::Utf8Error(ref err) => Some(err as &Error),
             PopenError::IoError(ref err) => Some(err as &Error),
             PopenError::LogicError(_) => None,
+            #[cfg(unix)]
+            PopenError::PermissionError(_) => None,
         }
     }
 }
@@ -1238,7 +1283,9 @@ impl fmt::Display for PopenError {
         match *self {
             PopenError::Utf8Error(ref err) => fmt::Display::fmt(err, f),
             PopenError::IoError(ref err) => fmt::Display::fmt(err, f),
-            PopenError::LogicError(desc) => f.write_str(desc)
+            PopenError::LogicError(desc) => f.write_str(desc),
+            #[cfg(unix)]
+            PopenError::PermissionError(desc) => f.write_str(desc),
         }
     }
 }

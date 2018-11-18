@@ -16,6 +16,9 @@ pub use self::pipeline::Pipeline;
 
 
 mod exec {
+    #[cfg(unix)]
+    use libc::{uid_t,gid_t};
+
     use std::ffi::{OsStr, OsString};
     use std::io::{Result as IoResult, Read, Write};
     use std::fs::{File, OpenOptions};
@@ -264,6 +267,26 @@ mod exec {
             where P: AsRef<Path>
         {
             self.config.cwd = Some(dir.as_ref().as_os_str().to_owned());
+            self
+        }
+
+        /// Sets the child process's user id. This translates to a `setuid`
+        /// call in the child process. Failure in the `setuid` call will
+        /// cause the spawn to fail.
+        #[cfg(unix)]
+        pub fn uid(mut self, uid: uid_t) -> Exec
+        {
+            self.config.uid = Some(uid);
+            self
+        }
+
+        /// Sets the child process's group id. This translates to a `setgid`
+        /// call in the child process. Failure in the `setgid` call will
+        /// cause the spawn to fail.
+        #[cfg(unix)]
+        pub fn gid(mut self, gid: gid_t) -> Exec
+        {
+            self.config.gid = Some(gid);
             self
         }
 
