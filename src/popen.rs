@@ -578,7 +578,7 @@ impl Popen {
 
     /// Check whether the process is still running, without blocking or errors.
     ///
-    /// This checks whether the process is still running and.  If it
+    /// This checks whether the process is still running and if it
     /// is still running, `None` is returned, otherwise
     /// `Some(exit_status)`.  This method is guaranteed not to block
     /// and is exactly equivalent to
