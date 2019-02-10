@@ -23,8 +23,8 @@ mod exec {
     use std::path::Path;
     use std::fmt;
 
-    use popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
-    use os_common::ExitStatus;
+    use crate::popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
+    use crate::os_common::ExitStatus;
 
     use super::os::*;
     use super::Pipeline;
@@ -665,9 +665,9 @@ mod pipeline {
     use std::fmt;
     use std::rc::Rc;
 
-    use popen::{Popen, Redirection, Result as PopenResult};
-    use communicate;
-    use os_common::ExitStatus;
+    use crate::popen::{Popen, Redirection, Result as PopenResult};
+    use crate::communicate;
+    use crate::os_common::ExitStatus;
 
     use super::exec::{Exec, InputRedirection, OutputRedirection, CaptureData};
 
@@ -904,7 +904,7 @@ mod pipeline {
         pub fn capture(mut self) -> PopenResult<CaptureData> {
             assert!(self.cmds.len() >= 2);
 
-            let (err_read, err_write) = ::popen::make_pipe()?;
+            let (err_read, err_write) = crate::popen::make_pipe()?;
             self = self.stderr_to(err_write);
 
             let stdin_data = self.stdin_data.take();

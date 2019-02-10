@@ -10,8 +10,8 @@ use std::time::Duration;
 use std::env;
 use std::rc::Rc;
 
-use os_common::{ExitStatus, StandardStream};
-use communicate;
+use crate::os_common::{ExitStatus, StandardStream};
+use crate::communicate;
 
 use self::ChildState::*;
 
@@ -87,7 +87,7 @@ mod fileref {
     // (used for system streams), it will remain open.
 
     use std::fs::File;
-    use os_common::Undropped;
+    use crate::os_common::Undropped;
     use std::rc::Rc;
     use std::ops::Deref;
 
@@ -656,15 +656,15 @@ mod os {
     use std::io;
     use std::io::{Read, Write, Result as IoResult};
     use std::fs::File;
-    use posix;
+    use crate::posix;
     use std::mem;
     use std::os::unix::io::AsRawFd;
     use std::ffi::OsString;
     use std::time::{Duration, Instant};
     use std::collections::HashSet;
 
-    use os_common::ExitStatus;
-    use unix::PopenExt;
+    use crate::os_common::ExitStatus;
+    use crate::unix::PopenExt;
 
     pub type ExtChildState = ();
 
@@ -871,9 +871,9 @@ mod os {
 
     pub mod ext {
         use std::io::Result as IoResult;
-        use popen::Popen;
-        use popen::ChildState::*;
-        use posix;
+        use crate::popen::Popen;
+        use crate::popen::ChildState::*;
+        use crate::posix;
 
         /// Unix-specific extension methods for `Popen`
         pub trait PopenExt {
@@ -920,8 +920,8 @@ mod os {
     use std::io::Result as IoResult;
     use std::collections::HashSet;
 
-    use win32;
-    use os_common::{ExitStatus, StandardStream};
+    use crate::win32;
+    use crate::os_common::{ExitStatus, StandardStream};
 
     #[derive(Debug)]
     pub struct ExtChildState(win32::Handle);

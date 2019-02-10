@@ -22,7 +22,7 @@ use winapi::um::handleapi::{INVALID_HANDLE_VALUE, CloseHandle};
 pub use winapi::shared::winerror::{ERROR_BAD_PATHNAME, ERROR_ACCESS_DENIED};
 pub const STILL_ACTIVE: u32 = 259;
 
-use os_common::{StandardStream, Undropped};
+use crate::os_common::{StandardStream, Undropped};
 
 #[derive(Debug)]
 pub struct Handle(RawHandle);

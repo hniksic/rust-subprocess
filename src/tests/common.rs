@@ -346,7 +346,7 @@ fn cwd() {
 
 #[test]
 fn failed_cwd() {
-    use popen::PopenError::IoError;
+    use crate::popen::PopenError::IoError;
     let ret = Popen::create(&["anything"],
                             PopenConfig {
                                 stdout: Redirection::Pipe,

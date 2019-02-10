@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use libc;
 use libc::{c_char, c_int};
 
-use os_common::{ExitStatus, StandardStream, Undropped};
+use crate::os_common::{ExitStatus, StandardStream, Undropped};
 
 pub use libc::ECHILD;
 

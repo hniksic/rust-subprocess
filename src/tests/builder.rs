@@ -7,7 +7,7 @@ use super::super::{Exec, Redirection, NullFile, ExitStatus};
 
 use self::tempdir::TempDir;
 
-use tests::common::read_whole_file;
+use crate::tests::common::read_whole_file;
 
 #[test]
 fn exec_join() {
@@ -174,14 +174,14 @@ fn pipeline_join() {
 
 #[test]
 fn pipeline_invalid_1() {
-    let try = (Exec::cmd("echo").arg("foo") | Exec::cmd("no-such-command")).join();
-    assert!(try.is_err());
+    let p = (Exec::cmd("echo").arg("foo") | Exec::cmd("no-such-command")).join();
+    assert!(p.is_err());
 }
 
 #[test]
 fn pipeline_invalid_2() {
-    let try = (Exec::cmd("no-such-command") | Exec::cmd("echo").arg("foo")).join();
-    assert!(try.is_err());
+    let p = (Exec::cmd("no-such-command") | Exec::cmd("echo").arg("foo")).join();
+    assert!(p.is_err());
 }
 
 #[test]

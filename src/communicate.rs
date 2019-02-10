@@ -1,6 +1,6 @@
 #[cfg(unix)]
 mod os {
-    use posix;
+    use crate::posix;
     use std::fs::File;
     use std::io::{Read, Write, Result as IoResult};
     use std::os::unix::io::AsRawFd;
