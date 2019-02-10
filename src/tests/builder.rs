@@ -1,11 +1,9 @@
-extern crate tempdir;
-
 use std::fs::File;
 use std::env;
 
-use super::super::{Exec, Redirection, NullFile, ExitStatus};
+use crate::{Exec, Redirection, NullFile, ExitStatus};
 
-use self::tempdir::TempDir;
+use tempdir::TempDir;
 
 use crate::tests::common::read_whole_file;
 

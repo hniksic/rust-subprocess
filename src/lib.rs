@@ -74,11 +74,6 @@
 
 #![warn(missing_docs)]
 
-extern crate libc;
-
-#[cfg(windows)]
-extern crate winapi;
-
 mod popen;
 mod communicate;
 mod builder;

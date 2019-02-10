@@ -1,9 +1,7 @@
-extern crate tempdir;
-
 use std::ffi::OsString;
 
-use super::super::{Popen, PopenConfig, ExitStatus, Redirection};
-use super::super::unix::PopenExt;
+use crate::{Popen, PopenConfig, ExitStatus, Redirection};
+use crate::unix::PopenExt;
 
 use libc;
 

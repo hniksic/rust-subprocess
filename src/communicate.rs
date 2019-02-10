@@ -117,8 +117,6 @@ mod os {
 
 #[cfg(windows)]
 mod os {
-    extern crate crossbeam_utils;
-
     use std::fs::File;
     use std::io::{Read, Write, Result as IoResult};
 

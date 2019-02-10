@@ -1,7 +1,4 @@
-extern crate tempdir;
-extern crate libc;
-
-use self::tempdir::TempDir;
+use tempdir::TempDir;
 
 use std::fs::File;
 use std::io::Read;
@@ -10,7 +7,7 @@ use std::time::Duration;
 use std::ffi::{OsStr, OsString};
 
 
-use super::super::{Popen, PopenConfig, ExitStatus, Redirection, PopenError};
+use crate::{Popen, PopenConfig, ExitStatus, Redirection, PopenError};
 
 pub fn read_whole_file<T: Read>(mut f: T) -> String {
     let mut content = String::new();

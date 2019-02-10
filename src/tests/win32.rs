@@ -1,4 +1,4 @@
-use super::super::{ExitStatus, Popen, PopenConfig};
+use crate::{ExitStatus, Popen, PopenConfig};
 
 #[test]
 fn err_terminate() {
