@@ -63,9 +63,10 @@ with convenience methods for capturing output and building pipelines.
 
 ## Examples
 
-Note: if you are pasting the examples in a function that doesn't
-return a `Result`, such as `main`, replace `X?` with `X.expect("failed
-to execute")` or equivalent.
+Note: the examples assume they run in a function returning a
+`subprocess::Result` or equivalent. If you are pasting them to a
+function that doesn't return a `Result`, replace `?` with
+`.expect("informative message")`.
 
 ### Commands
 
