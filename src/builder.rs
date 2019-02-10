@@ -824,15 +824,14 @@ mod pipeline {
                     .collect();
             }
 
-            let cnt = self.cmds.len(); // XXX NLL
-
             let first_cmd = self.cmds.drain(..1).next().unwrap();
             self.cmds.insert(0, first_cmd.stdin(self.stdin));
 
-            let last_cmd = self.cmds.drain(cnt - 1..).next().unwrap();
+            let last_cmd = self.cmds.drain(self.cmds.len() - 1..).next().unwrap();
             self.cmds.push(last_cmd.stdout(self.stdout));
 
             let mut ret = Vec::<Popen>::new();
+            let cnt = self.cmds.len();
 
             for (idx, mut runner) in self.cmds.into_iter().enumerate() {
                 if idx != 0 {
