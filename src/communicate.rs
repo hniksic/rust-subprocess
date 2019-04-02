@@ -26,7 +26,7 @@ mod os {
     fn comm_poll(stdin_ref: &mut Option<File>,
                  stdout_ref: &mut Option<File>,
                  stderr_ref: &mut Option<File>,
-                 mut input_data: &[u8])
+                 mut input_data: Option<&[u8]>)
                  -> IoResult<(Vec<u8>, Vec<u8>)> {
         // Note: chunk size for writing must be smaller than the pipe
         // buffer size.  A large enough write to a blocking deadlocks
@@ -45,9 +45,11 @@ mod os {
                 // writing, we no longer need polling.  When no stream
                 // remains, we are done.
                 (Some(..), None, None) => {
-                    stdin_ref.as_ref().unwrap().write_all(input_data)?;
-                    // close stdin when done writing, so the child receives EOF
-                    stdin_ref.take();
+                    if let Some(input_data) = input_data {
+                        stdin_ref.as_ref().unwrap().write_all(input_data)?;
+                        // close stdin when done writing, so the child receives EOF
+                        stdin_ref.take();
+                    }
                     break;
                 }
                 (None, Some(ref mut stdout), None) => {
@@ -65,12 +67,16 @@ mod os {
             let (in_ready, out_ready, err_ready)
                 = poll3(stdin_ref.as_ref(), stdout_ref, stderr_ref)?;
             if in_ready {
+                if let Some(mut input_data) = input_data {
                 let chunk = &input_data[..min(WRITE_SIZE, input_data.len())];
                 let n = stdin_ref.as_ref().unwrap().write(chunk)?;
                 input_data = &input_data[n..];
                 if input_data.is_empty() {
                     // close stdin when done writing, so the child receives EOF
                     stdin_ref.take();
+                }
+                } else {
+                    break;
                 }
             }
             if out_ready {
@@ -101,13 +107,10 @@ mod os {
                        stderr_ref: &mut Option<File>,
                        input_data: Option<&[u8]>)
                        -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        if stdin_ref.is_some() {
-            input_data.expect("must provide input to redirected stdin");
-        } else {
+        if !stdin_ref.is_some() {
             assert!(input_data.is_none(),
                     "cannot provide input to non-redirected stdin");
         }
-        let input_data = input_data.unwrap_or(b"");
         let (out, err) = comm_poll(stdin_ref, stdout_ref, stderr_ref,
                                    input_data)?;
         Ok((stdout_ref.as_ref().map(|_| out),
@@ -128,8 +131,10 @@ mod os {
         Ok(contents)
     }
 
-    fn comm_write(mut infile: File, input_data: &[u8]) -> IoResult<()> {
-        infile.write_all(input_data)?;
+    fn comm_write(mut infile: File, input_data: Option<&[u8]>) -> IoResult<()> {
+        if let Some(input_data) = input_data {
+            infile.write_all(input_data)?;
+        }
         Ok(())
     }
 
@@ -149,8 +154,6 @@ mod os {
                     move || comm_read(stderr_ref.take().unwrap())))
             }
             if stdin_ref.is_some() {
-                let input_data = input_data.expect(
-                    "must provide input to redirected stdin");
                 comm_write(stdin_ref.take().unwrap(), input_data)?;
             }
             Ok((if let Some(out_thr) = out_thr
@@ -167,8 +170,6 @@ mod os {
                        -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         match (stdin, stdout, stderr) {
             (stdin_ref @ &mut Some(..), &mut None, &mut None) => {
-                let input_data = input_data.expect(
-                    "must provide input to redirected stdin");
                 comm_write(stdin_ref.take().unwrap(), input_data)?;
                 Ok((None, None))
             }
