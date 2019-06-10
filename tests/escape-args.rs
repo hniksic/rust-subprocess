@@ -16,7 +16,7 @@ fn escape_args() {
     // escaping.
     for &arg in &["x", "", " ", "  ",
                   r" \ ", r" \\ ", r" \\\ ",
-                  r#"""#, r#""""#, r#"\"\\""#,
+                  r#"""#, r#"\"\\""#,
                   "æ÷", "šđ", "本", "❤", "☃",] {
         let mut p = Popen::create(&[just_echo_path().as_ref(), arg], PopenConfig {
             stdout: Redirection::Pipe,

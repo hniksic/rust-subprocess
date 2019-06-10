@@ -18,7 +18,7 @@ fn weird_args() {
     // metacharacters.
     for &arg in ["x", "", " ", "  ",
                  r" \ ", r" \\ ", r" \\\ ",
-                 r#"""#, r#""""#, r#"\"\\""#].iter() {
+                 r#"""#, r#"\"\\""#].iter() {
         println!("running {:?} {:?}", arg, just_echo_path());
         let mut p = Popen::create(&[just_echo_path(), arg.to_owned()], PopenConfig {
             stdout: Redirection::Pipe,

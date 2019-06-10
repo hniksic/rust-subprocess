@@ -1132,16 +1132,24 @@ mod os {
         Ok(OsString::from_wide(&cmdline))
     }
 
+    fn has_outside_quotes(arg: &Vec<u16>) -> bool {
+        if arg.len() < 2 {
+            return false;
+        }
+
+        if arg[0] == b'"' as u16 && arg[arg.len() - 1] == b'"' as u16 {
+            true
+        } else {
+            false
+        }
+    }
+
     fn is_already_escaped(arg: &Vec<u16>) -> bool {
         if arg.len() < 2 {
             return false;
         }
 
-        let has_outside_quotes = if arg[0] == b'"' as u16 && arg[arg.len() - 1] == b'"' as u16 && arg[arg.len() - 2] != b'\\' as u16 {
-            true
-        } else {
-            false
-        };
+        let has_outside_quotes = has_outside_quotes(arg);
 
         let (start, end) = if has_outside_quotes {
             (1, arg.len() - 1)
@@ -1149,6 +1157,7 @@ mod os {
             (0, arg.len())
         };
         let mut i = start;
+        let mut ready_to_escape = false;
         while i < end {
             let c = arg[i];
             if c == ' ' as u16 && !has_outside_quotes {
@@ -1156,13 +1165,26 @@ mod os {
             } else if c == '\t' as u16 || c == '\n' as u16 || c == '\x0b' as u16 {
                 return false;
             } else if c == '\"' as u16 {
-                if i > 0 && arg[i - 1] != '\\' as u16 {
+                if i > 0 && !ready_to_escape {
                     return false;
                 } else if i == 0 {
                     return false;
                 }
+            } else if c == '\\' as u16 {
+                if ready_to_escape {
+                    ready_to_escape = false;
+                } else {
+                    ready_to_escape = true;
+                }
+            } else {
+                ready_to_escape = false;
             }
             i += 1;
+        }
+
+        // We've started to escape something but then stopped
+        if ready_to_escape {
+            return false;
         }
 
         true
@@ -1175,6 +1197,8 @@ mod os {
             cmdline.extend(&arg);
             return
         }
+        
+        let has_outside_quotes = has_outside_quotes(&arg);
         cmdline.push('"' as u16);
         
         let mut i = 0;
@@ -1190,7 +1214,7 @@ mod os {
                     cmdline.push('\\' as u16);
                 }
                 break;
-            } else if arg[i] == b'"' as u16 {
+            } else if arg[i] == b'"' as u16 && !(has_outside_quotes && (i == 0 || i == (arg.len() - 1))) {
                 for _ in 0..num_backslashes*2 + 1 {
                     cmdline.push('\\' as u16);
                 }
