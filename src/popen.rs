@@ -1132,17 +1132,51 @@ mod os {
         Ok(OsString::from_wide(&cmdline))
     }
 
+    fn is_already_escaped(arg: &Vec<u16>) -> bool {
+        if arg.len() < 2 {
+            return false;
+        }
+
+        let has_outside_quotes = if arg[0] == b'"' as u16 && arg[arg.len() - 1] == b'"' as u16 && arg[arg.len() - 2] != b'\\' as u16 {
+            true
+        } else {
+            false
+        };
+
+        let (start, end) = if has_outside_quotes {
+            (1, arg.len() - 1)
+        } else {
+            (0, arg.len())
+        };
+        let mut i = start;
+        while i < end {
+            let c = arg[i];
+            if c == ' ' as u16 && !has_outside_quotes {
+                return false;
+            } else if c == '\t' as u16 || c == '\n' as u16 || c == '\x0b' as u16 {
+                return false;
+            } else if c == '\"' as u16 {
+                if i > 0 && arg[i - 1] != '\\' as u16 {
+                    return false;
+                } else if i == 0 {
+                    return false;
+                }
+            }
+            i += 1;
+        }
+
+        true
+    }
+
     // Translated from ArgvQuote at http://tinyurl.com/zmgtnls
     fn append_quoted(arg: &OsStr, cmdline: &mut Vec<u16>) {
-        if !arg.is_empty() && !arg.encode_wide().any(
-            |c| c == ' ' as u16 || c == '\t' as u16 || c == '\n' as u16 ||
-                c == '\x0b' as u16 || c == '\"' as u16) {
-            cmdline.extend(arg.encode_wide());
+        let arg: Vec<_> = arg.encode_wide().collect();
+        if is_already_escaped(&arg) {
+            cmdline.extend(&arg);
             return
         }
         cmdline.push('"' as u16);
         
-        let arg: Vec<_> = arg.encode_wide().collect();
         let mut i = 0;
         while i < arg.len() {
             let mut num_backslashes = 0;
