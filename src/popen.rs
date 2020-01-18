@@ -83,16 +83,16 @@ mod fileref {
     // it will be closed along with the last FileRef.  If unowned
     // (used for system streams), it will remain open.
 
-    use crate::os_common::Undropped;
     use std::fs::File;
     use std::ops::Deref;
     use std::rc::Rc;
+    use std::mem::ManuallyDrop;
 
     #[derive(Debug)]
     enum InnerFile {
         OwnedFile(File),
         RcFile(Rc<File>),
-        System(Undropped<File>),
+        System(ManuallyDrop<File>),
     }
 
     #[derive(Debug, Clone)]
@@ -105,7 +105,7 @@ mod fileref {
         pub fn from_rc(f: Rc<File>) -> FileRef {
             FileRef(Rc::new(InnerFile::RcFile(f)))
         }
-        pub fn from_system(f: Undropped<File>) -> FileRef {
+        pub fn from_system(f: ManuallyDrop<File>) -> FileRef {
             FileRef(Rc::new(InnerFile::System(f)))
         }
     }
@@ -117,7 +117,7 @@ mod fileref {
             match *self.0.deref() {
                 InnerFile::OwnedFile(ref f) => f,
                 InnerFile::RcFile(ref f) => f.deref(),
-                InnerFile::System(ref f) => f.get_ref(),
+                InnerFile::System(ref f) => f.deref(),
             }
         }
     }

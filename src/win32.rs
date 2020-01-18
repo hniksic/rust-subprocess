@@ -5,7 +5,7 @@ use std::io::{Error, Result};
 
 use std::ffi::OsStr;
 use std::iter;
-use std::mem;
+use std::mem::{self, ManuallyDrop};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::ptr;
@@ -22,7 +22,7 @@ use winapi::um::{handleapi, namedpipeapi, processenv, processthreadsapi, synchap
 pub use winapi::shared::winerror::{ERROR_ACCESS_DENIED, ERROR_BAD_PATHNAME};
 pub const STILL_ACTIVE: u32 = 259;
 
-use crate::os_common::{StandardStream, Undropped};
+use crate::os_common::StandardStream;
 
 #[derive(Debug)]
 pub struct Handle(RawHandle);
@@ -203,9 +203,9 @@ unsafe fn GetStdHandle(which: StandardStream) -> Result<RawHandle> {
     Ok(raw_handle)
 }
 
-pub fn get_standard_stream(which: StandardStream) -> Result<Undropped<File>> {
+pub fn get_standard_stream(which: StandardStream) -> Result<ManuallyDrop<File>> {
     unsafe {
         let raw = GetStdHandle(which)?;
-        Ok(Undropped::new(File::from_raw_handle(raw)))
+        Ok(ManuallyDrop::new(File::from_raw_handle(raw)))
     }
 }

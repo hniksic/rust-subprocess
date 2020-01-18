@@ -4,7 +4,7 @@ use std::ffi::{CString, OsStr, OsString};
 use std::fs::File;
 use std::io::{Error, Result};
 use std::iter;
-use std::mem;
+use std::mem::{self, ManuallyDrop};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::FromRawFd;
 use std::ptr;
@@ -12,7 +12,7 @@ use std::ptr;
 use libc;
 use libc::{c_char, c_int};
 
-use crate::os_common::{ExitStatus, StandardStream, Undropped};
+use crate::os_common::{ExitStatus, StandardStream};
 
 pub use libc::ECHILD;
 
@@ -338,13 +338,13 @@ pub fn dup2(oldfd: i32, newfd: i32) -> Result<()> {
     Ok(())
 }
 
-pub fn get_standard_stream(which: StandardStream) -> Result<Undropped<File>> {
+pub fn get_standard_stream(which: StandardStream) -> Result<ManuallyDrop<File>> {
     let fd = match which {
         StandardStream::Input => 0,
         StandardStream::Output => 1,
         StandardStream::Error => 2,
     };
-    unsafe { Ok(Undropped::new(File::from_raw_fd(fd))) }
+    unsafe { Ok(ManuallyDrop::new(File::from_raw_fd(fd))) }
 }
 
 pub fn reset_sigpipe() -> Result<()> {
