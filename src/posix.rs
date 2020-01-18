@@ -1,13 +1,13 @@
-use std::io::{Result, Error};
-use std::ffi::{OsStr, OsString, CString};
-use std::os::unix::ffi::OsStrExt;
+use std::cell::RefCell;
+use std::env;
+use std::ffi::{CString, OsStr, OsString};
 use std::fs::File;
+use std::io::{Error, Result};
+use std::iter;
+use std::mem;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::FromRawFd;
 use std::ptr;
-use std::mem;
-use std::iter;
-use std::env;
-use std::cell::RefCell;
 
 use libc;
 use libc::{c_char, c_int};
@@ -26,18 +26,16 @@ fn check_err<T: Ord + Default>(num: T) -> Result<T> {
 pub fn pipe() -> Result<(File, File)> {
     let mut fds = [0 as c_int; 2];
     check_err(unsafe { libc::pipe(fds.as_mut_ptr()) })?;
-    Ok(unsafe {
-        (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1]))
-    })
+    Ok(unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) })
 }
 
 // marked unsafe because the child must not allocate before exec-ing
 pub unsafe fn fork() -> Result<Option<u32>> {
     let pid = check_err(libc::fork())?;
     if pid == 0 {
-        Ok(None)                // child
+        Ok(None) // child
     } else {
-        Ok(Some(pid as u32))    // parent
+        Ok(Some(pid as u32)) // parent
     }
 }
 
@@ -57,8 +55,8 @@ fn os_to_cstring(s: &OsStr) -> Result<CString> {
         return Err(Error::from_raw_os_error(libc::EINVAL));
     }
     Ok(CString::new(bytes)
-       // not expected to fail on Unix, as Unix paths *are* C strings
-       .expect("converting Unix path to C string"))
+        // not expected to fail on Unix, as Unix paths *are* C strings
+        .expect("converting Unix path to C string"))
 }
 
 fn cstring_ptr(s: &CString) -> *const c_char {
@@ -78,14 +76,19 @@ struct CVec {
 }
 
 impl CVec {
-    fn new(slice: &[impl AsRef<OsStr>]) -> Result<CVec>
-    {
-        let maybe_vec_cstring: Result<Vec<CString>> = slice.iter()
-            .map(|x| os_to_cstring(x.as_ref())).collect();
+    fn new(slice: &[impl AsRef<OsStr>]) -> Result<CVec> {
+        let maybe_vec_cstring: Result<Vec<CString>> =
+            slice.iter().map(|x| os_to_cstring(x.as_ref())).collect();
         let vec_cstring = maybe_vec_cstring?;
-        let ptrs: Vec<_> = vec_cstring.iter().map(cstring_ptr)
-            .chain(iter::once(ptr::null())).collect();
-        Ok(CVec { strings: vec_cstring, ptrs })
+        let ptrs: Vec<_> = vec_cstring
+            .iter()
+            .map(cstring_ptr)
+            .chain(iter::once(ptr::null()))
+            .collect();
+        Ok(CVec {
+            strings: vec_cstring,
+            ptrs,
+        })
     }
 
     pub fn as_c_vec(&self) -> *const *const c_char {
@@ -138,9 +141,9 @@ fn split_path(path: &OsStr) -> SplitPath {
 #[cfg(test)]
 mod tests {
     use super::split_path;
+    use std;
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
-    use std;
 
     fn s(s: &str) -> Vec<&str> {
         split_path(OsStr::new(s))
@@ -178,9 +181,12 @@ struct FinishExec {
 }
 
 impl FinishExec {
-    fn new(cmd: OsString, argvec: CVec, envvec: Option<CVec>,
-           search_path: Option<OsString>)
-           -> FinishExec {
+    fn new(
+        cmd: OsString,
+        argvec: CVec,
+        envvec: Option<CVec>,
+        search_path: Option<OsString>,
+    ) -> FinishExec {
         // Avoid allocation after fork() by pre-allocating the buffer
         // that will be used for constructing the executable C string.
 
@@ -192,11 +198,15 @@ impl FinishExec {
             // PATH components, plus 1 for the intervening '/'.
             max_exe_len += 1 + split_path(search_path)
                 .map(|dir| dir.len())
-                .max().unwrap_or(0);
+                .max()
+                .unwrap_or(0);
         }
 
         FinishExec {
-            cmd, argvec, envvec, search_path,
+            cmd,
+            argvec,
+            envvec,
+            search_path,
             exe_buf: RefCell::new(Vec::with_capacity(max_exe_len)),
         }
     }
@@ -212,7 +222,7 @@ impl FinishExec {
                 self.set_exe(&[dir.as_bytes(), b"/", self.cmd.as_bytes()]);
                 self.exec().ok();
             }
-            return Err(Error::last_os_error())
+            return Err(Error::last_os_error());
         }
 
         self.set_exe(&[self.cmd.as_bytes()]);
@@ -236,25 +246,30 @@ impl FinishExec {
 
         unsafe {
             match self.envvec.as_ref() {
-                Some(ref envvec) =>
-                    libc::execve(exe_buf.as_ptr() as *const c_char,
-                                 self.argvec.as_c_vec(), envvec.as_c_vec()),
-                None =>
-                    libc::execv(exe_buf.as_ptr() as *const c_char,
-                                self.argvec.as_c_vec()),
+                Some(ref envvec) => libc::execve(
+                    exe_buf.as_ptr() as *const c_char,
+                    self.argvec.as_c_vec(),
+                    envvec.as_c_vec(),
+                ),
+                None => libc::execv(exe_buf.as_ptr() as *const c_char, self.argvec.as_c_vec()),
             }
         };
         Err(Error::last_os_error())
     }
 }
 
-pub fn stage_exec(cmd: impl AsRef<OsStr>, args: &[impl AsRef<OsStr>],
-                  env: Option<&[impl AsRef<OsStr>]>)
-                  -> Result<impl Fn() -> Result<()>>
-{
+pub fn stage_exec(
+    cmd: impl AsRef<OsStr>,
+    args: &[impl AsRef<OsStr>],
+    env: Option<&[impl AsRef<OsStr>]>,
+) -> Result<impl Fn() -> Result<()>> {
     let cmd = cmd.as_ref().to_owned();
     let argvec = CVec::new(args)?;
-    let envvec = if let Some(env) = env { Some(CVec::new(env)?) } else { None };
+    let envvec = if let Some(env) = env {
+        Some(CVec::new(env)?)
+    } else {
+        None
+    };
 
     let search_path = if !cmd.as_bytes().iter().any(|&b| b == b'/') {
         env::var_os("PATH")
@@ -277,8 +292,11 @@ pub const WNOHANG: i32 = libc::WNOHANG;
 pub fn waitpid(pid: u32, flags: i32) -> Result<(u32, ExitStatus)> {
     let mut status = 0 as c_int;
     let pid = check_err(unsafe {
-        libc::waitpid(pid as libc::pid_t, &mut status as *mut c_int,
-                      flags as c_int)
+        libc::waitpid(
+            pid as libc::pid_t,
+            &mut status as *mut c_int,
+            flags as c_int,
+        )
     })?;
     Ok((pid as u32, decode_exit_status(status)))
 }
@@ -295,12 +313,10 @@ fn decode_exit_status(status: i32) -> ExitStatus {
     }
 }
 
-pub use libc::{SIGTERM, SIGKILL};
+pub use libc::{SIGKILL, SIGTERM};
 
 pub fn kill(pid: u32, signal: i32) -> Result<()> {
-    check_err(unsafe {
-        libc::kill(pid as c_int, signal)
-    })?;
+    check_err(unsafe { libc::kill(pid as c_int, signal) })?;
     Ok(())
 }
 
@@ -318,9 +334,7 @@ pub fn fcntl(fd: i32, cmd: i32, arg1: Option<i32>) -> Result<i32> {
 }
 
 pub fn dup2(oldfd: i32, newfd: i32) -> Result<()> {
-    check_err(unsafe {
-        libc::dup2(oldfd, newfd)
-    })?;
+    check_err(unsafe { libc::dup2(oldfd, newfd) })?;
     Ok(())
 }
 
@@ -330,9 +344,7 @@ pub fn get_standard_stream(which: StandardStream) -> Result<Undropped<File>> {
         StandardStream::Output => 1,
         StandardStream::Error => 2,
     };
-    unsafe {
-        Ok(Undropped::new(File::from_raw_fd(fd)))
-    }
+    unsafe { Ok(Undropped::new(File::from_raw_fd(fd))) }
 }
 
 pub fn reset_sigpipe() -> Result<()> {
@@ -352,7 +364,11 @@ pub fn reset_sigpipe() -> Result<()> {
         let mut set: mem::MaybeUninit<libc::sigset_t> = mem::MaybeUninit::uninit();
         check_err(libc::sigemptyset(set.as_mut_ptr()))?;
         let set = set.assume_init();
-        check_err(libc::pthread_sigmask(libc::SIG_SETMASK, &set, ptr::null_mut()))?;
+        check_err(libc::pthread_sigmask(
+            libc::SIG_SETMASK,
+            &set,
+            ptr::null_mut(),
+        ))?;
         let ret = libc::signal(libc::SIGPIPE, libc::SIG_DFL);
         if ret == libc::SIG_ERR {
             return Err(Error::last_os_error());
@@ -377,26 +393,22 @@ impl PollFd {
     }
 }
 
-pub use libc::{
-    POLLIN,
-    POLLOUT,
-    POLLERR,
-    POLLHUP,
-    POLLPRI,
-    POLLNVAL,
-};
+pub use libc::{POLLERR, POLLHUP, POLLIN, POLLNVAL, POLLOUT, POLLPRI};
 
 pub fn poll(fds: &mut [PollFd], timeout: Option<u32>) -> Result<usize> {
     let cnt;
     let timeout = timeout
-        .map(|t|
-             if t > i32::max_value() as u32 { i32::max_value() }
-             else { t as i32 })
+        .map(|t| {
+            if t > i32::max_value() as u32 {
+                i32::max_value()
+            } else {
+                t as i32
+            }
+        })
         .unwrap_or(-1);
     unsafe {
         let fds_ptr = fds.as_ptr() as *mut libc::pollfd;
-        cnt = check_err(libc::poll(fds_ptr, fds.len() as libc::nfds_t,
-                                   timeout))?;
+        cnt = check_err(libc::poll(fds_ptr, fds.len() as libc::nfds_t, timeout))?;
     }
     Ok(cnt as usize)
 }

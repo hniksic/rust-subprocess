@@ -74,9 +74,9 @@
 
 #![warn(missing_docs)]
 
-mod popen;
-mod communicate;
 mod builder;
+mod communicate;
+mod popen;
 
 #[cfg(unix)]
 mod posix;
@@ -86,10 +86,9 @@ mod win32;
 
 mod os_common;
 
+pub use self::builder::{CaptureData, Exec, NullFile, Pipeline};
 pub use self::os_common::ExitStatus;
-pub use self::popen::{Popen, PopenConfig, Redirection, PopenError, Result,
-                      make_pipe};
-pub use self::builder::{Exec, NullFile, Pipeline, CaptureData};
+pub use self::popen::{make_pipe, Popen, PopenConfig, PopenError, Redirection, Result};
 
 /// Subprocess extensions for Unix platforms.
 pub mod unix {
@@ -98,10 +97,10 @@ pub mod unix {
 
 #[cfg(test)]
 mod tests {
+    mod builder;
     mod common;
     #[cfg(unix)]
     mod posix;
     #[cfg(windows)]
     mod win32;
-    mod builder;
 }

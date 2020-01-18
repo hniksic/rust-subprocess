@@ -1,25 +1,25 @@
 #![allow(non_snake_case, non_camel_case_types)]
 
-use std::io::{Result, Error};
 use std::fs::File;
+use std::io::{Error, Result};
 
-use std::os::windows::io::{RawHandle, FromRawHandle, AsRawHandle};
-use std::ptr;
-use std::mem;
 use std::ffi::OsStr;
-use std::os::windows::ffi::OsStrExt;
 use std::iter;
+use std::mem;
+use std::os::windows::ffi::OsStrExt;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
+use std::ptr;
 
 use winapi;
 use winapi::shared::minwindef::{BOOL, DWORD, LPVOID};
-use winapi::um::minwinbase::{SECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES};
-use winapi::um::processthreadsapi::{CreateProcessW, STARTUPINFOW, PROCESS_INFORMATION};
-use winapi::um::winnt::PHANDLE;
+use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
+use winapi::um::minwinbase::{LPSECURITY_ATTRIBUTES, SECURITY_ATTRIBUTES};
+use winapi::um::processthreadsapi::{CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW};
 use winapi::um::winbase::CREATE_UNICODE_ENVIRONMENT;
-use winapi::um::{handleapi, synchapi, namedpipeapi, processenv, processthreadsapi};
-use winapi::um::handleapi::{INVALID_HANDLE_VALUE, CloseHandle};
+use winapi::um::winnt::PHANDLE;
+use winapi::um::{handleapi, namedpipeapi, processenv, processthreadsapi, synchapi};
 
-pub use winapi::shared::winerror::{ERROR_BAD_PATHNAME, ERROR_ACCESS_DENIED};
+pub use winapi::shared::winerror::{ERROR_ACCESS_DENIED, ERROR_BAD_PATHNAME};
 pub const STILL_ACTIVE: u32 = 259;
 
 use crate::os_common::{StandardStream, Undropped};
@@ -31,7 +31,9 @@ unsafe impl Send for Handle {}
 
 impl Drop for Handle {
     fn drop(&mut self) {
-        unsafe { CloseHandle(self.as_raw_handle()); }
+        unsafe {
+            CloseHandle(self.as_raw_handle());
+        }
     }
 }
 
@@ -77,31 +79,35 @@ pub fn CreatePipe(inherit_handle: bool) -> Result<(File, File)> {
         lpSecurityDescriptor: ptr::null_mut(),
         bInheritHandle: inherit_handle as BOOL,
     };
-    let (mut r, mut w) = (ptr::null_mut(), ptr::null_mut()); 
+    let (mut r, mut w) = (ptr::null_mut(), ptr::null_mut());
     check(unsafe {
-        namedpipeapi::CreatePipe(&mut r as PHANDLE, &mut w as PHANDLE,
-                                 &mut attributes as LPSECURITY_ATTRIBUTES, 0)
+        namedpipeapi::CreatePipe(
+            &mut r as PHANDLE,
+            &mut w as PHANDLE,
+            &mut attributes as LPSECURITY_ATTRIBUTES,
+            0,
+        )
     })?;
     Ok(unsafe { (File::from_raw_handle(r), File::from_raw_handle(w)) })
 }
- 
+
 pub fn SetHandleInformation(handle: &File, dwMask: u32, dwFlags: u32) -> Result<()> {
-    check(unsafe {
-        handleapi::SetHandleInformation(handle.as_raw_handle(), dwMask, dwFlags)
-    })?;
+    check(unsafe { handleapi::SetHandleInformation(handle.as_raw_handle(), dwMask, dwFlags) })?;
     Ok(())
 }
 
-pub fn CreateProcess(appname: Option<&OsStr>,
-                     cmdline: &OsStr,
-                     env_block: &Option<Vec<u16>>,
-                     cwd: &Option<&OsStr>,
-                     inherit_handles: bool,
-                     mut creation_flags: u32,
-                     stdin: Option<RawHandle>,
-                     stdout: Option<RawHandle>,
-                     stderr: Option<RawHandle>,
-                     sinfo_flags: u32) -> Result<(Handle, u64)> {
+pub fn CreateProcess(
+    appname: Option<&OsStr>,
+    cmdline: &OsStr,
+    env_block: &Option<Vec<u16>>,
+    cwd: &Option<&OsStr>,
+    inherit_handles: bool,
+    mut creation_flags: u32,
+    stdin: Option<RawHandle>,
+    stdout: Option<RawHandle>,
+    stderr: Option<RawHandle>,
+    sinfo_flags: u32,
+) -> Result<(Handle, u64)> {
     let mut sinfo: STARTUPINFOW = unsafe { mem::zeroed() };
     sinfo.cb = mem::size_of::<STARTUPINFOW>() as DWORD;
     sinfo.hStdInput = stdin.unwrap_or(ptr::null_mut());
@@ -111,27 +117,35 @@ pub fn CreateProcess(appname: Option<&OsStr>,
     let mut pinfo: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let mut cmdline = to_nullterm(cmdline);
     let wc_appname = appname.map(to_nullterm);
-    let env_block_ptr = env_block.as_ref().map(|v| v.as_ptr())
+    let env_block_ptr = env_block
+        .as_ref()
+        .map(|v| v.as_ptr())
         .unwrap_or(ptr::null()) as LPVOID;
     let cwd = cwd.map(to_nullterm);
     creation_flags |= CREATE_UNICODE_ENVIRONMENT;
     check(unsafe {
-        CreateProcessW(wc_appname
-                           .as_ref().map(|v| v.as_ptr())
-                           .unwrap_or(ptr::null()),
-                       cmdline.as_mut_ptr(),
-                       ptr::null_mut(),   // lpProcessAttributes
-                       ptr::null_mut(),   // lpThreadAttributes
-                       inherit_handles as BOOL,  // bInheritHandles
-                       creation_flags,    // dwCreationFlags
-                       env_block_ptr,     // lpEnvironment
-                       cwd.as_ref().map(|v| v.as_ptr()).unwrap_or(ptr::null()),   // lpCurrentDirectory
-                       &mut sinfo,
-                       &mut pinfo)
+        CreateProcessW(
+            wc_appname
+                .as_ref()
+                .map(|v| v.as_ptr())
+                .unwrap_or(ptr::null()),
+            cmdline.as_mut_ptr(),
+            ptr::null_mut(),         // lpProcessAttributes
+            ptr::null_mut(),         // lpThreadAttributes
+            inherit_handles as BOOL, // bInheritHandles
+            creation_flags,          // dwCreationFlags
+            env_block_ptr,           // lpEnvironment
+            cwd.as_ref().map(|v| v.as_ptr()).unwrap_or(ptr::null()), // lpCurrentDirectory
+            &mut sinfo,
+            &mut pinfo,
+        )
     })?;
     unsafe {
         mem::drop(Handle::from_raw_handle(pinfo.hThread));
-        Ok((Handle::from_raw_handle(pinfo.hProcess), pinfo.dwProcessId as u64))
+        Ok((
+            Handle::from_raw_handle(pinfo.hProcess),
+            pinfo.dwProcessId as u64,
+        ))
     }
 }
 
@@ -141,8 +155,7 @@ pub enum WaitEvent {
     TIMEOUT,
 }
 
-pub fn WaitForSingleObject(handle: &Handle, duration: Option<u32>)
-                           -> Result<WaitEvent> {
+pub fn WaitForSingleObject(handle: &Handle, duration: Option<u32>) -> Result<WaitEvent> {
     const WAIT_ABANDONED: u32 = 0x80;
     const WAIT_OBJECT_0: u32 = 0x0;
     const WAIT_FAILED: u32 = 0xFFFFFFFF;
@@ -150,14 +163,17 @@ pub fn WaitForSingleObject(handle: &Handle, duration: Option<u32>)
     const INFINITE: u32 = 0xFFFFFFFF;
 
     let result = unsafe {
-        synchapi::WaitForSingleObject(handle.as_raw_handle(),
-                                      duration.unwrap_or(INFINITE))
+        synchapi::WaitForSingleObject(handle.as_raw_handle(), duration.unwrap_or(INFINITE))
     };
-    if result == WAIT_OBJECT_0 { Ok(WaitEvent::OBJECT_0) }
-    else if result == WAIT_ABANDONED { Ok(WaitEvent::ABANDONED) }
-    else if result == WAIT_TIMEOUT { Ok(WaitEvent::TIMEOUT) }
-    else if result == WAIT_FAILED { Err(Error::last_os_error()) }
-    else {
+    if result == WAIT_OBJECT_0 {
+        Ok(WaitEvent::OBJECT_0)
+    } else if result == WAIT_ABANDONED {
+        Ok(WaitEvent::ABANDONED)
+    } else if result == WAIT_TIMEOUT {
+        Ok(WaitEvent::TIMEOUT)
+    } else if result == WAIT_FAILED {
+        Err(Error::last_os_error())
+    } else {
         panic!(format!("WaitForSingleObject returned {}", result));
     }
 }
@@ -165,22 +181,19 @@ pub fn WaitForSingleObject(handle: &Handle, duration: Option<u32>)
 pub fn GetExitCodeProcess(handle: &Handle) -> Result<u32> {
     let mut exit_code = 0u32;
     check(unsafe {
-        processthreadsapi::GetExitCodeProcess(
-            handle.as_raw_handle(), &mut exit_code as *mut u32)
+        processthreadsapi::GetExitCodeProcess(handle.as_raw_handle(), &mut exit_code as *mut u32)
     })?;
     Ok(exit_code)
 }
 
 pub fn TerminateProcess(handle: &Handle, exit_code: u32) -> Result<()> {
-    check(unsafe {
-        processthreadsapi::TerminateProcess(handle.as_raw_handle(), exit_code)
-    })
+    check(unsafe { processthreadsapi::TerminateProcess(handle.as_raw_handle(), exit_code) })
 }
 
 unsafe fn GetStdHandle(which: StandardStream) -> Result<RawHandle> {
     // private/unsafe because the raw handle it returns must be
     // duplicated or leaked before converting to an owned Handle.
-    use winapi::um::winbase::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    use winapi::um::winbase::{STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
     let id = match which {
         StandardStream::Input => STD_INPUT_HANDLE,
         StandardStream::Output => STD_OUTPUT_HANDLE,

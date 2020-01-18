@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 
-use crate::{Popen, PopenConfig, ExitStatus, Redirection};
 use crate::unix::PopenExt;
+use crate::{ExitStatus, Popen, PopenConfig, Redirection};
 
 use libc;
 
@@ -15,8 +15,7 @@ fn err_terminate() {
 
 #[test]
 fn waitpid_echild() {
-    let mut p = Popen::create(&["true"], PopenConfig::default())
-        .unwrap();
+    let mut p = Popen::create(&["true"], PopenConfig::default()).unwrap();
     let pid = p.pid().unwrap() as i32;
     let mut status = 0 as libc::c_int;
     let wpid = unsafe { libc::waitpid(pid, &mut status, 0) };
@@ -34,25 +33,30 @@ fn send_signal() {
 
 #[test]
 fn env_set_all_1() {
-    let mut p = Popen::create(&["env"],
-                              PopenConfig {
-                                  stdout: Redirection::Pipe,
-                                  env: Some(Vec::new()),
-                                  ..Default::default()
-                              }).unwrap();
+    let mut p = Popen::create(
+        &["env"],
+        PopenConfig {
+            stdout: Redirection::Pipe,
+            env: Some(Vec::new()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let (out, _err) = p.communicate(None).unwrap();
     assert_eq!(out.unwrap(), "");
 }
 
 #[test]
 fn env_set_all_2() {
-    let mut p = Popen::create(&["env"],
-                              PopenConfig {
-                                  stdout: Redirection::Pipe,
-                                  env: Some(vec![(OsString::from("FOO"),
-                                                  OsString::from("bar"))]),
-                                  ..Default::default()
-                              }).unwrap();
+    let mut p = Popen::create(
+        &["env"],
+        PopenConfig {
+            stdout: Redirection::Pipe,
+            env: Some(vec![(OsString::from("FOO"), OsString::from("bar"))]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let (out, _err) = p.communicate(None).unwrap();
     assert_eq!(out.unwrap().trim_end(), "FOO=bar");
 }

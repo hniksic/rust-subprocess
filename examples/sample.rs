@@ -1,7 +1,7 @@
 extern crate subprocess;
 
-use subprocess::{Exec};
-use std::io::{BufReader, BufRead};
+use std::io::{BufRead, BufReader};
+use subprocess::Exec;
 
 fn main() {
     let x = Exec::cmd("ls").stream_stdout().unwrap();
