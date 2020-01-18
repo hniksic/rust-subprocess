@@ -31,8 +31,14 @@ pub fn pipe() -> Result<(File, File)> {
     })
 }
 
-pub fn fork() -> Result<u32> {
-    check_err(unsafe { libc::fork() }).map(|pid| pid as u32)
+// marked unsafe because the child must not allocate before exec-ing
+pub unsafe fn fork() -> Result<Option<u32>> {
+    let pid = check_err(libc::fork())?;
+    if pid == 0 {
+        Ok(None)                // child
+    } else {
+        Ok(Some(pid as u32))    // parent
+    }
 }
 
 fn os_to_cstring(s: &OsStr) -> Result<CString> {

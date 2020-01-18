@@ -681,25 +681,32 @@ mod os {
                 let cmd_to_exec = config.executable.as_ref().unwrap_or(&argv[0]);
                 let just_exec = posix::stage_exec(cmd_to_exec, &argv[..],
                                                   child_env.as_ref().map(::std::ops::Deref::deref))?;
-                let child_pid = posix::fork()?;
-                if child_pid == 0 {
-                    mem::drop(exec_fail_pipe.0);
-                    let result = self.do_exec(just_exec, child_ends,
-                                              config.cwd.as_ref().map(|x| &x[..]));
-                    // If we are here, it means that exec has failed.  Notify
-                    // the parent and exit.
-                    let error_code = match result {
-                        Ok(()) => unreachable!(),
-                        Err(e) => e.raw_os_error().unwrap_or(-1)
-                    } as u32;
-                    exec_fail_pipe.1.write_all(
-                        &[error_code as u8,
-                          (error_code >> 8) as u8,
-                          (error_code >> 16) as u8,
-                          (error_code >> 24) as u8]).ok();
-                    posix::_exit(127);
+                unsafe {
+                    // unsafe because after the call to fork() the
+                    // child is not allowed to allocate
+                    match posix::fork()? {
+                        Some(child_pid) => {
+                            self.child_state = Running { pid: child_pid, ext: () };
+                        }
+                        None => {
+                            mem::drop(exec_fail_pipe.0);
+                            let result = self.do_exec(just_exec, child_ends,
+                                                      config.cwd.as_ref().map(|x| &x[..]));
+                            // If we are here, it means that exec has failed.  Notify
+                            // the parent and exit.
+                            let error_code = match result {
+                                Ok(()) => unreachable!(),
+                                Err(e) => e.raw_os_error().unwrap_or(-1)
+                            } as u32;
+                            exec_fail_pipe.1.write_all(
+                                &[error_code as u8,
+                                  (error_code >> 8) as u8,
+                                  (error_code >> 16) as u8,
+                                  (error_code >> 24) as u8]).ok();
+                            posix::_exit(127);
+                        }
+                    }
                 }
-                self.child_state = Running { pid: child_pid, ext: () };
             }
             mem::drop(exec_fail_pipe.1);
             let mut error_buf = [0u8; 4];
