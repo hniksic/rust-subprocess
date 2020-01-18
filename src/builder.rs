@@ -373,7 +373,7 @@ mod exec {
         /// When the trait object is dropped, it will wait for the
         /// process to finish.  If this is undesirable, use
         /// `detached()`.
-        pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
+        pub fn stream_stdout(self) -> PopenResult<Box<dyn Read>> {
             self.check_no_stdin_data("stream_stdout");
             let p = self.stdout(Redirection::Pipe).popen()?;
             Ok(Box::new(ReadOutAdapter(p)))
@@ -389,7 +389,7 @@ mod exec {
         /// When the trait object is dropped, it will wait for the
         /// process to finish.  If this is undesirable, use
         /// `detached()`.
-        pub fn stream_stderr(self) -> PopenResult<Box<Read>> {
+        pub fn stream_stderr(self) -> PopenResult<Box<dyn Read>> {
             self.check_no_stdin_data("stream_stderr");
             let p = self.stderr(Redirection::Pipe).popen()?;
             Ok(Box::new(ReadErrAdapter(p)))
@@ -404,7 +404,7 @@ mod exec {
         /// When the trait object is dropped, it will wait for the
         /// process to finish.  If this is undesirable, use
         /// `detached()`.
-        pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
+        pub fn stream_stdin(self) -> PopenResult<Box<dyn Write>> {
             self.check_no_stdin_data("stream_stdin");
             let p = self.stdin(Redirection::Pipe).popen()?;
             Ok(Box::new(WriteAdapter(p)))
@@ -868,7 +868,7 @@ mod pipeline {
         /// When the trait object is dropped, it will wait for the
         /// pipeline to finish.  If this is undesirable, use
         /// `detached()`.
-        pub fn stream_stdout(self) -> PopenResult<Box<Read>> {
+        pub fn stream_stdout(self) -> PopenResult<Box<dyn Read>> {
             self.check_no_stdin_data("stream_stdout");
             let v = self.stdout(Redirection::Pipe).popen()?;
             Ok(Box::new(ReadPipelineAdapter(v)))
@@ -883,7 +883,7 @@ mod pipeline {
         /// When the trait object is dropped, it will wait for the
         /// process to finish.  If this is undesirable, use
         /// `detached()`.
-        pub fn stream_stdin(self) -> PopenResult<Box<Write>> {
+        pub fn stream_stdin(self) -> PopenResult<Box<dyn Write>> {
             self.check_no_stdin_data("stream_stdin");
             let v = self.stdin(Redirection::Pipe).popen()?;
             Ok(Box::new(WritePipelineAdapter(v)))

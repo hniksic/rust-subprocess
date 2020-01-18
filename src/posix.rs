@@ -234,7 +234,7 @@ impl FinishExec {
 }
 
 pub fn stage_exec<S1, S2, S3>(cmd: S1, args: &[S2], env: Option<&[S3]>)
-                             -> Result<Box<Fn() -> Result<()>>>
+                             -> Result<Box<dyn Fn() -> Result<()>>>
     where S1: AsRef<OsStr>, S2: AsRef<OsStr>, S3: AsRef<OsStr>
 {
     let cmd = cmd.as_ref().to_owned();

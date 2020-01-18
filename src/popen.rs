@@ -777,7 +777,7 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn do_exec(&self, just_exec: Box<Fn() -> IoResult<()>>,
+        fn do_exec(&self, just_exec: Box<dyn Fn() -> IoResult<()>>,
                    child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>),
                    cwd: Option<&OsStr>)
                    -> IoResult<()>;
@@ -785,7 +785,7 @@ mod os {
     }
 
     impl PopenOsImpl for Popen {
-        fn do_exec(&self, just_exec: Box<Fn() -> IoResult<()>>,
+        fn do_exec(&self, just_exec: Box<dyn Fn() -> IoResult<()>>,
                    child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>),
                    cwd: Option<&OsStr>)
                    -> IoResult<()> {
@@ -1224,10 +1224,10 @@ impl Error for PopenError {
         }
     }
 
-    fn cause(&self) -> Option<&Error> {
+    fn cause(&self) -> Option<&dyn Error> {
         match *self {
-            PopenError::Utf8Error(ref err) => Some(err as &Error),
-            PopenError::IoError(ref err) => Some(err as &Error),
+            PopenError::Utf8Error(ref err) => Some(err as &dyn Error),
+            PopenError::IoError(ref err) => Some(err as &dyn Error),
             PopenError::LogicError(_) => None,
         }
     }
