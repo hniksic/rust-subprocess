@@ -78,8 +78,7 @@ struct CVec {
 }
 
 impl CVec {
-    fn new<S>(slice: &[S]) -> Result<CVec>
-        where S: AsRef<OsStr>
+    fn new(slice: &[impl AsRef<OsStr>]) -> Result<CVec>
     {
         let maybe_vec_cstring: Result<Vec<CString>> = slice.iter()
             .map(|x| os_to_cstring(x.as_ref())).collect();

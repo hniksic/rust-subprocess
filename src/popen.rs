@@ -365,8 +365,8 @@ impl Popen {
     /// program running and then exiting with a failure code - this
     /// can be detected by calling the `wait` method to obtain its
     /// exit status.
-    pub fn create<S: AsRef<OsStr>>(argv: &[S], config: PopenConfig)
-                                   -> Result<Popen> {
+    pub fn create(argv: &[impl AsRef<OsStr>], config: PopenConfig)
+                  -> Result<Popen> {
         if argv.is_empty() {
             return Err(PopenError::LogicError("argv must not be empty"));
         }
