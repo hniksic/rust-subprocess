@@ -334,8 +334,9 @@ pub fn reset_sigpipe() -> Result<()> {
     // """
 
     unsafe {
-        let mut set: libc::sigset_t = mem::uninitialized();
-        check_err(libc::sigemptyset(&mut set))?;
+        let mut set: mem::MaybeUninit<libc::sigset_t> = mem::MaybeUninit::uninit();
+        check_err(libc::sigemptyset(set.as_mut_ptr()))?;
+        let set = set.assume_init();
         check_err(libc::pthread_sigmask(libc::SIG_SETMASK, &set, ptr::null_mut()))?;
         let ret = libc::signal(libc::SIGPIPE, libc::SIG_DFL);
         if ret == libc::SIG_ERR {
