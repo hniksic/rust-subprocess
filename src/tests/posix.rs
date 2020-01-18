@@ -54,5 +54,5 @@ fn env_set_all_2() {
                                   ..Default::default()
                               }).unwrap();
     let (out, _err) = p.communicate(None).unwrap();
-    assert_eq!(out.unwrap().trim_right(), "FOO=bar");
+    assert_eq!(out.unwrap().trim_end(), "FOO=bar");
 }
