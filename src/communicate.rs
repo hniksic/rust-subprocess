@@ -142,11 +142,11 @@ mod os {
             let (mut out_thr, mut err_thr) = (None, None);
             if stdout_ref.is_some() {
                 out_thr = Some(scope.spawn(
-                    move || comm_read(stdout_ref.take().unwrap())))
+                    move |_| comm_read(stdout_ref.take().unwrap())))
             }
             if stderr_ref.is_some() {
                 err_thr = Some(scope.spawn(
-                    move || comm_read(stderr_ref.take().unwrap())))
+                    move |_| comm_read(stderr_ref.take().unwrap())))
             }
             if stdin_ref.is_some() {
                 let input_data = input_data.expect(
@@ -157,7 +157,7 @@ mod os {
                 { Some(out_thr.join().unwrap()?) } else { None },
                 if let Some(err_thr) = err_thr
                 { Some(err_thr.join().unwrap()?) } else { None }))
-        })
+        }).unwrap()
     }
 
     pub fn communicate(stdin: &mut Option<File>,
