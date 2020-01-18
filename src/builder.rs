@@ -14,6 +14,9 @@ pub use self::os::*;
 pub use self::exec::{Exec, NullFile, CaptureData};
 pub use self::pipeline::Pipeline;
 
+#[cfg(unix)]
+pub use exec::unix;
+
 
 mod exec {
     use std::ffi::{OsStr, OsString};
@@ -649,6 +652,28 @@ mod exec {
             let null_file = OpenOptions::new().write(true)
                 .open(NULL_DEVICE).unwrap();
             OutputRedirection(Redirection::File(null_file))
+        }
+    }
+
+    #[cfg(unix)]
+    pub mod unix {
+        use super::Exec;
+
+        pub trait ExecExt {
+            fn setuid(self, uid: u32) -> Self;
+            fn setgid(self, gid: u32) -> Self;
+        }
+
+        impl ExecExt for Exec {
+            fn setuid(mut self, uid: u32) -> Exec {
+                self.config.setuid = Some(uid);
+                self
+            }
+
+            fn setgid(mut self, gid: u32) -> Exec {
+                self.config.setgid = Some(gid);
+                self
+            }
         }
     }
 }

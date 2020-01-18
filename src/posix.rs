@@ -41,6 +41,16 @@ pub unsafe fn fork() -> Result<Option<u32>> {
     }
 }
 
+pub fn setuid(uid: u32) -> Result<()> {
+    check_err(unsafe { libc::setuid(uid as libc::uid_t) })?;
+    Ok(())
+}
+
+pub fn setgid(gid: u32) -> Result<()> {
+    check_err(unsafe { libc::setgid(gid as libc::gid_t) })?;
+    Ok(())
+}
+
 fn os_to_cstring(s: &OsStr) -> Result<CString> {
     let bytes = s.as_bytes();
     if bytes.iter().any(|&b| b == 0) {

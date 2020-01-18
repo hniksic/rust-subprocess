@@ -187,7 +187,17 @@ pub struct PopenConfig {
     /// None means inherit the working directory from the parent.
     pub cwd: Option<OsString>,
 
-    // preexec_fn, close_fds...
+    /// Set user ID for the subprocess.
+    ///
+    /// If specified, calls `setuid()` before execing the child process.
+    #[cfg(unix)]
+    pub setuid: Option<u32>,
+
+    /// Set group ID for the subprocess.
+    ///
+    /// If specified, calls `setgid()` before execing the child process.
+    #[cfg(unix)]
+    pub setgid: Option<u32>,
 
     // force construction using ..Default::default()
     #[doc(hidden)]
@@ -213,6 +223,10 @@ impl PopenConfig {
             executable: self.executable.as_ref().cloned(),
             env: self.env.clone(),
             cwd: self.cwd.clone(),
+            #[cfg(unix)]
+            setuid: self.setuid.clone(),
+            #[cfg(unix)]
+            setgid: self.setgid.clone(),
             _use_default_to_construct: (),
         })
     }
@@ -238,6 +252,8 @@ impl Default for PopenConfig {
             executable: None,
             env: None,
             cwd: None,
+            #[cfg(unix)] setuid: None,
+            #[cfg(unix)] setgid: None,
             _use_default_to_construct: (),
         }
     }
@@ -690,8 +706,10 @@ mod os {
                         }
                         None => {
                             mem::drop(exec_fail_pipe.0);
-                            let result = self.do_exec(just_exec, child_ends,
-                                                      config.cwd.as_ref().map(|x| &x[..]));
+                            let result = Popen::do_exec(
+                                just_exec, child_ends,
+                                config.cwd.as_ref().map(|x| &x[..]),
+                                config.setuid, config.setgid);
                             // If we are here, it means that exec has failed.  Notify
                             // the parent and exit.
                             let error_code = match result {
@@ -784,17 +802,17 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn do_exec(&self, just_exec: impl Fn() -> IoResult<()>,
+        fn do_exec(just_exec: impl Fn() -> IoResult<()>,
                    child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>),
-                   cwd: Option<&OsStr>)
+                   cwd: Option<&OsStr>, setuid: Option<u32>, setgid: Option<u32>)
                    -> IoResult<()>;
         fn waitpid(&mut self, block: bool) -> IoResult<()>;
     }
 
     impl PopenOsImpl for Popen {
-        fn do_exec(&self, just_exec: impl Fn() -> IoResult<()>,
+        fn do_exec(just_exec: impl Fn() -> IoResult<()>,
                    child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>),
-                   cwd: Option<&OsStr>)
+                   cwd: Option<&OsStr>, setuid: Option<u32>, setgid: Option<u32>)
                    -> IoResult<()> {
             if let Some(cwd) = cwd {
                 env::set_current_dir(cwd)?;
@@ -817,6 +835,13 @@ mod os {
                 }
             }
             posix::reset_sigpipe()?;
+
+            if let Some(uid) = setuid {
+                posix::setuid(uid)?;
+            }
+            if let Some(gid) = setgid {
+                posix::setgid(gid)?;
+            }
             just_exec()?;
             unreachable!();
         }
