@@ -134,7 +134,7 @@ mod exec {
         /// none of the standard streams will be modified.
         ///
         /// [`Exec::shell`]: struct.Exec.html#method.shell
-        pub fn cmd<S: AsRef<OsStr>>(command: S) -> Exec {
+        pub fn cmd(command: impl AsRef<OsStr>) -> Exec {
             Exec {
                 command: command.as_ref().to_owned(),
                 args: vec![],
@@ -161,18 +161,18 @@ mod exec {
         /// prone to errors and, if `filename` comes from an untrusted
         /// source, to shell injection attacks.  Instead, use
         /// `Exec::cmd("sort").arg(filename)`.
-        pub fn shell<S: AsRef<OsStr>>(cmdstr: S) -> Exec {
+        pub fn shell(cmdstr: impl AsRef<OsStr>) -> Exec {
             Exec::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
         }
 
         /// Appends `arg` to argument list.
-        pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Exec {
+        pub fn arg(mut self, arg: impl AsRef<OsStr>) -> Exec {
             self.args.push(arg.as_ref().to_owned());
             self
         }
 
         /// Extends the argument list with `args`.
-        pub fn args<S: AsRef<OsStr>>(mut self, args: &[S]) -> Exec {
+        pub fn args(mut self, args: &[impl AsRef<OsStr>]) -> Exec {
             self.args.extend(args.iter().map(|x| x.as_ref().to_owned()));
             self
         }
@@ -210,9 +210,8 @@ mod exec {
         /// Other environment variables are by default inherited from
         /// the current process.  If this is undesirable, call
         /// `env_clear` first.
-        pub fn env<K, V>(mut self, key: K, value: V) -> Exec
-            where K: AsRef<OsStr>,
-                  V: AsRef<OsStr>
+        pub fn env(mut self,
+                   key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Exec
         {
             self.ensure_env();
             self.config.env.as_mut().unwrap().push((key.as_ref().to_owned(),
@@ -229,9 +228,8 @@ mod exec {
         /// Other environment variables are by default inherited from
         /// the current process.  If this is undesirable, call
         /// `env_clear` first.
-        pub fn env_extend<K, V>(mut self, vars: &[(K, V)]) -> Exec
-            where K: AsRef<OsStr>,
-                  V: AsRef<OsStr>
+        pub fn env_extend(mut self, vars: &[(impl AsRef<OsStr>,
+                                             impl AsRef<OsStr>)]) -> Exec
         {
             self.ensure_env();
             {
@@ -247,8 +245,7 @@ mod exec {
         /// Removes an environment variable from the child process.
         ///
         /// Other environment variables are inherited by default.
-        pub fn env_remove<K>(mut self, key: K) -> Exec
-            where K: AsRef<OsStr>
+        pub fn env_remove(mut self, key: impl AsRef<OsStr>) -> Exec
         {
             self.ensure_env();
             self.config.env.as_mut().unwrap().retain(
@@ -260,8 +257,7 @@ mod exec {
         ///
         /// If unspecified, the current working directory is inherited
         /// from the parent.
-        pub fn cwd<P>(mut self, dir: P) -> Exec
-            where P: AsRef<Path>
+        pub fn cwd(mut self, dir: impl AsRef<Path>) -> Exec
         {
             self.config.cwd = Some(dir.as_ref().as_os_str().to_owned());
             self
