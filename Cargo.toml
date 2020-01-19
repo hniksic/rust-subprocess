@@ -14,11 +14,11 @@ module, with Rust-specific extensions.
 edition = "2018"
 
 [dependencies]
-libc = "0.2.43"
+libc = "0.2.66"
 
 [target.'cfg(windows)'.dependencies]
 crossbeam-utils = "0.7"
-winapi = { version = "0.3.6", features = ["std", "handleapi", "namedpipeapi", "processenv", "synchapi", "winerror", "processthreadsapi", "winbase"] }
+winapi = { version = "0.3.8", features = ["std", "handleapi", "namedpipeapi", "processenv", "synchapi", "winerror", "processthreadsapi", "winbase"] }
 
 [dev-dependencies]
 tempdir = "0.3.7"
