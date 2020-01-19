@@ -138,8 +138,6 @@ mod os {
     use std::io::{Read, Result as IoResult, Write};
 
     fn comm_read(mut outfile: File) -> IoResult<Vec<u8>> {
-        // take() ensures stdin is closed when done writing, so the
-        // child receives EOF
         let mut contents = Vec::new();
         outfile.read_to_end(&mut contents)?;
         Ok(contents)
@@ -150,38 +148,37 @@ mod os {
         Ok(())
     }
 
-    pub fn comm_threaded(
-        stdin_ref: &mut Option<File>,
-        stdout_ref: &mut Option<File>,
-        stderr_ref: &mut Option<File>,
-        input_data: Option<&[u8]>,
-    ) -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        crossbeam_utils::thread::scope(move |scope| {
-            let (mut out_thr, mut err_thr) = (None, None);
-            if stdout_ref.is_some() {
-                out_thr = Some(scope.spawn(move |_| comm_read(stdout_ref.take().unwrap())))
-            }
-            if stderr_ref.is_some() {
-                err_thr = Some(scope.spawn(move |_| comm_read(stderr_ref.take().unwrap())))
-            }
-            if stdin_ref.is_some() {
-                let input_data = input_data.expect("must provide input to redirected stdin");
-                comm_write(stdin_ref.take().unwrap(), input_data)?;
-            }
-            Ok((
-                if let Some(out_thr) = out_thr {
-                    Some(out_thr.join().unwrap()?)
-                } else {
-                    None
-                },
-                if let Some(err_thr) = err_thr {
-                    Some(err_thr.join().unwrap()?)
-                } else {
-                    None
-                },
-            ))
-        })
-        .unwrap()
+    // Call up to three functions in parallel, starting as many threads as
+    // needed for the functions that are actually specified.
+    pub fn parallel_call<R1, R2, R3>(
+        f1: Option<impl FnOnce() -> R1 + Send>,
+        f2: Option<impl FnOnce() -> R2 + Send>,
+        f3: Option<impl FnOnce() -> R3 + Send>,
+    ) -> (Option<R1>, Option<R2>, Option<R3>)
+    where
+        R1: Send,
+        R2: Send,
+        R3: Send,
+    {
+        match (f1, f2, f3) {
+            // only create threads if necessary
+            (None, None, None) => (None, None, None),
+            (Some(f1), None, None) => (Some(f1()), None, None),
+            (None, Some(f2), None) => (None, Some(f2()), None),
+            (None, None, Some(f3)) => (None, None, Some(f3())),
+            (f1, f2, f3) => crossbeam_utils::thread::scope(move |scope| {
+                // run f2 and/or f3 in the background and let f1 run in our
+                // thread
+                let ta = f2.map(|f| scope.spawn(move |_| f()));
+                let tb = f3.map(|f| scope.spawn(move |_| f()));
+                (
+                    f1.map(|f| f()),
+                    ta.map(|t| t.join().unwrap()),
+                    tb.map(|t| t.join().unwrap()),
+                )
+            })
+            .unwrap(),
+        }
     }
 
     pub fn communicate(
@@ -190,32 +187,31 @@ mod os {
         stderr: &mut Option<File>,
         input_data: Option<&[u8]>,
     ) -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        match (stdin, stdout, stderr) {
-            (stdin_ref @ &mut Some(..), &mut None, &mut None) => {
-                let input_data = input_data.expect("must provide input to redirected stdin");
-                comm_write(stdin_ref.take().unwrap(), input_data)?;
-                Ok((None, None))
-            }
-            (&mut None, stdout_ref @ &mut Some(..), &mut None) => {
-                assert!(
-                    input_data.is_none(),
-                    "cannot provide input to non-redirected stdin"
-                );
-                let out = comm_read(stdout_ref.take().unwrap())?;
-                Ok((Some(out), None))
-            }
-            (&mut None, &mut None, stderr_ref @ &mut Some(..)) => {
-                assert!(
-                    input_data.is_none(),
-                    "cannot provide input to non-redirected stdin"
-                );
-                let err = comm_read(stderr_ref.take().unwrap())?;
-                Ok((None, Some(err)))
-            }
-            (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) => {
-                comm_threaded(stdin_ref, stdout_ref, stderr_ref, input_data)
-            }
+        let write_in_fn = stdin.take().map(|in_| {
+            let input_data = input_data.expect("must provide input to redirected stdin");
+            move || comm_write(in_, input_data)
+        });
+        if write_in_fn.is_none() && input_data.is_some() {
+            panic!("cannot provide input to non-redirected stdin");
         }
+        let read_out_fn = stdout.take().map(|out| || comm_read(out));
+        let read_err_fn = stderr.take().map(|err| || comm_read(err));
+        let (out, err, write_ret) = parallel_call(read_out_fn, read_err_fn, write_in_fn);
+        if let Some(write_ret) = write_ret {
+            let () = write_ret?;
+        }
+        Ok((
+            if let Some(out) = out {
+                Some(out?)
+            } else {
+                None
+            },
+            if let Some(err) = err {
+                Some(err?)
+            } else {
+                None
+            },
+        ))
     }
 }
 
