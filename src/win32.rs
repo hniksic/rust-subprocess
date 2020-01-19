@@ -5,10 +5,11 @@ use std::io::{Error, Result};
 
 use std::ffi::OsStr;
 use std::iter;
-use std::mem::{self, ManuallyDrop};
+use std::mem;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::ptr;
+use std::rc::Rc;
 
 use winapi;
 use winapi::shared::minwindef::{BOOL, DWORD, LPVOID};
@@ -203,9 +204,13 @@ unsafe fn GetStdHandle(which: StandardStream) -> Result<RawHandle> {
     Ok(raw_handle)
 }
 
-pub fn get_standard_stream(which: StandardStream) -> Result<ManuallyDrop<File>> {
+pub fn make_standard_stream(which: StandardStream) -> Result<Rc<File>> {
     unsafe {
         let raw = GetStdHandle(which)?;
-        Ok(ManuallyDrop::new(File::from_raw_handle(raw)))
+        let stream = Rc::new(File::from_raw_handle(raw));
+        // Leak the Rc so the object we return doesn't close the underlying
+        // system handle.
+        mem::forget(stream.clone());
+        Ok(stream)
     }
 }

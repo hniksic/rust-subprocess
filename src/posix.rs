@@ -4,10 +4,11 @@ use std::ffi::{CString, OsStr, OsString};
 use std::fs::File;
 use std::io::{Error, Result};
 use std::iter;
-use std::mem::{self, ManuallyDrop};
+use std::mem;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::FromRawFd;
+use std::os::unix::io::{FromRawFd, RawFd};
 use std::ptr;
+use std::rc::Rc;
 
 use libc;
 use libc::{c_char, c_int};
@@ -338,13 +339,13 @@ pub fn dup2(oldfd: i32, newfd: i32) -> Result<()> {
     Ok(())
 }
 
-pub fn get_standard_stream(which: StandardStream) -> Result<ManuallyDrop<File>> {
-    let fd = match which {
-        StandardStream::Input => 0,
-        StandardStream::Output => 1,
-        StandardStream::Error => 2,
-    };
-    unsafe { Ok(ManuallyDrop::new(File::from_raw_fd(fd))) }
+pub fn make_standard_stream(which: StandardStream) -> Result<Rc<File>> {
+    let stream = Rc::new(unsafe { File::from_raw_fd(which as RawFd) });
+    // Leak the Rc so the object we return doesn't close the underlying file
+    // descriptor.  We didn't open it, and it is shared by everything else, so
+    // we are not allowed to close it either.
+    mem::forget(stream.clone());
+    Ok(stream)
 }
 
 pub fn reset_sigpipe() -> Result<()> {

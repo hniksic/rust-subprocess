@@ -11,7 +11,7 @@ use std::string::FromUtf8Error;
 use std::time::Duration;
 
 use crate::communicate;
-use crate::os_common::{ExitStatus, StandardStream};
+use crate::os_common::{self, ExitStatus, StandardStream};
 
 use self::ChildState::*;
 
@@ -86,13 +86,11 @@ mod fileref {
     use std::fs::File;
     use std::ops::Deref;
     use std::rc::Rc;
-    use std::mem::ManuallyDrop;
 
     #[derive(Debug)]
     enum InnerFile {
         OwnedFile(File),
         RcFile(Rc<File>),
-        System(ManuallyDrop<File>),
     }
 
     #[derive(Debug, Clone)]
@@ -105,9 +103,6 @@ mod fileref {
         pub fn from_rc(f: Rc<File>) -> FileRef {
             FileRef(Rc::new(InnerFile::RcFile(f)))
         }
-        pub fn from_system(f: ManuallyDrop<File>) -> FileRef {
-            FileRef(Rc::new(InnerFile::System(f)))
-        }
     }
 
     impl Deref for FileRef {
@@ -117,7 +112,6 @@ mod fileref {
             match *self.0.deref() {
                 InnerFile::OwnedFile(ref f) => f,
                 InnerFile::RcFile(ref f) => f.deref(),
-                InnerFile::System(ref f) => f.deref(),
             }
         }
     }
@@ -436,7 +430,7 @@ impl Popen {
             // the same File.  If the file is unavailable, use the
             // appropriate system output stream.
             if src.is_none() {
-                *src = Some(FileRef::from_system(os::get_standard_stream(src_id)?));
+                *src = Some(FileRef::from_rc(os_common::get_standard_stream(src_id)?));
             }
             *dest = Some(src.as_ref().unwrap().clone());
             Ok(())
@@ -932,8 +926,6 @@ mod os {
         posix::pipe()
     }
 
-    pub use posix::get_standard_stream;
-
     pub mod ext {
         use crate::popen::ChildState::*;
         use crate::popen::Popen;
@@ -1150,7 +1142,7 @@ mod os {
         // failing because the shell tries to redirect stdout to
         // stderr, but fails because it didn't receive a valid stdout.
         if stream.is_none() {
-            *stream = Some(FileRef::from_system(get_standard_stream(which)?));
+            *stream = Some(FileRef::from_rc(os_common::get_standard_stream(which)?));
         }
         Ok(())
     }
@@ -1251,8 +1243,6 @@ mod os {
         }
         cmdline.push('"' as u16);
     }
-
-    pub use win32::get_standard_stream;
 
     pub mod ext {}
 }
