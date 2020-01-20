@@ -2,8 +2,8 @@ use tempdir::TempDir;
 
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
-use std::io::Read;
 use std::io::Write;
+use std::io::{self, Read};
 use std::time::Duration;
 
 use crate::{ExitStatus, Popen, PopenConfig, PopenError, Redirection};
@@ -239,6 +239,25 @@ fn communicate_input_output_long() {
         assert!(false);
     }
     assert!(p.wait().unwrap().success());
+}
+
+#[test]
+fn communicate_timeout() {
+    let mut p = Popen::create(
+        &["sh", "-c", "echo foo; sleep 1"],
+        PopenConfig {
+            stdout: Redirection::Pipe,
+            stderr: Redirection::Pipe,
+            communicate_timeout: Some(Duration::from_millis(100)),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    match p.communicate_bytes(None) {
+        Err(e) => assert_eq!(e.kind(), io::ErrorKind::Interrupted),
+        other => panic!("unexpected result {:?}", other),
+    }
+    p.kill().unwrap();
 }
 
 #[test]

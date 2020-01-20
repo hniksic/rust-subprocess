@@ -67,6 +67,7 @@ pub struct Popen {
 
     child_state: ChildState,
     detached: bool,
+    communicate_timeout: Option<Duration>,
 }
 
 #[derive(Debug)]
@@ -189,6 +190,9 @@ pub struct PopenConfig {
     #[cfg(unix)]
     pub setgid: Option<u32>,
 
+    /// Timeout for the call to `communicate()` or `communicate_bytes()`.
+    pub communicate_timeout: Option<Duration>,
+
     // force construction using ..Default::default()
     #[doc(hidden)]
     pub _use_default_to_construct: (),
@@ -217,6 +221,7 @@ impl PopenConfig {
             setuid: self.setuid.clone(),
             #[cfg(unix)]
             setgid: self.setgid.clone(),
+            communicate_timeout: self.communicate_timeout.clone(),
             _use_default_to_construct: (),
         })
     }
@@ -246,6 +251,7 @@ impl Default for PopenConfig {
             setuid: None,
             #[cfg(unix)]
             setgid: None,
+            communicate_timeout: None,
             _use_default_to_construct: (),
         }
     }
@@ -368,6 +374,7 @@ impl Popen {
             stderr: None,
             child_state: ChildState::Preparing,
             detached: config.detached,
+            communicate_timeout: config.communicate_timeout,
         };
         inst.os_start(argv, config)?;
         Ok(inst)
@@ -558,6 +565,7 @@ impl Popen {
             &mut self.stdout,
             &mut self.stderr,
             input_data,
+            self.communicate_timeout,
         )
     }
 

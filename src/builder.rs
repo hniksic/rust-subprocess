@@ -936,6 +936,7 @@ mod pipeline {
                 &mut last.stdout,
                 &mut Some(err_read),
                 stdin_data.as_ref().map(|v| &v[..]),
+                None,
             )?;
             let out = out.unwrap_or_else(Vec::new);
             let err = err.unwrap();

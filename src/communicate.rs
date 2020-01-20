@@ -5,11 +5,22 @@ mod os {
     use std::fs::File;
     use std::io::{self, Read, Write};
     use std::os::unix::io::AsRawFd;
+    use std::time::{Duration, Instant};
+
+    fn millisecs_until(t: Instant) -> u32 {
+        let now = Instant::now();
+        if t <= now {
+            return 0;
+        }
+        let diff = t - now;
+        (diff.as_secs() * 1000) as u32 + diff.subsec_millis()
+    }
 
     fn poll3(
         fin: Option<&File>,
         fout: Option<&File>,
         ferr: Option<&File>,
+        deadline: Option<Instant>,
     ) -> io::Result<(bool, bool, bool)> {
         fn to_poll(f: Option<&File>, for_read: bool) -> posix::PollFd {
             let optfd = f.map(File::as_raw_fd);
@@ -26,7 +37,7 @@ mod os {
             to_poll(fout, true),
             to_poll(ferr, true),
         ];
-        posix::poll(&mut fds, None)?;
+        posix::poll(&mut fds, deadline.map(millisecs_until))?;
 
         Ok((
             fds[0].test(posix::POLLOUT | posix::POLLHUP),
@@ -40,10 +51,10 @@ mod os {
         stdout_ref: &mut Option<File>,
         stderr_ref: &mut Option<File>,
         mut input_data: &[u8],
+        deadline: Option<Instant>,
     ) -> io::Result<(Vec<u8>, Vec<u8>)> {
-        // Note: chunk size for writing must be smaller than the pipe
-        // buffer size.  A large enough write to a blocking deadlocks
-        // despite the use of poll() to check that it's ok to write.
+        // Note: chunk size for writing must be smaller than the pipe buffer
+        // size.  A large enough write to a pipe deadlocks despite polling.
         const WRITE_SIZE: usize = 4096;
 
         let mut stdout_ref = stdout_ref.as_ref();
@@ -58,9 +69,9 @@ mod os {
                 // writing, we no longer need polling.  When no stream
                 // remains, we are done.
                 (Some(..), None, None) => {
-                    stdin_ref.as_ref().unwrap().write_all(input_data)?;
-                    // close stdin when done writing, so the child receives EOF
-                    stdin_ref.take();
+                    // take() to close stdin when done writing, so the child
+                    // receives EOF
+                    stdin_ref.take().unwrap().write_all(input_data)?;
                     break;
                 }
                 (None, Some(ref mut stdout), None) => {
@@ -76,7 +87,10 @@ mod os {
             }
 
             let (in_ready, out_ready, err_ready) =
-                poll3(stdin_ref.as_ref(), stdout_ref, stderr_ref)?;
+                poll3(stdin_ref.as_ref(), stdout_ref, stderr_ref, deadline)?;
+            if !in_ready && !out_ready && !err_ready {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "timeout"));
+            }
             if in_ready {
                 let chunk = &input_data[..min(WRITE_SIZE, input_data.len())];
                 let n = stdin_ref.as_ref().unwrap().write(chunk)?;
@@ -114,6 +128,7 @@ mod os {
         stdout_ref: &mut Option<File>,
         stderr_ref: &mut Option<File>,
         input_data: Option<&[u8]>,
+        timeout: Option<Duration>,
     ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         if stdin_ref.is_some() {
             input_data.expect("must provide input to redirected stdin");
@@ -124,7 +139,13 @@ mod os {
             );
         }
         let input_data = input_data.unwrap_or(b"");
-        let (out, err) = comm_poll(stdin_ref, stdout_ref, stderr_ref, input_data)?;
+        let (out, err) = comm_poll(
+            stdin_ref,
+            stdout_ref,
+            stderr_ref,
+            input_data,
+            timeout.map(|d| Instant::now() + d),
+        )?;
         Ok((
             stdout_ref.as_ref().map(|_| out),
             stderr_ref.as_ref().map(|_| err),
@@ -136,17 +157,10 @@ mod os {
 mod os {
     use std::fs::File;
     use std::io::{self, Read, Write};
-
-    fn comm_read(mut outfile: File) -> io::Result<Vec<u8>> {
-        let mut contents = Vec::new();
-        outfile.read_to_end(&mut contents)?;
-        Ok(contents)
-    }
-
-    fn comm_write(mut infile: File, input_data: &[u8]) -> io::Result<()> {
-        infile.write_all(input_data)?;
-        Ok(())
-    }
+    use std::mem;
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     // Call up to three functions in parallel, starting as many threads as
     // needed for the functions that are actually specified.
@@ -181,22 +195,26 @@ mod os {
         }
     }
 
-    pub fn communicate(
+    fn read_all(mut source: File) -> io::Result<Vec<u8>> {
+        let mut out = vec![];
+        source.read_to_end(&mut out)?;
+        Ok(out)
+    }
+
+    pub fn communicate_sans_timeout(
         stdin: &mut Option<File>,
         stdout: &mut Option<File>,
         stderr: &mut Option<File>,
         input_data: Option<&[u8]>,
     ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        let write_in_fn = stdin.take().map(|in_| {
+        let read_out_fn = stdout.take().map(|out| || read_all(out));
+        let read_err_fn = stderr.take().map(|err| || read_all(err));
+        let write_in_fn = stdin.take().map(|mut in_| {
             let input_data = input_data.expect("must provide input to redirected stdin");
-            move || comm_write(in_, input_data)
+            move || in_.write_all(&input_data)
         });
-        if write_in_fn.is_none() && input_data.is_some() {
-            panic!("cannot provide input to non-redirected stdin");
-        }
-        let read_out_fn = stdout.take().map(|out| || comm_read(out));
-        let read_err_fn = stderr.take().map(|err| || comm_read(err));
         let (out, err, write_ret) = parallel_call(read_out_fn, read_err_fn, write_in_fn);
+
         if let Some(write_ret) = write_ret {
             let () = write_ret?;
         }
@@ -212,6 +230,132 @@ mod os {
                 None
             },
         ))
+    }
+
+    fn spawn_worker<T: Send + 'static>(
+        active_workers: &mut u8,
+        tx: T,
+        f: impl FnOnce(T) + Send + 'static,
+    ) -> thread::JoinHandle<()> {
+        *active_workers += 1;
+        thread::spawn(move || f(tx))
+    }
+
+    #[derive(Debug, Copy, Clone)]
+    enum StreamIdent {
+        In,
+        Out,
+        Err,
+    }
+
+    fn read_chunks(
+        mut outfile: File,
+        ident: StreamIdent,
+        sink: mpsc::Sender<io::Result<(StreamIdent, Vec<u8>)>>,
+    ) {
+        let mut chunk = [0u8; 1024];
+        loop {
+            match outfile.read(&mut chunk) {
+                Ok(nread) => {
+                    if let Err(_) = sink.send(Ok((ident, chunk[..nread].to_vec()))) {
+                        // sending will fail if the other worker reports a
+                        // read error and the main thread gives up
+                        break;
+                    }
+                    if nread == 0 {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = sink.send(Err(e));
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn communicate_with_timeout(
+        stdin: &mut Option<File>,
+        stdout: &mut Option<File>,
+        stderr: &mut Option<File>,
+        input_data: Option<&[u8]>,
+        timeout: Duration,
+    ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        let deadline = Instant::now() + timeout;
+
+        let (mut outvec, mut errvec) = (None, None);
+        let read_stdout = stdout.take().map(|outfile| {
+            outvec = Some(vec![]);
+            |tx| read_chunks(outfile, StreamIdent::Out, tx)
+        });
+        let read_stderr = stderr.take().map(|errfile| {
+            errvec = Some(vec![]);
+            |tx| read_chunks(errfile, StreamIdent::Err, tx)
+        });
+        let write_stdin = stdin.take().map(|mut in_| {
+            // when using timeout we must make a copy of input_data
+            // because its ownership must be kept by the threads
+            let input_data = input_data
+                .expect("must provide input to redirected stdin")
+                .to_vec();
+            move |tx: mpsc::Sender<_>| match in_.write_all(&input_data) {
+                Ok(()) => mem::drop(tx.send(Ok((StreamIdent::In, vec![])))),
+                Err(e) => mem::drop(tx.send(Err(e))),
+            }
+        });
+
+        let mut active_cnt = 0u8;
+        let (tx, rx) = mpsc::channel::<io::Result<(StreamIdent, Vec<u8>)>>();
+
+        read_stdout.map(|f| spawn_worker(&mut active_cnt, tx.clone(), f));
+        read_stderr.map(|f| spawn_worker(&mut active_cnt, tx.clone(), f));
+        write_stdin.map(|f| spawn_worker(&mut active_cnt, tx.clone(), f));
+
+        while active_cnt != 0 {
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "timeout"));
+            }
+            match rx.recv_timeout(deadline - now) {
+                Ok(Ok((ident, data))) => {
+                    match ident {
+                        StreamIdent::Out => outvec.as_mut().unwrap().extend_from_slice(&data),
+                        StreamIdent::Err => errvec.as_mut().unwrap().extend_from_slice(&data),
+                        StreamIdent::In => (),
+                    }
+                    if data.len() == 0 {
+                        active_cnt -= 1;
+                    }
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err(io::Error::new(io::ErrorKind::Interrupted, "timeout"))
+                }
+                // we should never be disconnected, as the threads must
+                // announce that they're leaving (and because we hold a clone
+                // of the sender)
+                Err(RecvTimeoutError::Disconnected) => unreachable!(),
+            }
+        }
+
+        Ok((outvec, errvec))
+    }
+
+    pub fn communicate(
+        stdin: &mut Option<File>,
+        stdout: &mut Option<File>,
+        stderr: &mut Option<File>,
+        input_data: Option<&[u8]>,
+        timeout: Option<Duration>,
+    ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        if stdin.is_none() && input_data.is_some() {
+            panic!("cannot provide input to non-redirected stdin");
+        }
+        if let Some(timeout) = timeout {
+            communicate_with_timeout(stdin, stdout, stderr, input_data, timeout)
+        } else {
+            communicate_sans_timeout(stdin, stdout, stderr, input_data)
+        }
     }
 }
 
