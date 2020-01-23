@@ -60,15 +60,10 @@ fn os_to_cstring(s: &OsStr) -> Result<CString> {
         .expect("converting Unix path to C string"))
 }
 
-fn cstring_ptr(s: &CString) -> *const c_char {
-    s.as_bytes_with_nul().as_ptr() as _
-}
-
 #[derive(Debug)]
 struct CVec {
-    // Individual C strings; they are not unused as rustc thinks, they
-    // are pointed to by elements of self.ptrs.
-    #[allow(dead_code)]
+    // Individual C strings.  Each element self.ptrs[i] points to the
+    // data of self.strings[i].as_bytes_with_nul().as_ptr().
     strings: Vec<CString>,
 
     // nullptr-terminated vector of pointers to data inside
@@ -78,18 +73,15 @@ struct CVec {
 
 impl CVec {
     fn new(slice: &[impl AsRef<OsStr>]) -> Result<CVec> {
-        let maybe_vec_cstring: Result<Vec<CString>> =
+        let maybe_strings: Result<Vec<CString>> =
             slice.iter().map(|x| os_to_cstring(x.as_ref())).collect();
-        let vec_cstring = maybe_vec_cstring?;
-        let ptrs: Vec<_> = vec_cstring
+        let strings = maybe_strings?;
+        let ptrs: Vec<_> = strings
             .iter()
-            .map(cstring_ptr)
+            .map(|s| s.as_bytes_with_nul().as_ptr() as *const c_char)
             .chain(iter::once(ptr::null()))
             .collect();
-        Ok(CVec {
-            strings: vec_cstring,
-            ptrs,
-        })
+        Ok(CVec { strings, ptrs })
     }
 
     pub fn as_c_vec(&self) -> *const *const c_char {
