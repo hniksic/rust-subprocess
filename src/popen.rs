@@ -4,7 +4,6 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::File;
 use std::io;
-use std::io::Result as IoResult;
 use std::rc::Rc;
 use std::result;
 use std::string::FromUtf8Error;
@@ -205,7 +204,7 @@ impl PopenConfig {
     ///
     /// [`PopenConfig`]: struct.PopenConfig.html
     /// [`Redirection::File`]: enum.Redirection.html#variant.File
-    pub fn try_clone(&self) -> IoResult<PopenConfig> {
+    pub fn try_clone(&self) -> io::Result<PopenConfig> {
         Ok(PopenConfig {
             stdin: self.stdin.try_clone()?,
             stdout: self.stdout.try_clone()?,
@@ -321,7 +320,7 @@ impl Redirection {
     /// Clone the underlying `Redirection`, or return an error.
     ///
     /// Can fail in `File` variant.
-    pub fn try_clone(&self) -> IoResult<Redirection> {
+    pub fn try_clone(&self) -> io::Result<Redirection> {
         Ok(match *self {
             Redirection::None => Redirection::None,
             Redirection::Pipe => Redirection::Pipe,
@@ -408,13 +407,13 @@ impl Popen {
             *child_ref = Some(FileRef::from_owned(child_end));
             Ok(())
         }
-        fn prepare_file(file: File, child_ref: &mut Option<FileRef>) -> IoResult<()> {
+        fn prepare_file(file: File, child_ref: &mut Option<FileRef>) -> io::Result<()> {
             // Make the File inheritable and store it for use in the child.
             os::set_inheritable(&file, true)?;
             *child_ref = Some(FileRef::from_owned(file));
             Ok(())
         }
-        fn prepare_rc_file(file: Rc<File>, child_ref: &mut Option<FileRef>) -> IoResult<()> {
+        fn prepare_rc_file(file: Rc<File>, child_ref: &mut Option<FileRef>) -> io::Result<()> {
             // Like prepare_file, but for Rc<File>
             use std::ops::Deref;
             os::set_inheritable(file.deref(), true)?;
@@ -425,7 +424,7 @@ impl Popen {
             dest: &mut Option<FileRef>,
             src: &mut Option<FileRef>,
             src_id: StandardStream,
-        ) -> IoResult<()> {
+        ) -> io::Result<()> {
             // For Redirection::Merge, make stdout and stderr refer to
             // the same File.  If the file is unavailable, use the
             // appropriate system output stream.
@@ -553,7 +552,7 @@ impl Popen {
     pub fn communicate_bytes(
         &mut self,
         input_data: Option<&[u8]>,
-    ) -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+    ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         communicate::communicate(
             &mut self.stdin,
             &mut self.stdout,
@@ -646,7 +645,7 @@ impl Popen {
     /// child process, which can be caught by the child in order to
     /// perform cleanup before exiting.  On Windows, it is equivalent
     /// to `kill()`.
-    pub fn terminate(&mut self) -> IoResult<()> {
+    pub fn terminate(&mut self) -> io::Result<()> {
         self.os_terminate()
     }
 
@@ -659,7 +658,7 @@ impl Popen {
     /// handle with equivalent semantics.
     ///
     /// [`TerminateProcess`]: https://msdn.microsoft.com/en-us/library/windows/desktop/ms686714(v=vs.85).aspx
-    pub fn kill(&mut self) -> IoResult<()> {
+    pub fn kill(&mut self) -> io::Result<()> {
         self.os_kill()
     }
 }
@@ -668,8 +667,8 @@ trait PopenOs {
     fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig) -> Result<()>;
     fn os_wait(&mut self) -> Result<ExitStatus>;
     fn os_wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>>;
-    fn os_terminate(&mut self) -> IoResult<()>;
-    fn os_kill(&mut self) -> IoResult<()>;
+    fn os_terminate(&mut self) -> io::Result<()>;
+    fn os_kill(&mut self) -> io::Result<()>;
 }
 
 #[cfg(unix)]
@@ -680,8 +679,7 @@ mod os {
     use std::collections::HashSet;
     use std::ffi::OsString;
     use std::fs::File;
-    use std::io;
-    use std::io::{Read, Result as IoResult, Write};
+    use std::io::{self, Read, Write};
     use std::mem;
     use std::os::unix::io::AsRawFd;
     use std::time::{Duration, Instant};
@@ -795,11 +793,11 @@ mod os {
             }
         }
 
-        fn os_terminate(&mut self) -> IoResult<()> {
+        fn os_terminate(&mut self) -> io::Result<()> {
             self.send_signal(posix::SIGTERM)
         }
 
-        fn os_kill(&mut self) -> IoResult<()> {
+        fn os_kill(&mut self) -> io::Result<()> {
             self.send_signal(posix::SIGKILL)
         }
     }
@@ -826,23 +824,23 @@ mod os {
 
     trait PopenOsImpl: super::PopenOs {
         fn do_exec(
-            just_exec: impl Fn() -> IoResult<()>,
+            just_exec: impl Fn() -> io::Result<()>,
             child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>),
             cwd: Option<&OsStr>,
             setuid: Option<u32>,
             setgid: Option<u32>,
-        ) -> IoResult<()>;
-        fn waitpid(&mut self, block: bool) -> IoResult<()>;
+        ) -> io::Result<()>;
+        fn waitpid(&mut self, block: bool) -> io::Result<()>;
     }
 
     impl PopenOsImpl for Popen {
         fn do_exec(
-            just_exec: impl Fn() -> IoResult<()>,
+            just_exec: impl Fn() -> io::Result<()>,
             child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>),
             cwd: Option<&OsStr>,
             setuid: Option<u32>,
             setgid: Option<u32>,
-        ) -> IoResult<()> {
+        ) -> io::Result<()> {
             if let Some(cwd) = cwd {
                 env::set_current_dir(cwd)?;
             }
@@ -875,7 +873,7 @@ mod os {
             unreachable!();
         }
 
-        fn waitpid(&mut self, block: bool) -> IoResult<()> {
+        fn waitpid(&mut self, block: bool) -> io::Result<()> {
             match self.child_state {
                 Preparing => panic!("child_state == Preparing"),
                 Running { pid, .. } => {
@@ -906,7 +904,7 @@ mod os {
         }
     }
 
-    pub fn set_inheritable(f: &File, inheritable: bool) -> IoResult<()> {
+    pub fn set_inheritable(f: &File, inheritable: bool) -> io::Result<()> {
         if inheritable {
             // Unix pipes are inheritable by default.
         } else {
@@ -922,7 +920,7 @@ mod os {
     /// This is a safe wrapper over `libc::pipe` or
     /// `winapi::um::namedpipeapi::CreatePipe`, depending on the operating
     /// system.
-    pub fn make_pipe() -> IoResult<(File, File)> {
+    pub fn make_pipe() -> io::Result<(File, File)> {
         posix::pipe()
     }
 
@@ -930,7 +928,7 @@ mod os {
         use crate::popen::ChildState::*;
         use crate::popen::Popen;
         use crate::posix;
-        use std::io::Result as IoResult;
+        use std::io;
 
         /// Unix-specific extension methods for `Popen`
         pub trait PopenExt {
@@ -946,10 +944,10 @@ mod os {
             /// [`poll`]: ../struct.Popen.html#method.poll
             /// [`wait`]: ../struct.Popen.html#method.wait
             /// [`libc`]: https://docs.rs/libc/
-            fn send_signal(&self, signal: i32) -> IoResult<()>;
+            fn send_signal(&self, signal: i32) -> io::Result<()>;
         }
         impl PopenExt for Popen {
-            fn send_signal(&self, signal: i32) -> IoResult<()> {
+            fn send_signal(&self, signal: i32) -> io::Result<()> {
                 match self.child_state {
                     Preparing => panic!("child_state == Preparing"),
                     Running { pid, .. } => posix::kill(pid, signal),
@@ -969,7 +967,6 @@ mod os {
     use std::ffi::{OsStr, OsString};
     use std::fs::{self, File};
     use std::io;
-    use std::io::Result as IoResult;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::os::windows::io::{AsRawHandle, RawHandle};
     use std::time::Duration;
@@ -1036,7 +1033,7 @@ mod os {
             Ok(self.exit_status())
         }
 
-        fn os_terminate(&mut self) -> IoResult<()> {
+        fn os_terminate(&mut self) -> io::Result<()> {
             let mut new_child_state = None;
             if let Running {
                 ext: ExtChildState(ref handle),
@@ -1063,7 +1060,7 @@ mod os {
             Ok(())
         }
 
-        fn os_kill(&mut self) -> IoResult<()> {
+        fn os_kill(&mut self) -> io::Result<()> {
             self.terminate()
         }
     }
@@ -1102,11 +1099,11 @@ mod os {
     }
 
     trait PopenOsImpl: super::PopenOs {
-        fn wait_handle(&mut self, timeout: Option<Duration>) -> IoResult<Option<ExitStatus>>;
+        fn wait_handle(&mut self, timeout: Option<Duration>) -> io::Result<Option<ExitStatus>>;
     }
 
     impl PopenOsImpl for Popen {
-        fn wait_handle(&mut self, timeout: Option<Duration>) -> IoResult<Option<ExitStatus>> {
+        fn wait_handle(&mut self, timeout: Option<Duration>) -> io::Result<Option<ExitStatus>> {
             let mut new_child_state = None;
             if let Running {
                 ext: ExtChildState(ref handle),
@@ -1135,7 +1132,7 @@ mod os {
         }
     }
 
-    fn ensure_child_stream(stream: &mut Option<FileRef>, which: StandardStream) -> IoResult<()> {
+    fn ensure_child_stream(stream: &mut Option<FileRef>, which: StandardStream) -> io::Result<()> {
         // If no stream is sent to CreateProcess, the child doesn't
         // get a valid stream.  This results in e.g.
         // Exec("sh").arg("-c").arg("echo foo >&2").stream_stderr()
@@ -1147,7 +1144,7 @@ mod os {
         Ok(())
     }
 
-    pub fn set_inheritable(f: &File, inheritable: bool) -> IoResult<()> {
+    pub fn set_inheritable(f: &File, inheritable: bool) -> io::Result<()> {
         win32::SetHandleInformation(
             f,
             win32::HANDLE_FLAG_INHERIT,
@@ -1161,7 +1158,7 @@ mod os {
     /// This is a safe wrapper over `libc::pipe` or
     /// `winapi::um::namedpipeapi::CreatePipe`, depending on the operating
     /// system.
-    pub fn make_pipe() -> IoResult<(File, File)> {
+    pub fn make_pipe() -> io::Result<(File, File)> {
         win32::CreatePipe(true)
     }
 
@@ -1179,7 +1176,7 @@ mod os {
         executable
     }
 
-    fn assemble_cmdline(argv: Vec<OsString>) -> IoResult<OsString> {
+    fn assemble_cmdline(argv: Vec<OsString>) -> io::Result<OsString> {
         let mut cmdline = Vec::<u16>::new();
         let mut is_first = true;
         for arg in argv {

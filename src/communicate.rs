@@ -3,14 +3,14 @@ mod os {
     use crate::posix;
     use std::cmp::min;
     use std::fs::File;
-    use std::io::{Read, Result as IoResult, Write};
+    use std::io::{self, Read, Write};
     use std::os::unix::io::AsRawFd;
 
     fn poll3(
         fin: Option<&File>,
         fout: Option<&File>,
         ferr: Option<&File>,
-    ) -> IoResult<(bool, bool, bool)> {
+    ) -> io::Result<(bool, bool, bool)> {
         fn to_poll(f: Option<&File>, for_read: bool) -> posix::PollFd {
             let optfd = f.map(File::as_raw_fd);
             let events = if for_read {
@@ -40,7 +40,7 @@ mod os {
         stdout_ref: &mut Option<File>,
         stderr_ref: &mut Option<File>,
         mut input_data: &[u8],
-    ) -> IoResult<(Vec<u8>, Vec<u8>)> {
+    ) -> io::Result<(Vec<u8>, Vec<u8>)> {
         // Note: chunk size for writing must be smaller than the pipe
         // buffer size.  A large enough write to a blocking deadlocks
         // despite the use of poll() to check that it's ok to write.
@@ -114,7 +114,7 @@ mod os {
         stdout_ref: &mut Option<File>,
         stderr_ref: &mut Option<File>,
         input_data: Option<&[u8]>,
-    ) -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+    ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         if stdin_ref.is_some() {
             input_data.expect("must provide input to redirected stdin");
         } else {
@@ -135,15 +135,15 @@ mod os {
 #[cfg(windows)]
 mod os {
     use std::fs::File;
-    use std::io::{Read, Result as IoResult, Write};
+    use std::io::{self, Read, Write};
 
-    fn comm_read(mut outfile: File) -> IoResult<Vec<u8>> {
+    fn comm_read(mut outfile: File) -> io::Result<Vec<u8>> {
         let mut contents = Vec::new();
         outfile.read_to_end(&mut contents)?;
         Ok(contents)
     }
 
-    fn comm_write(mut infile: File, input_data: &[u8]) -> IoResult<()> {
+    fn comm_write(mut infile: File, input_data: &[u8]) -> io::Result<()> {
         infile.write_all(input_data)?;
         Ok(())
     }
@@ -186,7 +186,7 @@ mod os {
         stdout: &mut Option<File>,
         stderr: &mut Option<File>,
         input_data: Option<&[u8]>,
-    ) -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+    ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         let write_in_fn = stdin.take().map(|in_| {
             let input_data = input_data.expect("must provide input to redirected stdin");
             move || comm_write(in_, input_data)

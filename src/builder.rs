@@ -21,7 +21,7 @@ mod exec {
     use std::ffi::{OsStr, OsString};
     use std::fmt;
     use std::fs::{File, OpenOptions};
-    use std::io::{Read, Result as IoResult, Write};
+    use std::io::{self, Read, Write};
     use std::ops::BitOr;
     use std::path::Path;
 
@@ -502,7 +502,7 @@ mod exec {
     struct ReadOutAdapter(Popen);
 
     impl Read for ReadOutAdapter {
-        fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             self.0.stdout.as_mut().unwrap().read(buf)
         }
     }
@@ -511,7 +511,7 @@ mod exec {
     struct ReadErrAdapter(Popen);
 
     impl Read for ReadErrAdapter {
-        fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             self.0.stderr.as_mut().unwrap().read(buf)
         }
     }
@@ -520,10 +520,10 @@ mod exec {
     struct WriteAdapter(Popen);
 
     impl Write for WriteAdapter {
-        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
             self.0.stdin.as_mut().unwrap().write(buf)
         }
-        fn flush(&mut self) -> IoResult<()> {
+        fn flush(&mut self) -> io::Result<()> {
             self.0.stdin.as_mut().unwrap().flush()
         }
     }
@@ -679,7 +679,7 @@ mod exec {
 mod pipeline {
     use std::fmt;
     use std::fs::File;
-    use std::io::{Read, Result as IoResult, Write};
+    use std::io::{self, Read, Write};
     use std::ops::BitOr;
     use std::rc::Rc;
 
@@ -1005,7 +1005,7 @@ mod pipeline {
     struct ReadPipelineAdapter(Vec<Popen>);
 
     impl Read for ReadPipelineAdapter {
-        fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             let last = self.0.last_mut().unwrap();
             last.stdout.as_mut().unwrap().read(buf)
         }
@@ -1022,10 +1022,10 @@ mod pipeline {
     }
 
     impl Write for WritePipelineAdapter {
-        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
             self.stdin().write(buf)
         }
-        fn flush(&mut self) -> IoResult<()> {
+        fn flush(&mut self) -> io::Result<()> {
             self.stdin().flush()
         }
     }
