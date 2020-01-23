@@ -278,7 +278,7 @@ mod exec {
         ///
         /// [`Redirection`]: struct.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
-        pub fn stdin<T: Into<InputRedirection>>(mut self, stdin: T) -> Exec {
+        pub fn stdin(mut self, stdin: impl Into<InputRedirection>) -> Exec {
             match (&self.config.stdin, stdin.into()) {
                 (&Redirection::None, InputRedirection::AsRedirection(new)) => {
                     self.config.stdin = new
@@ -304,7 +304,7 @@ mod exec {
         ///
         /// [`Redirection`]: struct.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
-        pub fn stdout<T: Into<OutputRedirection>>(mut self, stdout: T) -> Exec {
+        pub fn stdout(mut self, stdout: impl Into<OutputRedirection>) -> Exec {
             match (&self.config.stdout, stdout.into().into_redirection()) {
                 (&Redirection::None, new) => self.config.stdout = new,
                 (&Redirection::Pipe, Redirection::Pipe) => (),
@@ -324,7 +324,7 @@ mod exec {
         ///
         /// [`Redirection`]: struct.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
-        pub fn stderr<T: Into<OutputRedirection>>(mut self, stderr: T) -> Exec {
+        pub fn stderr(mut self, stderr: impl Into<OutputRedirection>) -> Exec {
             match (&self.config.stderr, stderr.into().into_redirection()) {
                 (&Redirection::None, new) => self.config.stderr = new,
                 (&Redirection::Pipe, Redirection::Pipe) => (),
@@ -768,7 +768,7 @@ mod pipeline {
         ///    /dev/null.
         ///
         /// [`Redirection`]: struct.Redirection.html
-        pub fn stdin<T: Into<InputRedirection>>(mut self, stdin: T) -> Pipeline {
+        pub fn stdin(mut self, stdin: impl Into<InputRedirection>) -> Pipeline {
             match stdin.into() {
                 InputRedirection::AsRedirection(r) => self.stdin = r,
                 InputRedirection::FeedData(data) => {
@@ -790,7 +790,7 @@ mod pipeline {
         ///    /dev/null.
         ///
         /// [`Redirection`]: struct.Redirection.html
-        pub fn stdout<T: Into<OutputRedirection>>(mut self, stdout: T) -> Pipeline {
+        pub fn stdout(mut self, stdout: impl Into<OutputRedirection>) -> Pipeline {
             self.stdout = stdout.into().into_redirection();
             self
         }
