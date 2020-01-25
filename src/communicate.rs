@@ -232,20 +232,11 @@ mod os {
         ))
     }
 
-    fn spawn_worker<T: Send + 'static>(
-        active_workers: &mut u8,
-        tx: T,
-        f: impl FnOnce(T) + Send + 'static,
-    ) -> thread::JoinHandle<()> {
-        *active_workers += 1;
-        thread::spawn(move || f(tx))
-    }
-
     #[derive(Debug, Copy, Clone)]
     enum StreamIdent {
-        In,
-        Out,
-        Err,
+        In = 1 << 0,
+        Out = 1 << 1,
+        Err = 1 << 2,
     }
 
     fn read_chunks(
@@ -274,6 +265,95 @@ mod os {
         }
     }
 
+    struct Communicator {
+        rx: mpsc::Receiver<io::Result<(StreamIdent, Vec<u8>)>>,
+        worker_set: u8,
+    }
+
+    impl Communicator {
+        fn new(
+            stdin: &mut Option<File>,
+            stdout: &mut Option<File>,
+            stderr: &mut Option<File>,
+            input_data: Option<&[u8]>,
+        ) -> Communicator {
+            let mut worker_set = 0u8;
+
+            let read_stdout = stdout.take().map(|outfile| {
+                worker_set |= StreamIdent::Out as u8;
+                |tx| read_chunks(outfile, StreamIdent::Out, tx)
+            });
+            let read_stderr = stderr.take().map(|errfile| {
+                worker_set |= StreamIdent::Err as u8;
+                |tx| read_chunks(errfile, StreamIdent::Err, tx)
+            });
+            let write_stdin = stdin.take().map(|mut in_| {
+                // when using timeout we must make a copy of input_data
+                // because its ownership must be kept by the threads
+                let input_data = input_data
+                    .expect("must provide input to redirected stdin")
+                    .to_vec();
+                worker_set |= StreamIdent::In as u8;
+                move |tx: mpsc::Sender<_>| match in_.write_all(&input_data) {
+                    Ok(()) => mem::drop(tx.send(Ok((StreamIdent::In, vec![])))),
+                    Err(e) => mem::drop(tx.send(Err(e))),
+                }
+            });
+
+            let (tx, rx) = mpsc::channel::<io::Result<(StreamIdent, Vec<u8>)>>();
+
+            type Sender = mpsc::Sender<io::Result<(StreamIdent, Vec<u8>)>>;
+            fn spawn_worker(tx: Sender, f: impl FnOnce(Sender) + Send + 'static) {
+                thread::spawn(move || f(tx));
+            }
+
+            read_stdout.map(|f| spawn_worker(tx.clone(), f));
+            read_stderr.map(|f| spawn_worker(tx.clone(), f));
+            write_stdin.map(|f| spawn_worker(tx.clone(), f));
+
+            Communicator { rx, worker_set }
+        }
+
+        fn communicate_until(&mut self, deadline: Instant) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+            let (mut outvec, mut errvec) = (None, None);
+
+            if self.worker_set & StreamIdent::Out as u8 != 0 {
+                outvec = Some(vec![]);
+            }
+            if self.worker_set & StreamIdent::Err as u8 != 0 {
+                errvec = Some(vec![]);
+            }
+
+            while self.worker_set != 0 {
+                let now = Instant::now();
+                if now >= deadline {
+                    return Err(io::Error::new(io::ErrorKind::Interrupted, "timeout"));
+                }
+                match self.rx.recv_timeout(deadline - now) {
+                    Ok(Ok((ident, data))) => {
+                        match ident {
+                            StreamIdent::Out => outvec.as_mut().unwrap().extend_from_slice(&data),
+                            StreamIdent::Err => errvec.as_mut().unwrap().extend_from_slice(&data),
+                            StreamIdent::In => (),
+                        }
+                        if data.len() == 0 {
+                            self.worker_set &= !(ident as u8);
+                        }
+                    }
+                    Ok(Err(e)) => return Err(e),
+                    Err(RecvTimeoutError::Timeout) => {
+                        return Err(io::Error::new(io::ErrorKind::Interrupted, "timeout"))
+                    }
+                    // we should never be disconnected, as the threads must
+                    // announce that they're leaving
+                    Err(RecvTimeoutError::Disconnected) => unreachable!(),
+                }
+            }
+
+            Ok((outvec, errvec))
+        }
+    }
+
     pub fn communicate_with_timeout(
         stdin: &mut Option<File>,
         stdout: &mut Option<File>,
@@ -282,63 +362,8 @@ mod os {
         timeout: Duration,
     ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         let deadline = Instant::now() + timeout;
-
-        let (mut outvec, mut errvec) = (None, None);
-        let read_stdout = stdout.take().map(|outfile| {
-            outvec = Some(vec![]);
-            |tx| read_chunks(outfile, StreamIdent::Out, tx)
-        });
-        let read_stderr = stderr.take().map(|errfile| {
-            errvec = Some(vec![]);
-            |tx| read_chunks(errfile, StreamIdent::Err, tx)
-        });
-        let write_stdin = stdin.take().map(|mut in_| {
-            // when using timeout we must make a copy of input_data
-            // because its ownership must be kept by the threads
-            let input_data = input_data
-                .expect("must provide input to redirected stdin")
-                .to_vec();
-            move |tx: mpsc::Sender<_>| match in_.write_all(&input_data) {
-                Ok(()) => mem::drop(tx.send(Ok((StreamIdent::In, vec![])))),
-                Err(e) => mem::drop(tx.send(Err(e))),
-            }
-        });
-
-        let mut active_cnt = 0u8;
-        let (tx, rx) = mpsc::channel::<io::Result<(StreamIdent, Vec<u8>)>>();
-
-        read_stdout.map(|f| spawn_worker(&mut active_cnt, tx.clone(), f));
-        read_stderr.map(|f| spawn_worker(&mut active_cnt, tx.clone(), f));
-        write_stdin.map(|f| spawn_worker(&mut active_cnt, tx.clone(), f));
-
-        while active_cnt != 0 {
-            let now = Instant::now();
-            if now >= deadline {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "timeout"));
-            }
-            match rx.recv_timeout(deadline - now) {
-                Ok(Ok((ident, data))) => {
-                    match ident {
-                        StreamIdent::Out => outvec.as_mut().unwrap().extend_from_slice(&data),
-                        StreamIdent::Err => errvec.as_mut().unwrap().extend_from_slice(&data),
-                        StreamIdent::In => (),
-                    }
-                    if data.len() == 0 {
-                        active_cnt -= 1;
-                    }
-                }
-                Ok(Err(e)) => return Err(e),
-                Err(RecvTimeoutError::Timeout) => {
-                    return Err(io::Error::new(io::ErrorKind::Interrupted, "timeout"))
-                }
-                // we should never be disconnected, as the threads must
-                // announce that they're leaving (and because we hold a clone
-                // of the sender)
-                Err(RecvTimeoutError::Disconnected) => unreachable!(),
-            }
-        }
-
-        Ok((outvec, errvec))
+        let mut comm = Communicator::new(stdin, stdout, stderr, input_data);
+        comm.communicate_until(deadline)
     }
 
     pub fn communicate(
