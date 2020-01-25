@@ -248,12 +248,14 @@ fn communicate_timeout() {
         PopenConfig {
             stdout: Redirection::Pipe,
             stderr: Redirection::Pipe,
-            communicate_timeout: Some(Duration::from_millis(100)),
             ..Default::default()
         },
     )
     .unwrap();
-    match p.communicate_bytes(None) {
+    match p
+        .communicate_start(None)
+        .communicate_timeout(Duration::from_millis(100))
+    {
         Err(e) => assert_eq!(e.kind(), io::ErrorKind::Interrupted),
         other => panic!("unexpected result {:?}", other),
     }

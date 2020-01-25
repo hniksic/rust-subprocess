@@ -16,6 +16,7 @@ use self::ChildState::*;
 
 pub use self::os::ext as os_ext;
 pub use self::os::make_pipe;
+pub use communicate::Communicator;
 
 /// Interface to a running subprocess.
 ///
@@ -67,7 +68,6 @@ pub struct Popen {
 
     child_state: ChildState,
     detached: bool,
-    communicate_timeout: Option<Duration>,
 }
 
 #[derive(Debug)]
@@ -190,9 +190,6 @@ pub struct PopenConfig {
     #[cfg(unix)]
     pub setgid: Option<u32>,
 
-    /// Timeout for the call to `communicate()` or `communicate_bytes()`.
-    pub communicate_timeout: Option<Duration>,
-
     // force construction using ..Default::default()
     #[doc(hidden)]
     pub _use_default_to_construct: (),
@@ -221,7 +218,6 @@ impl PopenConfig {
             setuid: self.setuid.clone(),
             #[cfg(unix)]
             setgid: self.setgid.clone(),
-            communicate_timeout: self.communicate_timeout.clone(),
             _use_default_to_construct: (),
         })
     }
@@ -251,7 +247,6 @@ impl Default for PopenConfig {
             setuid: None,
             #[cfg(unix)]
             setgid: None,
-            communicate_timeout: None,
             _use_default_to_construct: (),
         }
     }
@@ -374,7 +369,6 @@ impl Popen {
             stderr: None,
             child_state: ChildState::Preparing,
             detached: config.detached,
-            communicate_timeout: config.communicate_timeout,
         };
         inst.os_start(argv, config)?;
         Ok(inst)
@@ -535,6 +529,15 @@ impl Popen {
         }
     }
 
+    pub fn communicate_start<'a>(&mut self, input_data: Option<&'a [u8]>) -> Communicator<'a> {
+        communicate::communicate(
+            &mut self.stdin,
+            &mut self.stdout,
+            &mut self.stderr,
+            input_data,
+        )
+    }
+
     /// Feed and capture the piped data of the subprocess.
     ///
     /// This will send the `input_data` to the subprocess, read its
@@ -560,13 +563,7 @@ impl Popen {
         &mut self,
         input_data: Option<&[u8]>,
     ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        communicate::communicate(
-            &mut self.stdin,
-            &mut self.stdout,
-            &mut self.stderr,
-            input_data,
-            self.communicate_timeout,
-        )
+        self.communicate_start(input_data).communicate_until(None)
     }
 
     /// Feed and capture the piped data of the subprocess as strings.
