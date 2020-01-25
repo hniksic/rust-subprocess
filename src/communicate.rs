@@ -162,76 +162,6 @@ mod os {
     use std::thread;
     use std::time::{Duration, Instant};
 
-    // Call up to three functions in parallel, starting as many threads as
-    // needed for the functions that are actually specified.
-    pub fn parallel_call<R1, R2, R3>(
-        f1: Option<impl FnOnce() -> R1 + Send>,
-        f2: Option<impl FnOnce() -> R2 + Send>,
-        f3: Option<impl FnOnce() -> R3 + Send>,
-    ) -> (Option<R1>, Option<R2>, Option<R3>)
-    where
-        R1: Send,
-        R2: Send,
-        R3: Send,
-    {
-        match (f1, f2, f3) {
-            // only create threads if necessary
-            (None, None, None) => (None, None, None),
-            (Some(f1), None, None) => (Some(f1()), None, None),
-            (None, Some(f2), None) => (None, Some(f2()), None),
-            (None, None, Some(f3)) => (None, None, Some(f3())),
-            (f1, f2, f3) => crossbeam_utils::thread::scope(move |scope| {
-                // run f2 and/or f3 in the background and let f1 run in our
-                // thread
-                let ta = f2.map(|f| scope.spawn(move |_| f()));
-                let tb = f3.map(|f| scope.spawn(move |_| f()));
-                (
-                    f1.map(|f| f()),
-                    ta.map(|t| t.join().unwrap()),
-                    tb.map(|t| t.join().unwrap()),
-                )
-            })
-            .unwrap(),
-        }
-    }
-
-    fn read_all(mut source: File) -> io::Result<Vec<u8>> {
-        let mut out = vec![];
-        source.read_to_end(&mut out)?;
-        Ok(out)
-    }
-
-    pub fn communicate_sans_timeout(
-        stdin: &mut Option<File>,
-        stdout: &mut Option<File>,
-        stderr: &mut Option<File>,
-        input_data: Option<&[u8]>,
-    ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        let read_out_fn = stdout.take().map(|out| || read_all(out));
-        let read_err_fn = stderr.take().map(|err| || read_all(err));
-        let write_in_fn = stdin.take().map(|mut in_| {
-            let input_data = input_data.expect("must provide input to redirected stdin");
-            move || in_.write_all(&input_data)
-        });
-        let (out, err, write_ret) = parallel_call(read_out_fn, read_err_fn, write_in_fn);
-
-        if let Some(write_ret) = write_ret {
-            let () = write_ret?;
-        }
-        Ok((
-            if let Some(out) = out {
-                Some(out?)
-            } else {
-                None
-            },
-            if let Some(err) = err {
-                Some(err?)
-            } else {
-                None
-            },
-        ))
-    }
-
     #[derive(Debug, Copy, Clone)]
     enum StreamIdent {
         In = 1 << 0,
@@ -314,7 +244,29 @@ mod os {
             Communicator { rx, worker_set }
         }
 
-        fn communicate_until(&mut self, deadline: Instant) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        fn recv_until(&self, deadline: Option<Instant>)
+                      -> Option<io::Result<(StreamIdent, Vec<u8>)>>
+        {
+            if let Some(deadline) = deadline {
+                let now = Instant::now();
+                if now >= deadline {
+                    return None;
+                }
+                match self.rx.recv_timeout(deadline - now) {
+                    Ok(result) => Some(result),
+                    Err(RecvTimeoutError::Timeout) => None,
+                    // we should never be disconnected, as the threads must
+                    // announce that they're leaving
+                    Err(RecvTimeoutError::Disconnected) => unreachable!(),
+                }
+            } else {
+                Some(self.rx.recv().unwrap())
+            }
+        }
+
+        fn communicate_until(&mut self, deadline: Option<Instant>)
+                             -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)>
+        {
             let (mut outvec, mut errvec) = (None, None);
 
             if self.worker_set & StreamIdent::Out as u8 != 0 {
@@ -325,12 +277,8 @@ mod os {
             }
 
             while self.worker_set != 0 {
-                let now = Instant::now();
-                if now >= deadline {
-                    return Err(io::Error::new(io::ErrorKind::Interrupted, "timeout"));
-                }
-                match self.rx.recv_timeout(deadline - now) {
-                    Ok(Ok((ident, data))) => {
+                match self.recv_until(deadline) {
+                    Some(Ok((ident, data))) => {
                         match ident {
                             StreamIdent::Out => outvec.as_mut().unwrap().extend_from_slice(&data),
                             StreamIdent::Err => errvec.as_mut().unwrap().extend_from_slice(&data),
@@ -340,30 +288,13 @@ mod os {
                             self.worker_set &= !(ident as u8);
                         }
                     }
-                    Ok(Err(e)) => return Err(e),
-                    Err(RecvTimeoutError::Timeout) => {
-                        return Err(io::Error::new(io::ErrorKind::Interrupted, "timeout"))
-                    }
-                    // we should never be disconnected, as the threads must
-                    // announce that they're leaving
-                    Err(RecvTimeoutError::Disconnected) => unreachable!(),
+                    Some(Err(e)) => return Err(e),
+                    None => return Err(io::Error::new(io::ErrorKind::Interrupted, "timeout")),
                 }
             }
 
             Ok((outvec, errvec))
         }
-    }
-
-    pub fn communicate_with_timeout(
-        stdin: &mut Option<File>,
-        stdout: &mut Option<File>,
-        stderr: &mut Option<File>,
-        input_data: Option<&[u8]>,
-        timeout: Duration,
-    ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        let deadline = Instant::now() + timeout;
-        let mut comm = Communicator::new(stdin, stdout, stderr, input_data);
-        comm.communicate_until(deadline)
     }
 
     pub fn communicate(
@@ -373,14 +304,12 @@ mod os {
         input_data: Option<&[u8]>,
         timeout: Option<Duration>,
     ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        let deadline = timeout.map(|timeout| Instant::now() + timeout);
         if stdin.is_none() && input_data.is_some() {
             panic!("cannot provide input to non-redirected stdin");
         }
-        if let Some(timeout) = timeout {
-            communicate_with_timeout(stdin, stdout, stderr, input_data, timeout)
-        } else {
-            communicate_sans_timeout(stdin, stdout, stderr, input_data)
-        }
+        let mut comm = Communicator::new(stdin, stdout, stderr, input_data);
+        comm.communicate_until(deadline)
     }
 }
 
