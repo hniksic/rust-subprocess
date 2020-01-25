@@ -932,12 +932,12 @@ mod pipeline {
             let mut last = v.drain(vlen - 1..).next().unwrap();
 
             let mut comm = communicate::communicate(
-                &mut first.stdin,
-                &mut last.stdout,
-                &mut Some(err_read),
+                first.stdin.take(),
+                last.stdout.take(),
+                Some(err_read),
                 stdin_data.as_ref().map(|v| &v[..]),
             );
-            let (out, err) = comm.communicate_until(None)?;
+            let (out, err) = comm.read()?;
             let out = out.unwrap_or_else(Vec::new);
             let err = err.unwrap();
 

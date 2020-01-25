@@ -59,21 +59,21 @@ mod os {
 
     impl<'a> Communicator<'a> {
         pub fn new(
-            stdin: &mut Option<File>,
-            stdout: &mut Option<File>,
-            stderr: &mut Option<File>,
+            stdin: Option<File>,
+            stdout: Option<File>,
+            stderr: Option<File>,
             input_data: Option<&'a [u8]>,
         ) -> Communicator<'a> {
             let input_data = input_data.unwrap_or(b"");
             Communicator {
-                stdin: stdin.take(),
-                stdout: stdout.take(),
-                stderr: stderr.take(),
+                stdin,
+                stdout,
+                stderr,
                 input_data,
             }
         }
 
-        pub fn communicate_until(
+        pub fn read(
             &mut self,
             deadline: Option<Instant>,
         ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
@@ -158,7 +158,7 @@ mod os {
     use std::io::{self, Read, Write};
     use std::marker::PhantomData;
     use std::mem;
-    use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
     use std::thread;
     use std::time::Instant;
 
@@ -169,10 +169,13 @@ mod os {
         Err = 1 << 2,
     }
 
-    fn read_chunks(
+    // messages exchanged between Communicator's helper threads
+    type Message = io::Result<(StreamIdent, Vec<u8>)>;
+
+    fn read_and_transmit(
         mut outfile: File,
         ident: StreamIdent,
-        sink: mpsc::SyncSender<io::Result<(StreamIdent, Vec<u8>)>>,
+        sink: SyncSender<Message>,
     ) {
         let mut chunk = [0u8; 1024];
         loop {
@@ -195,39 +198,43 @@ mod os {
         }
     }
 
+    fn spawn_curried<T: Send + 'static>(f: impl FnOnce(T) + Send + 'static, arg: T) {
+        thread::spawn(move || f(arg));
+    }
+
     // Although we store a copy of input data, use a lifetime for
     // compatibility with the more efficient Unix version.
     pub struct Communicator<'a> {
-        rx: mpsc::Receiver<io::Result<(StreamIdent, Vec<u8>)>>,
+        rx: mpsc::Receiver<Message>,
         worker_set: u8,
         marker: PhantomData<&'a u8>,
     }
 
     impl<'a> Communicator<'a> {
         pub fn new(
-            stdin: &mut Option<File>,
-            stdout: &mut Option<File>,
-            stderr: &mut Option<File>,
+            stdin: Option<File>,
+            stdout: Option<File>,
+            stderr: Option<File>,
             input_data: Option<&[u8]>,
         ) -> Communicator<'a> {
             let mut worker_set = 0u8;
 
-            let read_stdout = stdout.take().map(|outfile| {
+            let read_stdout = stdout.map(|stdout| {
                 worker_set |= StreamIdent::Out as u8;
-                |tx| read_chunks(outfile, StreamIdent::Out, tx)
+                |tx| read_and_transmit(stdout, StreamIdent::Out, tx)
             });
-            let read_stderr = stderr.take().map(|errfile| {
+            let read_stderr = stderr.map(|stderr| {
                 worker_set |= StreamIdent::Err as u8;
-                |tx| read_chunks(errfile, StreamIdent::Err, tx)
+                |tx| read_and_transmit(stderr, StreamIdent::Err, tx)
             });
-            let write_stdin = stdin.take().map(|mut in_| {
+            let write_stdin = stdin.map(|mut stdin| {
                 // when using timeout we must make a copy of input_data
                 // because its ownership must be kept by the threads
                 let input_data = input_data
                     .expect("must provide input to redirected stdin")
                     .to_vec();
                 worker_set |= StreamIdent::In as u8;
-                move |tx: mpsc::SyncSender<_>| match in_.write_all(&input_data) {
+                move |tx: SyncSender<_>| match stdin.write_all(&input_data) {
                     Ok(()) => mem::drop(tx.send(Ok((StreamIdent::In, vec![])))),
                     Err(e) => mem::drop(tx.send(Err(e))),
                 }
@@ -235,14 +242,9 @@ mod os {
 
             let (tx, rx) = mpsc::sync_channel(1);
 
-            type Sender = mpsc::SyncSender<io::Result<(StreamIdent, Vec<u8>)>>;
-            fn spawn_worker(tx: Sender, f: impl FnOnce(Sender) + Send + 'static) {
-                thread::spawn(move || f(tx));
-            }
-
-            read_stdout.map(|f| spawn_worker(tx.clone(), f));
-            read_stderr.map(|f| spawn_worker(tx.clone(), f));
-            write_stdin.map(|f| spawn_worker(tx.clone(), f));
+            read_stdout.map(|f| spawn_curried(f, tx.clone()));
+            read_stderr.map(|f| spawn_curried(f, tx.clone()));
+            write_stdin.map(|f| spawn_curried(f, tx.clone()));
 
             Communicator {
                 rx,
@@ -251,10 +253,7 @@ mod os {
             }
         }
 
-        fn recv_until(
-            &self,
-            deadline: Option<Instant>,
-        ) -> Option<io::Result<(StreamIdent, Vec<u8>)>> {
+        fn recv_until(&self, deadline: Option<Instant>) -> Option<Message> {
             if let Some(deadline) = deadline {
                 let now = Instant::now();
                 if now >= deadline {
@@ -272,7 +271,7 @@ mod os {
             }
         }
 
-        pub fn communicate_until(
+        pub fn read(
             &mut self,
             deadline: Option<Instant>,
         ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
@@ -312,25 +311,29 @@ pub struct Communicator<'a> {
 }
 
 impl Communicator<'_> {
-    pub fn communicate_until(
-        &mut self,
-        deadline: Option<Instant>,
-    ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        self.inner.communicate_until(deadline)
+    pub fn read(&mut self) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        self.inner.read(None)
     }
 
-    pub fn communicate_timeout(
+    pub fn read_until(
+        &mut self,
+        deadline: Instant,
+    ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        self.inner.read(Some(deadline))
+    }
+
+    pub fn read_for(
         &mut self,
         timeout: Duration,
     ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        self.inner.communicate_until(Some(Instant::now() + timeout))
+        self.read_until(Instant::now() + timeout)
     }
 }
 
 pub fn communicate<'a>(
-    stdin: &mut Option<File>,
-    stdout: &mut Option<File>,
-    stderr: &mut Option<File>,
+    stdin: Option<File>,
+    stdout: Option<File>,
+    stderr: Option<File>,
     input_data: Option<&'a [u8]>,
 ) -> Communicator<'a> {
     if stdin.is_some() {

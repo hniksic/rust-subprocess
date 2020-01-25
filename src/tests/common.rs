@@ -254,7 +254,7 @@ fn communicate_timeout() {
     .unwrap();
     match p
         .communicate_start(None)
-        .communicate_timeout(Duration::from_millis(100))
+        .read_for(Duration::from_millis(100))
     {
         Err(e) => assert_eq!(e.kind(), io::ErrorKind::Interrupted),
         other => panic!("unexpected result {:?}", other),

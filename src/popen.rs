@@ -531,9 +531,9 @@ impl Popen {
 
     pub fn communicate_start<'a>(&mut self, input_data: Option<&'a [u8]>) -> Communicator<'a> {
         communicate::communicate(
-            &mut self.stdin,
-            &mut self.stdout,
-            &mut self.stderr,
+            self.stdin.take(),
+            self.stdout.take(),
+            self.stderr.take(),
             input_data,
         )
     }
@@ -563,7 +563,7 @@ impl Popen {
         &mut self,
         input_data: Option<&[u8]>,
     ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        self.communicate_start(input_data).communicate_until(None)
+        self.communicate_start(input_data).read()
     }
 
     /// Feed and capture the piped data of the subprocess as strings.
