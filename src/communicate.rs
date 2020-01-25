@@ -242,7 +242,7 @@ mod os {
     fn read_chunks(
         mut outfile: File,
         ident: StreamIdent,
-        sink: mpsc::Sender<io::Result<(StreamIdent, Vec<u8>)>>,
+        sink: mpsc::SyncSender<io::Result<(StreamIdent, Vec<u8>)>>,
     ) {
         let mut chunk = [0u8; 1024];
         loop {
@@ -294,15 +294,15 @@ mod os {
                     .expect("must provide input to redirected stdin")
                     .to_vec();
                 worker_set |= StreamIdent::In as u8;
-                move |tx: mpsc::Sender<_>| match in_.write_all(&input_data) {
+                move |tx: mpsc::SyncSender<_>| match in_.write_all(&input_data) {
                     Ok(()) => mem::drop(tx.send(Ok((StreamIdent::In, vec![])))),
                     Err(e) => mem::drop(tx.send(Err(e))),
                 }
             });
 
-            let (tx, rx) = mpsc::channel::<io::Result<(StreamIdent, Vec<u8>)>>();
+            let (tx, rx) = mpsc::sync_channel(1);
 
-            type Sender = mpsc::Sender<io::Result<(StreamIdent, Vec<u8>)>>;
+            type Sender = mpsc::SyncSender<io::Result<(StreamIdent, Vec<u8>)>>;
             fn spawn_worker(tx: Sender, f: impl FnOnce(Sender) + Send + 'static) {
                 thread::spawn(move || f(tx));
             }
