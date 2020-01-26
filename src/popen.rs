@@ -545,14 +545,13 @@ impl Popen {
     /// `Option<Vec<u8>>`.  The corresponding options will be `None` if
     /// the respective stream was not specified as `Redirection::Pipe`.
     ///
-    /// The communication is guaranteed to be deadlock-free.  This is
-    /// currently ensured using threads (only when interaction with
-    /// more than one stream is needed), and may be converted to
-    /// `poll()` in the future.
+    /// The communication is guaranteed to be deadlock-free.  On Unix-like
+    /// systems this is ensured using `poll()` and on Windows using threads
+    /// behind the scenes.
     ///
     /// Note that this method will not wait for the program to finish,
     /// only to close its output stream(s).  The program may continue
-    /// running afterwards, and `wait()` must be used to ensure that
+    /// running afterwards, and `wait()` can be used to ensure that
     /// it has actually finished.
     ///
     /// # Panics

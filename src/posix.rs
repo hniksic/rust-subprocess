@@ -15,7 +15,7 @@ use libc::{c_char, c_int};
 
 use crate::os_common::{ExitStatus, StandardStream};
 
-pub use libc::ECHILD;
+pub use libc::{ECHILD, ENOSPC};
 
 fn check_err<T: Ord + Default>(num: T) -> Result<T> {
     if num < T::default() {

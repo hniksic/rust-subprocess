@@ -73,9 +73,34 @@ mod os {
             }
         }
 
+        fn do_read(
+            source_ref: &mut Option<&File>,
+            dest: &mut Vec<u8>,
+            size_limit: Option<usize>,
+            total_read: usize,
+        ) -> io::Result<()> {
+            let mut buf = &mut [0u8; 4096][..];
+            if let Some(size_limit) = size_limit {
+                if total_read >= size_limit {
+                    return Ok(());
+                }
+                if size_limit - total_read < buf.len() {
+                    buf = &mut buf[0..size_limit - total_read];
+                }
+            }
+            let n = source_ref.unwrap().read(buf)?;
+            if n != 0 {
+                dest.extend_from_slice(&mut buf[..n]);
+            } else {
+                *source_ref = None;
+            }
+            Ok(())
+        }
+
         pub fn read(
             &mut self,
             deadline: Option<Instant>,
+            size_limit: Option<usize>,
         ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
             // Note: chunk size for writing must be smaller than the pipe buffer
             // size.  A large enough write to a pipe deadlocks despite polling.
@@ -88,32 +113,21 @@ mod os {
             let mut err = Vec::<u8>::new();
 
             loop {
-                match (self.stdin.as_ref(), stdout_ref, stderr_ref) {
-                    // When only a single stream remains for reading or
-                    // writing, we no longer need polling.  When no stream
-                    // remains, we are done.
-                    (Some(..), None, None) => {
-                        // take() to close stdin when done writing, so the child
-                        // receives EOF
-                        self.stdin.take().unwrap().write_all(self.input_data)?;
+                if let Some(size_limit) = size_limit {
+                    if out.len() + err.len() >= size_limit {
                         break;
                     }
-                    (None, Some(ref mut stdout), None) => {
-                        stdout.read_to_end(&mut out)?;
-                        break;
-                    }
-                    (None, None, Some(ref mut stderr)) => {
-                        stderr.read_to_end(&mut err)?;
-                        break;
-                    }
-                    (None, None, None) => break,
-                    _ => (),
+                }
+
+                if let (None, None, None) = (self.stdin.as_ref(), stdout_ref, stderr_ref) {
+                    // When no stream remains, we are done.
+                    break;
                 }
 
                 let (in_ready, out_ready, err_ready) =
                     poll3(self.stdin.as_ref(), stdout_ref, stderr_ref, deadline)?;
                 if !in_ready && !out_ready && !err_ready {
-                    return Err(io::Error::new(io::ErrorKind::Interrupted, "timeout"));
+                    return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout"));
                 }
                 if in_ready {
                     let chunk = &self.input_data[..min(WRITE_SIZE, self.input_data.len())];
@@ -125,22 +139,12 @@ mod os {
                     }
                 }
                 if out_ready {
-                    let mut buf = [0u8; 4096];
-                    let n = stdout_ref.unwrap().read(&mut buf)?;
-                    if n != 0 {
-                        out.extend(&buf[..n]);
-                    } else {
-                        stdout_ref = None;
-                    }
+                    let total = out.len() + err.len();
+                    Communicator::do_read(&mut stdout_ref, &mut out, size_limit, total)?;
                 }
                 if err_ready {
-                    let mut buf = [0u8; 4096];
-                    let n = stderr_ref.unwrap().read(&mut buf)?;
-                    if n != 0 {
-                        err.extend(&buf[..n]);
-                    } else {
-                        stderr_ref = None;
-                    }
+                    let total = out.len() + err.len();
+                    Communicator::do_read(&mut stderr_ref, &mut err, size_limit, total)?;
                 }
             }
 
@@ -169,29 +173,34 @@ mod os {
         Err = 1 << 2,
     }
 
-    // messages exchanged between Communicator's helper threads
-    type Message = io::Result<(StreamIdent, Vec<u8>)>;
+    enum Payload {
+        Data(Vec<u8>),
+        EOF,
+        Err(io::Error),
+    }
 
-    fn read_and_transmit(
-        mut outfile: File,
-        ident: StreamIdent,
-        sink: SyncSender<Message>,
-    ) {
-        let mut chunk = [0u8; 1024];
+    // Messages exchanged between Communicator's helper threads.
+    type Message = (StreamIdent, Payload);
+
+    fn read_and_transmit(mut outfile: File, ident: StreamIdent, sink: SyncSender<Message>) {
+        let mut chunk = [0u8; 4096];
+        // Note: failing to sending to the sink means we are done.  It will
+        // fail if the main thread drops the Communicator (and with it the
+        // receiver) prematurely e.g. because a limit was reached or another
+        // helper encountered an IO error.
         loop {
             match outfile.read(&mut chunk) {
+                Ok(0) => {
+                    let _ = sink.send((ident, Payload::EOF));
+                    break;
+                }
                 Ok(nread) => {
-                    if let Err(_) = sink.send(Ok((ident, chunk[..nread].to_vec()))) {
-                        // sending will fail if the other worker reports a
-                        // read error and the main thread gives up
-                        break;
-                    }
-                    if nread == 0 {
+                    if let Err(_) = sink.send((ident, Payload::Data(chunk[..nread].to_vec()))) {
                         break;
                     }
                 }
                 Err(e) => {
-                    let _ = sink.send(Err(e));
+                    let _ = sink.send((ident, Payload::Err(e)));
                     break;
                 }
             }
@@ -206,9 +215,13 @@ mod os {
     // compatibility with the more efficient Unix version.
     pub struct Communicator<'a> {
         rx: mpsc::Receiver<Message>,
-        worker_set: u8,
+        helper_set: u8,
+        requested_streams: u8,
+        leftover: Option<(StreamIdent, Vec<u8>)>,
         marker: PhantomData<&'a u8>,
     }
+
+    struct Timeout;
 
     impl<'a> Communicator<'a> {
         pub fn new(
@@ -217,14 +230,17 @@ mod os {
             stderr: Option<File>,
             input_data: Option<&[u8]>,
         ) -> Communicator<'a> {
-            let mut worker_set = 0u8;
+            let mut helper_set = 0u8;
+            let mut requested_streams = 0u8;
 
             let read_stdout = stdout.map(|stdout| {
-                worker_set |= StreamIdent::Out as u8;
+                helper_set |= StreamIdent::Out as u8;
+                requested_streams |= StreamIdent::Out as u8;
                 |tx| read_and_transmit(stdout, StreamIdent::Out, tx)
             });
             let read_stderr = stderr.map(|stderr| {
-                worker_set |= StreamIdent::Err as u8;
+                helper_set |= StreamIdent::Err as u8;
+                requested_streams |= StreamIdent::Err as u8;
                 |tx| read_and_transmit(stderr, StreamIdent::Err, tx)
             });
             let write_stdin = stdin.map(|mut stdin| {
@@ -233,10 +249,10 @@ mod os {
                 let input_data = input_data
                     .expect("must provide input to redirected stdin")
                     .to_vec();
-                worker_set |= StreamIdent::In as u8;
+                helper_set |= StreamIdent::In as u8;
                 move |tx: SyncSender<_>| match stdin.write_all(&input_data) {
-                    Ok(()) => mem::drop(tx.send(Ok((StreamIdent::In, vec![])))),
-                    Err(e) => mem::drop(tx.send(Err(e))),
+                    Ok(()) => mem::drop(tx.send((StreamIdent::In, Payload::EOF))),
+                    Err(e) => mem::drop(tx.send((StreamIdent::In, Payload::Err(e)))),
                 }
             });
 
@@ -248,85 +264,150 @@ mod os {
 
             Communicator {
                 rx,
-                worker_set,
+                helper_set,
+                requested_streams,
+                leftover: None,
                 marker: PhantomData,
             }
         }
 
-        fn recv_until(&self, deadline: Option<Instant>) -> Option<Message> {
+        fn recv_until(&self, deadline: Option<Instant>) -> Result<Message, Timeout> {
             if let Some(deadline) = deadline {
                 let now = Instant::now();
                 if now >= deadline {
-                    return None;
+                    return Err(Timeout);
                 }
                 match self.rx.recv_timeout(deadline - now) {
-                    Ok(result) => Some(result),
-                    Err(RecvTimeoutError::Timeout) => None,
-                    // we should never be disconnected, as the threads must
-                    // announce that they're leaving
+                    Ok(message) => Ok(message),
+                    Err(RecvTimeoutError::Timeout) => Err(Timeout),
+                    // should never be disconnected, the helper threads always
+                    // announce their exit
                     Err(RecvTimeoutError::Disconnected) => unreachable!(),
                 }
             } else {
-                Some(self.rx.recv().unwrap())
+                Ok(self.rx.recv().unwrap())
             }
+        }
+
+        fn as_options(
+            &self,
+            outvec: Vec<u8>,
+            errvec: Vec<u8>,
+        ) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+            let (mut o, mut e) = (None, None);
+            if self.requested_streams & StreamIdent::Out as u8 != 0 {
+                o = Some(outvec);
+            } else {
+                assert!(outvec.len() == 0);
+            }
+            if self.requested_streams & StreamIdent::Err as u8 != 0 {
+                e = Some(errvec);
+            } else {
+                assert!(errvec.len() == 0);
+            }
+            (o, e)
         }
 
         pub fn read(
             &mut self,
             deadline: Option<Instant>,
+            size_limit: Option<usize>,
         ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-            let (mut outvec, mut errvec) = (None, None);
+            // Create both vectors immediately.  This doesn't allocate, and if
+            // one of those is not needed, it just won't get resized.
+            let mut outvec = vec![];
+            let mut errvec = vec![];
 
-            if self.worker_set & StreamIdent::Out as u8 != 0 {
-                outvec = Some(vec![]);
-            }
-            if self.worker_set & StreamIdent::Err as u8 != 0 {
-                errvec = Some(vec![]);
-            }
-
-            while self.worker_set != 0 {
-                match self.recv_until(deadline) {
-                    Some(Ok((ident, data))) => {
-                        match ident {
-                            StreamIdent::Out => outvec.as_mut().unwrap().extend_from_slice(&data),
-                            StreamIdent::Err => errvec.as_mut().unwrap().extend_from_slice(&data),
-                            StreamIdent::In => (),
+            let mut grow_result =
+                |ident, mut data: &[u8], leftover: &mut Option<(StreamIdent, Vec<u8>)>| {
+                    if let Some(size_limit) = size_limit {
+                        let total_read = outvec.len() + errvec.len();
+                        if total_read >= size_limit {
+                            return false;
                         }
-                        if data.len() == 0 {
-                            self.worker_set &= !(ident as u8);
+                        let remaining = size_limit - total_read;
+                        if data.len() > remaining {
+                            *leftover = Some((ident, data[remaining..].to_vec()));
+                            data = &data[..remaining];
                         }
                     }
-                    Some(Err(e)) => return Err(e),
-                    None => return Err(io::Error::new(io::ErrorKind::Interrupted, "timeout")),
+                    let destvec = match ident {
+                        StreamIdent::Out => &mut outvec,
+                        StreamIdent::Err => &mut errvec,
+                        StreamIdent::In => unreachable!(),
+                    };
+                    destvec.extend_from_slice(data);
+                    if let Some(size_limit) = size_limit {
+                        if outvec.len() + errvec.len() >= size_limit {
+                            return false;
+                        }
+                    }
+                    return true;
+                };
+
+            if let Some((ident, data)) = self.leftover.take() {
+                if !grow_result(ident, &data, &mut self.leftover) {
+                    return Ok(self.as_options(outvec, errvec));
                 }
             }
 
-            Ok((outvec, errvec))
+            while self.helper_set != 0 {
+                match self.recv_until(deadline) {
+                    Ok((ident, Payload::EOF)) => {
+                        self.helper_set &= !(ident as u8);
+                        continue;
+                    }
+                    Ok((ident, Payload::Data(data))) => {
+                        assert!(data.len() != 0);
+                        if !grow_result(ident, &data, &mut self.leftover) {
+                            break;
+                        }
+                    }
+                    Ok((_ident, Payload::Err(e))) => return Err(e),
+                    Err(Timeout) => return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout")),
+                }
+            }
+
+            Ok(self.as_options(outvec, errvec))
         }
     }
 }
 
 pub struct Communicator<'a> {
     inner: os::Communicator<'a>,
+    read_size_limit: Option<usize>,
+    read_time_limit: Option<Duration>,
 }
 
-impl Communicator<'_> {
+impl<'a> Communicator<'a> {
+    pub fn new(
+        stdin: Option<File>,
+        stdout: Option<File>,
+        stderr: Option<File>,
+        input_data: Option<&[u8]>,
+    ) -> Communicator {
+        Communicator {
+            inner: os::Communicator::new(stdin, stdout, stderr, input_data),
+            read_size_limit: None,
+            read_time_limit: None,
+        }
+    }
+
     pub fn read(&mut self) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        self.inner.read(None)
+        let deadline = self
+            .read_time_limit
+            .map(|timeout| Instant::now() + timeout);
+        self.inner.read(deadline, self.read_size_limit)
     }
 
-    pub fn read_until(
-        &mut self,
-        deadline: Instant,
-    ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        self.inner.read(Some(deadline))
+    pub fn limit_size(mut self, size: usize) -> Communicator<'a> {
+        self.read_size_limit = Some(size);
+        self
     }
 
-    pub fn read_for(
-        &mut self,
-        timeout: Duration,
-    ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        self.read_until(Instant::now() + timeout)
+    pub fn limit_time(mut self, time: Duration) -> Communicator<'a> {
+        self.read_time_limit = Some(time);
+        self
     }
 }
 
@@ -344,7 +425,5 @@ pub fn communicate<'a>(
             "cannot provide input to non-redirected stdin"
         );
     }
-    Communicator {
-        inner: os::Communicator::new(stdin, stdout, stderr, input_data),
-    }
+    Communicator::new(stdin, stdout, stderr, input_data)
 }

@@ -254,11 +254,98 @@ fn communicate_timeout() {
     .unwrap();
     match p
         .communicate_start(None)
-        .read_for(Duration::from_millis(100))
+        .limit_time(Duration::from_millis(100))
+        .read()
     {
-        Err(e) => assert_eq!(e.kind(), io::ErrorKind::Interrupted),
+        Err(e) => assert_eq!(e.kind(), io::ErrorKind::TimedOut),
         other => panic!("unexpected result {:?}", other),
     }
+    p.kill().unwrap();
+}
+
+#[test]
+fn communicate_size_limit_small() {
+    let mut p = Popen::create(
+        &["sh", "-c", "printf '%5s' a"],
+        PopenConfig {
+            stdout: Redirection::Pipe,
+            stderr: Redirection::Pipe,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut comm = p.communicate_start(None).limit_size(2);
+    assert_eq!(comm.read().unwrap(), (Some(vec![32; 2]), Some(vec![])));
+    assert_eq!(comm.read().unwrap(), (Some(vec![32; 2]), Some(vec![])));
+    assert_eq!(comm.read().unwrap(), (Some(vec!['a' as u8]), Some(vec![])));
+    p.kill().unwrap();
+}
+
+fn check_vec(v: Option<Vec<u8>>, size: usize, content: u8) {
+    assert_eq!(v.as_ref().unwrap().len(), size);
+    assert!(v.as_ref().unwrap().iter().all(|&c| c == content));
+}
+
+#[test]
+fn communicate_size_limit_large() {
+    let mut p = Popen::create(
+        &["sh", "-c", "printf '%20001s' a"],
+        PopenConfig {
+            stdout: Redirection::Pipe,
+            stderr: Redirection::Pipe,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut comm = p.communicate_start(None).limit_size(10_000);
+
+    let (out, err) = comm.read().unwrap();
+    check_vec(out, 10_000, 32);
+    assert_eq!(err, Some(vec![]));
+
+    let (out, err) = comm.read().unwrap();
+    check_vec(out, 10_000, 32);
+    assert_eq!(err, Some(vec![]));
+
+    assert_eq!(comm.read().unwrap(), (Some(vec!['a' as u8]), Some(vec![])));
+    p.kill().unwrap();
+}
+
+#[test]
+fn communicate_size_limit_different_sizes() {
+    let mut p = Popen::create(
+        &["sh", "-c", "printf '%20001s' a"],
+        PopenConfig {
+            stdout: Redirection::Pipe,
+            stderr: Redirection::Pipe,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let comm = p.communicate_start(None);
+
+    let mut comm = comm.limit_size(100);
+    let (out, err) = comm.read().unwrap();
+    check_vec(out, 100, 32);
+    assert_eq!(err, Some(vec![]));
+
+    let mut comm = comm.limit_size(1_000);
+    let (out, err) = comm.read().unwrap();
+    check_vec(out, 1_000, 32);
+    assert_eq!(err, Some(vec![]));
+
+    let mut comm = comm.limit_size(10_000);
+    let (out, err) = comm.read().unwrap();
+    check_vec(out, 10_000, 32);
+    assert_eq!(err, Some(vec![]));
+
+    let mut comm = comm.limit_size(8_900);
+    let (out, err) = comm.read().unwrap();
+    check_vec(out, 8_900, 32);
+    assert_eq!(err, Some(vec![]));
+
+    assert_eq!(comm.read().unwrap(), (Some(vec!['a' as u8]), Some(vec![])));
+    assert_eq!(comm.read().unwrap(), (Some(vec![]), Some(vec![])));
     p.kill().unwrap();
 }
 
