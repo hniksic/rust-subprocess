@@ -74,47 +74,6 @@ enum ChildState {
     Finished(ExitStatus),
 }
 
-mod fileref {
-    // FileRef: a reference-counted File instance, allowing multiple
-    // references to the same File.  If the underlying File is Owned,
-    // it will be closed along with the last FileRef.  If unowned
-    // (used for system streams), it will remain open.
-
-    use std::fs::File;
-    use std::ops::Deref;
-    use std::rc::Rc;
-
-    #[derive(Debug)]
-    enum InnerFile {
-        OwnedFile(File),
-        RcFile(Rc<File>),
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct FileRef(Rc<InnerFile>);
-
-    impl FileRef {
-        pub fn from_owned(f: File) -> FileRef {
-            FileRef(Rc::new(InnerFile::OwnedFile(f)))
-        }
-        pub fn from_rc(f: Rc<File>) -> FileRef {
-            FileRef(Rc::new(InnerFile::RcFile(f)))
-        }
-    }
-
-    impl Deref for FileRef {
-        type Target = File;
-
-        fn deref(&self) -> &File {
-            match *self.0.deref() {
-                InnerFile::OwnedFile(ref f) => f,
-                InnerFile::RcFile(ref f) => f.deref(),
-            }
-        }
-    }
-}
-use self::fileref::FileRef;
-
 /// Options for [`Popen::create`].
 ///
 /// When constructing `PopenConfig`, always use the [`Default`] trait,
@@ -386,11 +345,11 @@ impl Popen {
         stdin: Redirection,
         stdout: Redirection,
         stderr: Redirection,
-    ) -> Result<(Option<FileRef>, Option<FileRef>, Option<FileRef>)> {
+    ) -> Result<(Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>)> {
         fn prepare_pipe(
             parent_writes: bool,
             parent_ref: &mut Option<File>,
-            child_ref: &mut Option<FileRef>,
+            child_ref: &mut Option<Rc<File>>,
         ) -> Result<()> {
             // Store the parent's end of the pipe into the given
             // reference, and store the child end.
@@ -402,32 +361,31 @@ impl Popen {
             };
             os::set_inheritable(&parent_end, false)?;
             *parent_ref = Some(parent_end);
-            *child_ref = Some(FileRef::from_owned(child_end));
+            *child_ref = Some(Rc::new(child_end));
             Ok(())
         }
-        fn prepare_file(file: File, child_ref: &mut Option<FileRef>) -> io::Result<()> {
+        fn prepare_file(file: File, child_ref: &mut Option<Rc<File>>) -> io::Result<()> {
             // Make the File inheritable and store it for use in the child.
             os::set_inheritable(&file, true)?;
-            *child_ref = Some(FileRef::from_owned(file));
+            *child_ref = Some(Rc::new(file));
             Ok(())
         }
-        fn prepare_rc_file(file: Rc<File>, child_ref: &mut Option<FileRef>) -> io::Result<()> {
+        fn prepare_rc_file(file: Rc<File>, child_ref: &mut Option<Rc<File>>) -> io::Result<()> {
             // Like prepare_file, but for Rc<File>
-            use std::ops::Deref;
-            os::set_inheritable(file.deref(), true)?;
-            *child_ref = Some(FileRef::from_rc(file));
+            os::set_inheritable(&file, true)?;
+            *child_ref = Some(file);
             Ok(())
         }
         fn reuse_stream(
-            dest: &mut Option<FileRef>,
-            src: &mut Option<FileRef>,
+            dest: &mut Option<Rc<File>>,
+            src: &mut Option<Rc<File>>,
             src_id: StandardStream,
         ) -> io::Result<()> {
             // For Redirection::Merge, make stdout and stderr refer to
             // the same File.  If the file is unavailable, use the
             // appropriate system output stream.
             if src.is_none() {
-                *src = Some(FileRef::from_rc(os_common::get_standard_stream(src_id)?));
+                *src = Some(os_common::get_standard_stream(src_id)?);
             }
             *dest = Some(src.as_ref().unwrap().clone());
             Ok(())
@@ -831,7 +789,7 @@ mod os {
     trait PopenOsImpl: super::PopenOs {
         fn do_exec(
             just_exec: impl Fn() -> io::Result<()>,
-            child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>),
+            child_ends: (Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>),
             cwd: Option<&OsStr>,
             setuid: Option<u32>,
             setgid: Option<u32>,
@@ -842,7 +800,7 @@ mod os {
     impl PopenOsImpl for Popen {
         fn do_exec(
             just_exec: impl Fn() -> io::Result<()>,
-            child_ends: (Option<FileRef>, Option<FileRef>, Option<FileRef>),
+            child_ends: (Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>),
             cwd: Option<&OsStr>,
             setuid: Option<u32>,
             setgid: Option<u32>,
@@ -985,7 +943,7 @@ mod os {
 
     impl super::PopenOs for Popen {
         fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig) -> Result<()> {
-            fn raw(opt: &Option<FileRef>) -> Option<RawHandle> {
+            fn raw(opt: &Option<Rc<File>>) -> Option<RawHandle> {
                 opt.as_ref().map(|f| f.as_raw_handle())
             }
             let (mut child_stdin, mut child_stdout, mut child_stderr) =
@@ -1138,14 +1096,14 @@ mod os {
         }
     }
 
-    fn ensure_child_stream(stream: &mut Option<FileRef>, which: StandardStream) -> io::Result<()> {
+    fn ensure_child_stream(stream: &mut Option<Rc<File>>, which: StandardStream) -> io::Result<()> {
         // If no stream is sent to CreateProcess, the child doesn't
         // get a valid stream.  This results in e.g.
         // Exec("sh").arg("-c").arg("echo foo >&2").stream_stderr()
         // failing because the shell tries to redirect stdout to
         // stderr, but fails because it didn't receive a valid stdout.
         if stream.is_none() {
-            *stream = Some(FileRef::from_rc(os_common::get_standard_stream(which)?));
+            *stream = Some(os_common::get_standard_stream(which)?);
         }
         Ok(())
     }
