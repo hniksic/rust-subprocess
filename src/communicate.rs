@@ -102,12 +102,12 @@ mod os {
             Ok(())
         }
 
-        pub fn read_into(
+        fn read_into(
             &mut self,
             deadline: Option<Instant>,
             size_limit: Option<usize>,
-            mut outvec: &mut Vec<u8>,
-            mut errvec: &mut Vec<u8>,
+            outvec: &mut Vec<u8>,
+            errvec: &mut Vec<u8>,
         ) -> io::Result<()> {
             // Note: chunk size for writing must be smaller than the pipe buffer
             // size.  A large enough write to a pipe deadlocks despite polling.
@@ -148,11 +148,11 @@ mod os {
                 }
                 if out_ready {
                     let total = outvec.len() + errvec.len();
-                    Communicator::do_read(&mut stdout_ref, &mut outvec, size_limit, total)?;
+                    Communicator::do_read(&mut stdout_ref, outvec, size_limit, total)?;
                 }
                 if err_ready {
                     let total = outvec.len() + errvec.len();
-                    Communicator::do_read(&mut stderr_ref, &mut errvec, size_limit, total)?;
+                    Communicator::do_read(&mut stderr_ref, errvec, size_limit, total)?;
                 }
             }
 
@@ -167,12 +167,12 @@ mod os {
             let mut outvec = Vec::<u8>::new();
             let mut errvec = Vec::<u8>::new();
 
-            let result = self.read_into(deadline, size_limit, &mut outvec, &mut errvec);
+            let check = self.read_into(deadline, size_limit, &mut outvec, &mut errvec);
             let output = (
                 self.stdout.as_ref().map(|_| outvec),
                 self.stderr.as_ref().map(|_| errvec),
             );
-            match result {
+            match check {
                 Ok(()) => (None, output),
                 Err(e) => (Some(e), output),
             }
@@ -207,7 +207,7 @@ mod os {
 
     fn read_and_transmit(mut outfile: File, ident: StreamIdent, sink: SyncSender<Message>) {
         let mut chunk = [0u8; 4096];
-        // Note: failing to sending to the sink means we are done.  It will
+        // Note: failing to send to the sink means we're done.  Sending will
         // fail if the main thread drops the Communicator (and with it the
         // receiver) prematurely e.g. because a limit was reached or another
         // helper encountered an IO error.
@@ -305,35 +305,13 @@ mod os {
             }
         }
 
-        fn as_options(
-            &self,
-            outvec: Vec<u8>,
-            errvec: Vec<u8>,
-        ) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
-            let (mut o, mut e) = (None, None);
-            if self.requested_streams & StreamIdent::Out as u8 != 0 {
-                o = Some(outvec);
-            } else {
-                assert!(outvec.len() == 0);
-            }
-            if self.requested_streams & StreamIdent::Err as u8 != 0 {
-                e = Some(errvec);
-            } else {
-                assert!(errvec.len() == 0);
-            }
-            (o, e)
-        }
-
-        pub fn read(
+        fn read_into(
             &mut self,
             deadline: Option<Instant>,
             size_limit: Option<usize>,
-        ) -> (Option<io::Error>, (Option<Vec<u8>>, Option<Vec<u8>>)) {
-            // Create both vectors immediately.  This doesn't allocate, and if
-            // one of those is not needed, it just won't get resized.
-            let mut outvec = vec![];
-            let mut errvec = vec![];
-
+            outvec: &mut Vec<u8>,
+            errvec: &mut Vec<u8>,
+        ) -> io::Result<()> {
             let mut grow_result =
                 |ident, mut data: &[u8], leftover: &mut Option<(StreamIdent, Vec<u8>)>| {
                     if let Some(size_limit) = size_limit {
@@ -347,12 +325,11 @@ mod os {
                             data = &data[..remaining];
                         }
                     }
-                    let destvec = match ident {
-                        StreamIdent::Out => &mut outvec,
-                        StreamIdent::Err => &mut errvec,
+                    match ident {
+                        StreamIdent::Out => outvec.extend_from_slice(data),
+                        StreamIdent::Err => errvec.extend_from_slice(data),
                         StreamIdent::In => unreachable!(),
-                    };
-                    destvec.extend_from_slice(data);
+                    }
                     if let Some(size_limit) = size_limit {
                         if outvec.len() + errvec.len() >= size_limit {
                             return false;
@@ -363,7 +340,7 @@ mod os {
 
             if let Some((ident, data)) = self.leftover.take() {
                 if !grow_result(ident, &data, &mut self.leftover) {
-                    return (None, self.as_options(outvec, errvec));
+                    return Ok(());
                 }
             }
 
@@ -380,18 +357,45 @@ mod os {
                         }
                     }
                     Ok((_ident, Payload::Err(e))) => {
-                        return (Some(e), self.as_options(outvec, errvec))
+                        return Err(e);
                     }
                     Err(Timeout) => {
-                        return (
-                            Some(io::Error::new(io::ErrorKind::TimedOut, "timeout")),
-                            self.as_options(outvec, errvec),
-                        )
+                        return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout"));
                     }
                 }
             }
+            Ok(())
+        }
 
-            (None, self.as_options(outvec, errvec))
+        pub fn read(
+            &mut self,
+            deadline: Option<Instant>,
+            size_limit: Option<usize>,
+        ) -> (Option<io::Error>, (Option<Vec<u8>>, Option<Vec<u8>>)) {
+            // Create both vectors immediately.  This doesn't allocate, and if
+            // one of those is not needed, it just won't get resized.
+            let mut outvec = vec![];
+            let mut errvec = vec![];
+
+            let check = self.read_into(deadline, size_limit, &mut outvec, &mut errvec);
+            let output = {
+                let (mut o, mut e) = (None, None);
+                if self.requested_streams & StreamIdent::Out as u8 != 0 {
+                    o = Some(outvec);
+                } else {
+                    assert!(outvec.len() == 0);
+                }
+                if self.requested_streams & StreamIdent::Err as u8 != 0 {
+                    e = Some(errvec);
+                } else {
+                    assert!(errvec.len() == 0);
+                }
+                (o, e)
+            };
+            match check {
+                Ok(()) => (None, output),
+                Err(e) => (Some(e), output),
+            }
         }
     }
 }
