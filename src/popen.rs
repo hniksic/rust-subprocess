@@ -27,13 +27,12 @@ pub use communicate::Communicator;
 /// is waited upon when a `Popen` goes out of scope, which can be
 /// prevented using the [`detach`] method.
 ///
-/// Depending on how the subprocess was configured, its input, output,
-/// and error streams can be connected to the parent and available as
-/// [`stdin`], [`stdout`], and [`stderr`] public fields.  If you need
-/// to read the output and errors into memory (or provide input as a
-/// memory slice), use the [`communicate_bytes`] or [`communicate`]
-/// methods, which guarantee deadlock-free communication with the
-/// subprocess.
+/// Depending on how the subprocess was configured, its input, output, and
+/// error streams can be connected to the parent and available as [`stdin`],
+/// [`stdout`], and [`stderr`] public fields.  If you need to read the output
+/// and errors into memory (or provide input as a memory slice), use the
+/// [`communicate`] family of methods, which guarantee deadlock-free
+/// communication with the subprocess.
 ///
 /// `Popen` instances can be obtained with the [`create`] method, or
 /// using the [`popen`] method of the [`Exec`] class.  Subprocesses
@@ -46,7 +45,6 @@ pub use communicate::Communicator;
 /// [`stderr`]: struct.Popen.html#structfield.stderr
 /// [`create`]: struct.Popen.html#method.create
 /// [`communicate`]: struct.Popen.html#method.communicate
-/// [`communicate_bytes`]: struct.Popen.html#method.communicate_bytes
 /// [`detach`]: struct.Popen.html#method.detach
 
 #[derive(Debug)]
@@ -529,7 +527,21 @@ impl Popen {
         }
     }
 
-    pub fn communicate_start<'a>(&mut self, input_data: Option<&'a [u8]>) -> Communicator<'a> {
+    /// Return a handle that does communication with the subprocess feednig it
+    /// with input data and capturing its output.
+    ///
+    /// This method does not start the actual communication, it just sets it
+    /// up; call [`Communicator.read`] to actually communicate.  Once the
+    /// communication starts, `input_data` to be sent to the subprocess.  The
+    /// communication will return the contents of the output and error streams
+    /// if they have been set up as `Redirection::Pipe`.
+    ///
+    /// Compared to `communicate()` and `communicate_bytes()`, this method
+    /// provides more control over the communication, such as timeout and
+    /// allocation limits.
+    ///
+    /// [`Communicator.read`]: struct.Communicator.html#method.read
+    pub fn communicate_start(&mut self, input_data: Option<Vec<u8>>) -> Communicator {
         communicate::communicate(
             self.stdin.take(),
             self.stdout.take(),
@@ -538,7 +550,7 @@ impl Popen {
         )
     }
 
-    /// Feed and capture the piped data of the subprocess.
+    /// Feed the subprocess with data and capture its output.
     ///
     /// This will send the `input_data` to the subprocess, read its
     /// output and error, and return them as a pair of
@@ -554,22 +566,26 @@ impl Popen {
     /// running afterwards, and `wait()` can be used to ensure that
     /// it has actually finished.
     ///
+    /// For additional control over communication, such as timeouts and size
+    /// limits, call [`communicate_start()`].
+    ///
     /// # Panics
     ///
     /// If `input_data` is provided and `stdin` was not redirected to
     /// a pipe.
+    ///
+    /// [`communicate_start`]: struct.Popen.html#method.communicate_start
     pub fn communicate_bytes(
         &mut self,
         input_data: Option<&[u8]>,
     ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        self.communicate_start(input_data).read()
+        self.communicate_start(input_data.map(|i| i.to_vec())).read()
     }
 
-    /// Feed and capture the piped data of the subprocess as strings.
+    /// Feed the subprocess with data and capture its output as string.
     ///
-    /// This is a convenience method equivalent to
-    /// `communicate_bytes`, but with input as `&str` and output as
-    /// `String`.
+    /// This is a convenience method equivalent to [`communicate_bytes`], but
+    /// with input as `&str` and output as `String`.
     ///
     /// # Panics
     ///
@@ -586,6 +602,8 @@ impl Popen {
     ///
     /// If `input_data` is provided and `stdin` was not redirected to
     /// a pipe.
+    ///
+    /// [`communicate_bytes`]: struct.Popen.html#method.communicate_bytes
     pub fn communicate(
         &mut self,
         input_data: Option<&str>,

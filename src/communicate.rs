@@ -50,26 +50,29 @@ mod os {
         ))
     }
 
-    pub struct Communicator<'a> {
+    #[derive(Debug)]
+    pub struct Communicator {
         stdin: Option<File>,
         stdout: Option<File>,
         stderr: Option<File>,
-        input_data: &'a [u8],
+        input_data: Vec<u8>,
+        input_pos: usize,
     }
 
-    impl<'a> Communicator<'a> {
+    impl Communicator {
         pub fn new(
             stdin: Option<File>,
             stdout: Option<File>,
             stderr: Option<File>,
-            input_data: Option<&'a [u8]>,
-        ) -> Communicator<'a> {
-            let input_data = input_data.unwrap_or(b"");
+            input_data: Option<Vec<u8>>,
+        ) -> Communicator {
+            let input_data = input_data.unwrap_or_else(Vec::new);
             Communicator {
                 stdin,
                 stdout,
                 stderr,
                 input_data,
+                input_pos: 0,
             }
         }
 
@@ -130,12 +133,16 @@ mod os {
                     return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout"));
                 }
                 if in_ready {
-                    let chunk = &self.input_data[..min(WRITE_SIZE, self.input_data.len())];
+                    let input = &self.input_data[self.input_pos..];
+                    let chunk = &input[..min(WRITE_SIZE, input.len())];
                     let n = self.stdin.as_ref().unwrap().write(chunk)?;
-                    self.input_data = &self.input_data[n..];
-                    if self.input_data.is_empty() {
+                    self.input_pos += n;
+                    if self.input_pos == self.input_data.len() {
                         // close stdin when done writing, so the child receives EOF
                         self.stdin.take();
+                        // free the input data vector, we don't need it any more
+                        self.input_data.clear();
+                        self.input_data.shrink_to_fit();
                     }
                 }
                 if out_ready {
@@ -160,7 +167,6 @@ mod os {
 mod os {
     use std::fs::File;
     use std::io::{self, Read, Write};
-    use std::marker::PhantomData;
     use std::mem;
     use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
     use std::thread;
@@ -211,25 +217,23 @@ mod os {
         thread::spawn(move || f(arg));
     }
 
-    // Although we store a copy of input data, use a lifetime for
-    // compatibility with the more efficient Unix version.
-    pub struct Communicator<'a> {
+    #[derive(Debug)]
+    pub struct Communicator {
         rx: mpsc::Receiver<Message>,
         helper_set: u8,
         requested_streams: u8,
         leftover: Option<(StreamIdent, Vec<u8>)>,
-        marker: PhantomData<&'a u8>,
     }
 
     struct Timeout;
 
-    impl<'a> Communicator<'a> {
+    impl Communicator {
         pub fn new(
             stdin: Option<File>,
             stdout: Option<File>,
             stderr: Option<File>,
-            input_data: Option<&[u8]>,
-        ) -> Communicator<'a> {
+            input_data: Option<Vec<u8>>,
+        ) -> Communicator {
             let mut helper_set = 0u8;
             let mut requested_streams = 0u8;
 
@@ -244,11 +248,8 @@ mod os {
                 |tx| read_and_transmit(stderr, StreamIdent::Err, tx)
             });
             let write_stdin = stdin.map(|mut stdin| {
-                // when using timeout we must make a copy of input_data
-                // because its ownership must be kept by the threads
                 let input_data = input_data
-                    .expect("must provide input to redirected stdin")
-                    .to_vec();
+                    .expect("must provide input to redirected stdin");
                 helper_set |= StreamIdent::In as u8;
                 move |tx: SyncSender<_>| match stdin.write_all(&input_data) {
                     Ok(()) => mem::drop(tx.send((StreamIdent::In, Payload::EOF))),
@@ -267,7 +268,6 @@ mod os {
                 helper_set,
                 requested_streams,
                 leftover: None,
-                marker: PhantomData,
             }
         }
 
@@ -373,18 +373,20 @@ mod os {
     }
 }
 
-pub struct Communicator<'a> {
-    inner: os::Communicator<'a>,
+/// Interface to deadlock-free communication with the subprocess.
+#[derive(Debug)]
+pub struct Communicator {
+    inner: os::Communicator,
     read_size_limit: Option<usize>,
     read_time_limit: Option<Duration>,
 }
 
-impl<'a> Communicator<'a> {
-    pub fn new(
+impl Communicator {
+    fn new(
         stdin: Option<File>,
         stdout: Option<File>,
         stderr: Option<File>,
-        input_data: Option<&[u8]>,
+        input_data: Option<Vec<u8>>,
     ) -> Communicator {
         Communicator {
             inner: os::Communicator::new(stdin, stdout, stderr, input_data),
@@ -393,6 +395,28 @@ impl<'a> Communicator<'a> {
         }
     }
 
+    /// Read the data from the subprocess.
+    ///
+    /// This will write the input data to the subprocess and read its output
+    /// and error in parallel, taking care to avoid deadlocks.  The output and
+    /// error are returned as pairs of `Option<Vec>`, which can be `None` if
+    /// the corresponding stream has not been specified as
+    /// `Redirection::Pipe`.
+    ///
+    /// By default `read()` will read all requested data.
+    ///
+    /// If `limit_time` has been called with a non-`None` time limit, the
+    /// method will read for no more than the specified duration.  In case of
+    /// timeout, an `io::Error` of kind `io::ErrorKind::TimedOut` is returned.
+    /// Communication may be resumed after the timeout by calling `read()`
+    /// again.
+    ///
+    /// If `limit_size` has been called with a non-`None` time limit, the
+    /// method will return no more than the specified amount of bytes in the
+    /// two vectors combined.  (It might internally read a bit more from the
+    /// subprocess.)  Subsequent data may be read by calling `read()` again.
+    /// The primary use case for this method is preventing a rogue subprocess
+    /// from breaking the caller by spending all its memory.
     pub fn read(&mut self) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         let deadline = self
             .read_time_limit
@@ -400,28 +424,32 @@ impl<'a> Communicator<'a> {
         self.inner.read(deadline, self.read_size_limit)
     }
 
-    pub fn limit_size(mut self, size: usize) -> Communicator<'a> {
+    /// Limit the amount of data the next `read()` will read from the
+    /// subprocess.
+    pub fn limit_size(mut self, size: usize) -> Communicator {
         self.read_size_limit = Some(size);
         self
     }
 
-    pub fn limit_time(mut self, time: Duration) -> Communicator<'a> {
+    /// Limit the amount of time the next `read()` will spend reading from the
+    /// subprocess.
+    pub fn limit_time(mut self, time: Duration) -> Communicator {
         self.read_time_limit = Some(time);
         self
     }
 }
 
-pub fn communicate<'a>(
+pub fn communicate(
     stdin: Option<File>,
     stdout: Option<File>,
     stderr: Option<File>,
-    input_data: Option<&'a [u8]>,
-) -> Communicator<'a> {
+    input_data: Option<Vec<u8>>,
+) -> Communicator {
     if stdin.is_some() {
-        input_data.expect("must provide input to redirected stdin");
+        input_data.as_ref().expect("must provide input to redirected stdin");
     } else {
         assert!(
-            input_data.is_none(),
+            input_data.as_ref().is_none(),
             "cannot provide input to non-redirected stdin"
         );
     }

@@ -25,6 +25,7 @@ mod exec {
     use std::ops::BitOr;
     use std::path::Path;
 
+    use crate::communicate::Communicator;
     use crate::os_common::ExitStatus;
     use crate::popen::{Popen, PopenConfig, Redirection, Result as PopenResult};
 
@@ -407,6 +408,33 @@ mod exec {
             Ok(WriteAdapter(p))
         }
 
+        fn setup_communicate(mut self) -> PopenResult<(Communicator, Popen)> {
+            let stdin_data = self.stdin_data.take();
+            if let (&Redirection::None, &Redirection::None) =
+                (&self.config.stdout, &self.config.stderr)
+            {
+                self = self.stdout(Redirection::Pipe);
+            }
+            let mut p = self.popen()?;
+
+            Ok((p.communicate_start(stdin_data), p))
+        }
+
+        /// Starts the process and returns a `Communicator` handle.
+        ///
+        /// This is a lower-level API that offers more choice in how
+        /// communication is performed, such as read size limit and timeout,
+        /// equivalent to [`Popen::communicate`].
+        ///
+        /// Unlike `capture()`, this method doesn't wait for the process to
+        /// finish, effectively detaching it.
+        ///
+        /// [`Popen::communicate`]: struct.Popen.html#method.communicate
+        pub fn communicate(self) -> PopenResult<Communicator> {
+            let comm = self.detached().setup_communicate()?.0;
+            Ok(comm)
+        }
+
         /// Starts the process, collects its output, and waits for it
         /// to finish.
         ///
@@ -418,23 +446,13 @@ mod exec {
         /// for the process to finish, rather than simply waiting for
         /// its standard streams to close.  If this is undesirable,
         /// use `detached()`.
-        pub fn capture(mut self) -> PopenResult<CaptureData> {
-            let stdin_data = self.stdin_data.take();
-            if let (&Redirection::None, &Redirection::None) =
-                (&self.config.stdout, &self.config.stderr)
-            {
-                self = self.stdout(Redirection::Pipe);
-            }
-            let mut p = self.popen()?;
-            let (maybe_out, maybe_err) =
-                p.communicate_bytes(stdin_data.as_ref().map(|v| &v[..]))?;
-            let out = maybe_out.unwrap_or_else(Vec::new);
-            let err = maybe_err.unwrap_or_else(Vec::new);
-            let status = p.wait()?;
+        pub fn capture(self) -> PopenResult<CaptureData> {
+            let (mut comm, mut p) = self.setup_communicate()?;
+            let (maybe_out, maybe_err) = comm.read()?;
             Ok(CaptureData {
-                stdout: out,
-                stderr: err,
-                exit_status: status,
+                stdout: maybe_out.unwrap_or_else(Vec::new),
+                stderr: maybe_err.unwrap_or_else(Vec::new),
+                exit_status: p.wait()?,
             })
         }
 
@@ -683,7 +701,7 @@ mod pipeline {
     use std::ops::BitOr;
     use std::rc::Rc;
 
-    use crate::communicate;
+    use crate::communicate::{self, Communicator};
     use crate::os_common::ExitStatus;
     use crate::popen::{Popen, Redirection, Result as PopenResult};
 
@@ -907,8 +925,43 @@ mod pipeline {
             Ok(WritePipelineAdapter(v))
         }
 
-        /// Starts the pipeline, collects its output, and waits for
-        /// all commands to finish.
+        fn setup_communicate(mut self) -> PopenResult<(Communicator, Vec<Popen>)> {
+            assert!(self.cmds.len() >= 2);
+
+            let (err_read, err_write) = crate::popen::make_pipe()?;
+            self = self.stderr_to(err_write);
+
+            let stdin_data = self.stdin_data.take();
+            let mut v = self.stdout(Redirection::Pipe).popen()?;
+            let vlen = v.len();
+
+            let comm = communicate::communicate(
+                v[0].stdin.take(),
+                v[vlen - 1].stdout.take(),
+                Some(err_read),
+                stdin_data,
+            );
+            Ok((comm, v))
+        }
+
+        /// Starts the pipeline and returns a `Communicator` handle.
+        ///
+        /// This is a lower-level API that offers more choice in how
+        /// communication is performed, such as read size limit and timeout,
+        /// equivalent to [`Popen::communicate`].
+        ///
+        /// Unlike `capture()`, this method doesn't wait for the pipeline to
+        /// finish, effectively detaching it.
+        ///
+        /// [`Popen::communicate`]: struct.Popen.html#method.communicate
+        pub fn communicate(mut self) -> PopenResult<Communicator> {
+            self.cmds = self.cmds.into_iter().map(|cmd| cmd.detached()).collect();
+            let comm = self.setup_communicate()?.0;
+            Ok(comm)
+        }
+
+        /// Starts the pipeline, collects its output, and waits for all
+        /// commands to finish.
         ///
         /// The return value provides the standard output of the last command,
         /// the combined standard error of all commands, and the exit status
@@ -918,30 +971,14 @@ mod pipeline {
         /// Unlike `Popen::communicate`, this method actually waits for the
         /// processes to finish, rather than simply waiting for the output to
         /// close.  If this is undesirable, use `detached()`.
-        pub fn capture(mut self) -> PopenResult<CaptureData> {
-            assert!(self.cmds.len() >= 2);
-
-            let (err_read, err_write) = crate::popen::make_pipe()?;
-            self = self.stderr_to(err_write);
-
-            let stdin_data = self.stdin_data.take();
-            let mut v = self.stdout(Redirection::Pipe).popen()?;
-
-            let mut first = v.drain(..1).next().unwrap();
-            let vlen = v.len();
-            let mut last = v.drain(vlen - 1..).next().unwrap();
-
-            let mut comm = communicate::communicate(
-                first.stdin.take(),
-                last.stdout.take(),
-                Some(err_read),
-                stdin_data.as_ref().map(|v| &v[..]),
-            );
+        pub fn capture(self) -> PopenResult<CaptureData> {
+            let (mut comm, mut v) = self.setup_communicate()?;
             let (out, err) = comm.read()?;
             let out = out.unwrap_or_else(Vec::new);
             let err = err.unwrap();
 
-            let status = last.wait()?;
+            let vlen = v.len();
+            let status = v[vlen - 1].wait()?;
 
             Ok(CaptureData {
                 stdout: out,
