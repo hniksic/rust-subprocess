@@ -6,7 +6,6 @@ use std::fs::File;
 use std::io;
 use std::rc::Rc;
 use std::result;
-use std::string::FromUtf8Error;
 use std::time::Duration;
 
 use crate::communicate;
@@ -527,20 +526,17 @@ impl Popen {
         }
     }
 
-    /// Return a handle that does communication with the subprocess feednig it
+    /// Return a handle that does communication with the subprocess feeding it
     /// with input data and capturing its output.
     ///
     /// This method does not start the actual communication, it just sets it
-    /// up; call [`Communicator.read`] to actually communicate.  Once the
-    /// communication starts, `input_data` to be sent to the subprocess.  The
-    /// communication will return the contents of the output and error streams
-    /// if they have been set up as `Redirection::Pipe`.
+    /// up; call [`read`] on the returned handle to communicate.
     ///
     /// Compared to `communicate()` and `communicate_bytes()`, this method
     /// provides more control over the communication, such as timeout and
     /// allocation limits.
     ///
-    /// [`Communicator.read`]: struct.Communicator.html#method.read
+    /// [`read`]: struct.Communicator.html#method.read
     pub fn communicate_start(&mut self, input_data: Option<Vec<u8>>) -> Communicator {
         communicate::communicate(
             self.stdin.take(),
@@ -571,10 +567,11 @@ impl Popen {
     ///
     /// # Panics
     ///
-    /// If `input_data` is provided and `stdin` was not redirected to
-    /// a pipe.
+    /// If `input_data` is provided and `stdin` was not redirected to a pipe.
+    /// Also, if `input_data` is not provided and `stdin` was redirected to a
+    /// pipe.
     ///
-    /// [`communicate_start`]: struct.Popen.html#method.communicate_start
+    /// [`communicate_start()`]: struct.Popen.html#method.communicate_start
     pub fn communicate_bytes(
         &mut self,
         input_data: Option<&[u8]>,
@@ -587,41 +584,26 @@ impl Popen {
     /// Feed the subprocess with data and capture its output as string.
     ///
     /// This is a convenience method equivalent to [`communicate_bytes`], but
-    /// with input as `&str` and output as `String`.
+    /// with input as `&str` and output as `String`.  Invalid UTF-8 sequences,
+    /// if found, are replaced with the the `U+FFFD` Unicode replacement
+    /// character.
     ///
     /// # Panics
     ///
-    /// The same as with `communicate_bytes`
+    /// The same as with `communicate_bytes`.
     ///
     /// # Errors
     ///
     /// * `Err(::std::io::Error)` if a system call fails
-    /// * `Err(PopenError::Utf8Error)` if the output of the process is
-    ///    not valid UTF-8 and therefore cannot be represented as a
-    ///    String.
-    ///
-    /// # Panics
-    ///
-    /// If `input_data` is provided and `stdin` was not redirected to
-    /// a pipe.
     ///
     /// [`communicate_bytes`]: struct.Popen.html#method.communicate_bytes
     pub fn communicate(
         &mut self,
         input_data: Option<&str>,
-    ) -> Result<(Option<String>, Option<String>)> {
-        let (out, err) = self.communicate_bytes(input_data.map(|s| s.as_bytes()))?;
-        let out_str = if let Some(out_vec) = out {
-            Some(String::from_utf8(out_vec)?)
-        } else {
-            None
-        };
-        let err_str = if let Some(err_vec) = err {
-            Some(String::from_utf8(err_vec)?)
-        } else {
-            None
-        };
-        Ok((out_str, err_str))
+    ) -> io::Result<(Option<String>, Option<String>)> {
+        self.communicate_start(input_data.map(|s| s.as_bytes().to_vec()))
+            .read_string()
+            .map_err(|e| e.error)
     }
 
     /// Check whether the process is still running, without blocking or errors.
@@ -1285,18 +1267,10 @@ impl Drop for Popen {
 
 #[derive(Debug)]
 pub enum PopenError {
-    /// Error when attempting to convert bytes to string.
-    Utf8Error(FromUtf8Error),
     /// The underlying error is io::Error.
     IoError(io::Error),
     /// A logical error was made, e.g. invalid arguments detected at run-time.
     LogicError(&'static str),
-}
-
-impl From<FromUtf8Error> for PopenError {
-    fn from(err: FromUtf8Error) -> PopenError {
-        PopenError::Utf8Error(err)
-    }
 }
 
 impl From<io::Error> for PopenError {
@@ -1314,7 +1288,6 @@ impl From<communicate::CommunicateError> for PopenError {
 impl Error for PopenError {
     fn description(&self) -> &str {
         match *self {
-            PopenError::Utf8Error(ref err) => err.description(),
             PopenError::IoError(ref err) => err.description(),
             PopenError::LogicError(description) => description,
         }
@@ -1322,7 +1295,6 @@ impl Error for PopenError {
 
     fn cause(&self) -> Option<&dyn Error> {
         match *self {
-            PopenError::Utf8Error(ref err) => Some(err as &dyn Error),
             PopenError::IoError(ref err) => Some(err as &dyn Error),
             PopenError::LogicError(_) => None,
         }
@@ -1332,7 +1304,6 @@ impl Error for PopenError {
 impl fmt::Display for PopenError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            PopenError::Utf8Error(ref err) => fmt::Display::fmt(err, f),
             PopenError::IoError(ref err) => fmt::Display::fmt(err, f),
             PopenError::LogicError(desc) => f.write_str(desc),
         }

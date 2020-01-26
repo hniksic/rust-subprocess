@@ -424,7 +424,7 @@ impl Communicator {
         }
     }
 
-    /// Read the data from the subprocess.
+    /// Return the subprocess's output and error contents.
     ///
     /// This will write the input data to the subprocess and read its output
     /// and error in parallel, taking care to avoid deadlocks.  The output and
@@ -434,26 +434,54 @@ impl Communicator {
     ///
     /// By default `read()` will read all requested data.
     ///
-    /// If `limit_time` has been called with a non-`None` time limit, the
-    /// method will read for no more than the specified duration.  In case of
-    /// timeout, an `io::Error` of kind `io::ErrorKind::TimedOut` is returned.
-    /// Communication may be resumed after the timeout by calling `read()`
-    /// again.
+    /// If `limit_time` has been called, the method will read for no more than
+    /// the specified duration.  In case of timeout, an error of kind
+    /// `io::ErrorKind::TimedOut` is returned.  Communication may be resumed
+    /// after the timeout by calling `read()` again.
     ///
-    /// If `limit_size` has been called with a non-`None` time limit, the
-    /// method will return no more than the specified amount of bytes in the
-    /// two vectors combined.  (It might internally read a bit more from the
-    /// subprocess.)  Subsequent data may be read by calling `read()` again.
-    /// The primary use case for this method is preventing a rogue subprocess
-    /// from breaking the caller by spending all its memory.
-    pub fn read(
-        &mut self,
-    ) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), CommunicateError> {
+    /// If `limit_size` has been called, the method will return no more than
+    /// the specified amount of bytes in the two vectors combined.  (It might
+    /// internally read a bit more from the subprocess, but the data will
+    /// remain available for reading.)  Subsequent data can be retrieved by
+    /// calling `read()` again.  The primary use case for this method is
+    /// preventing a rogue subprocess from breaking the caller by spending all
+    /// its memory.
+    ///
+    /// # Panics
+    ///
+    /// If `input_data` is provided and `stdin` was not redirected to a pipe.
+    /// Also, if `input_data` is not provided and `stdin` was redirected to a
+    /// pipe.
+    ///
+    /// # Errors
+    ///
+    /// * `Err(CommunicateError)` if a system call fails.  In case of timeout,
+    /// the underlying error kind will be `ErrorKind::TimedOut`.
+    ///
+    /// Regardless of the nature of the error, the content prior to the error
+    /// can be retrieved using the [`capture`] attribute of the error.
+    ///
+    /// [`capture`]: struct.CommunicateError.html#structfield.capture
+
+    pub fn read(&mut self) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), CommunicateError> {
         let deadline = self.time_limit.map(|timeout| Instant::now() + timeout);
         match self.inner.read(deadline, self.size_limit) {
             (None, capture) => Ok(capture),
             (Some(error), capture) => Err(CommunicateError { error, capture }),
         }
+    }
+
+    /// Return the subprocess's output and error contents as strings.
+    ///
+    /// Like `read()`, but returns strings instead of byte vectors.  Invalid
+    /// UTF-8 sequences, if found, are replaced with the the `U+FFFD` Unicode
+    /// replacement character.
+    pub fn read_string(&mut self) -> Result<(Option<String>, Option<String>), CommunicateError> {
+        let (o, e) = self.read()?;
+        Ok((
+            o.map(|v| String::from_utf8_lossy(&v).into()),
+            e.map(|v| String::from_utf8_lossy(&v).into()),
+        ))
     }
 
     /// Limit the amount of data the next `read()` will read from the
@@ -469,10 +497,6 @@ impl Communicator {
         self.time_limit = Some(time);
         self
     }
-
-    // XXX
-    // * read_timeout
-    // * read_string
 }
 
 pub fn communicate(

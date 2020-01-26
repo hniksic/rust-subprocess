@@ -11,8 +11,8 @@
 //! Compared to `std::process`, the module follows the following
 //! additional features:
 //!
-//! * The [`communicate`] method for deadlock-free reading of subprocess
-//!   output/error, while simultaneously providing it stdin.
+//! * The [`communicate`] family of methods for deadlock-free reading
+//!   of subprocess output/error, while simultaneously feeding it input.
 //!
 //! * Advanced [redirection options], such as connecting standard
 //!   streams to arbitary [open files], or [merging] output streams
@@ -87,11 +87,9 @@ mod win32;
 mod os_common;
 
 pub use self::builder::{CaptureData, Exec, NullFile, Pipeline};
+pub use self::communicate::{CommunicateError, Communicator};
 pub use self::os_common::ExitStatus;
-pub use self::popen::{
-    make_pipe, Popen, PopenConfig, PopenError, Redirection, Result,
-};
-pub use self::communicate::{Communicator, CommunicateError};
+pub use self::popen::{make_pipe, Popen, PopenConfig, PopenError, Redirection, Result};
 
 /// Subprocess extensions for Unix platforms.
 pub mod unix {

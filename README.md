@@ -20,8 +20,9 @@ The following features are available:
 
 * Builder-style API for building and executing commands and pipelines.
 
-* The `communicate` method for deadlock-free reading of output while
-  simultaneously providing input to the subprocess.
+* The `communicate` method for deadlock-free capturing of the
+  subprocess's output/error and providing it input.  Timeout and size
+  limits are supported.
 
 * Waiting for the process to finish and polling its status: `poll`,
   `wait`, and `wait_timeout`.
@@ -30,10 +31,9 @@ The following features are available:
   output and error, the equivalent of `2>&1` and `1>&2`.
 
 The crate has minimal dependencies to third-party crates, only
-requiring `libc` on POSIX and `crossbeam` and Win32 crates on Windows.
-It is intended to work on Unix-like platforms as well as on reasonably
-recent Windows.  It is regularly tested on Linux, MacOS and Windows,
-and occasionally on FreeBSD.
+requiring `libc` on Unix and `winapi` on Windows.  It is intended to
+work on Unix-like platforms as well as on reasonably recent Windows.
+It is regularly tested on Linux, MacOS and Windows.
 
 ## API Overview
 
