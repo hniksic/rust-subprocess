@@ -428,13 +428,14 @@ impl Communicator {
         }
     }
 
-    /// Return the subprocess's output and error contents.
+    /// Communicate with the subprocess, return the contents of its standard
+    /// output and error.
     ///
-    /// This will write the input data to the subprocess and read its output
-    /// and error in parallel, taking care to avoid deadlocks.  The output and
-    /// error are returned as pairs of `Option<Vec>`, which can be `None` if
-    /// the corresponding stream has not been specified as
-    /// `Redirection::Pipe`.
+    /// This will write input data to the subprocess's standard input and
+    /// simultaneously read its standard output and error.  The output and
+    /// error contents are returned as a pair of `Option<Vec>`.  The `None`
+    /// options correspond to streams not specified as `Redirection::Pipe`
+    /// when creating the subprocess.
     ///
     /// By default `read()` will read all requested data.
     ///
@@ -443,13 +444,21 @@ impl Communicator {
     /// `io::ErrorKind::TimedOut` is returned.  Communication may be resumed
     /// after the timeout by calling `read()` again.
     ///
-    /// If `limit_size` has been called, the method will return no more than
-    /// the specified amount of bytes in the two vectors combined.  (It might
-    /// internally read a bit more from the subprocess, but the data will
-    /// remain available for reading.)  Subsequent data can be retrieved by
-    /// calling `read()` again.  The primary use case for this method is
-    /// preventing a rogue subprocess from breaking the caller by spending all
-    /// its memory.
+    /// If `limit_size` has been called, it will limit the allocation done by
+    /// this method.  If the subprocess provides more data than the limit
+    /// specifies, `read()` will successfully return as much data as specified
+    /// by the limit.  (It might internally read a bit more from the
+    /// subprocess, but the data will remain available for future reads.)
+    /// Subsequent data can be retrieved by calling `read()` again, which can
+    /// be repeated until `read()` returns all-empty data, which marks EOF.
+    ///
+    /// Note that this method does not wait for the subprocess to finish, only
+    /// to close its output/error streams.  It is rare but possible for the
+    /// program to continue running after having closed the streams, in which
+    /// case `Popen::Drop` will wait for it to finish.  If such a wait is
+    /// undesirable, it can be prevented by waiting explicitly using `wait()`,
+    /// by detaching the process using `detach()`, or by terminating it with
+    /// `terminate()`.
     ///
     /// # Panics
     ///
@@ -524,8 +533,11 @@ pub fn communicate(
 
 /// Error during communication.
 ///
-/// This error encapsulates the underlying `io::Error`, but also provides the
-/// data captured before the error was encountered.
+/// It holds the underlying `io::Error` in the `error` field, and also
+/// provides the data captured before the error was encountered in the
+/// `capture` field.
+///
+/// The error description and cause are taken from the underlying IO error.
 #[derive(Debug)]
 pub struct CommunicateError {
     /// The underlying `io::Error`.
@@ -535,7 +547,9 @@ pub struct CommunicateError {
 }
 
 impl CommunicateError {
-    /// Returns the corresponding `ErrorKind` for this error.
+    /// Returns the corresponding IO `ErrorKind` for this error.
+    ///
+    /// Equivalent to `self.error.kind()`.
     pub fn kind(&self) -> ErrorKind {
         self.error.kind()
     }

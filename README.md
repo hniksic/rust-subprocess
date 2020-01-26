@@ -18,11 +18,13 @@ The following features are available:
 
 * Connecting multiple commands into OS-level pipelines.
 
-* Builder-style API for building and executing commands and pipelines.
+* The *communicate* [family of
+  methods](https://docs.rs/subprocess/latest/subprocess/struct.Popen.html#method.communicate_start)
+  for deadlock-free capturing of the subprocess's output/error to
+  memory while feeding its input.  Capturing supports timeout and read
+  size limit.
 
-* The `communicate` method for deadlock-free capturing of the
-  subprocess's output/error and providing it input.  Timeout and size
-  limits are supported.
+* Builder API for creating commands and pipelines.
 
 * Waiting for the process to finish and polling its status: `poll`,
   `wait`, and `wait_timeout`.
@@ -45,8 +47,8 @@ to continue working with them directly.
 
 The `Popen` type offers some functionality currently missing from the
 Rust standard library.  It provides methods for polling the process,
-waiting with timeout, and the `communicate` method, useful enough to
-have been [created
+waiting with timeout, and the *communicate* output capturing methods,
+useful enough to have been [created
 independently](https://crates.io/crates/subprocess-communicate).
 While the design follows Python's [`subprocess`
 module](https://docs.python.org/3/library/subprocess.html#popen-constructor),

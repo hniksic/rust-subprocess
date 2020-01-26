@@ -484,16 +484,22 @@ impl Popen {
         }
     }
 
-    /// Return a handle that does communication with the subprocess feeding it
-    /// with input data and capturing its output.
+    /// Prepare to communicate with the subprocess.
+    ///
+    /// Communicating refers to providing the given `input_data` to the
+    /// subprocess's standard input, while simultaneously reading from its
+    /// standard output and error streams.
     ///
     /// This method does not start the actual communication, it just sets it
-    /// up; call [`read`] on the returned handle to communicate.
+    /// up and returns a [`Communicator`] handle.  Call the [`read`] method on
+    /// the returned handle to communicate.
     ///
-    /// Compared to `communicate()` and `communicate_bytes()`, this method
-    /// provides more control over the communication, such as timeout and
-    /// allocation limits.
+    /// Compared to `communicate()` and `communicate_bytes()`, the
+    /// `Communicator` provides more control, such as timeout, read size
+    /// limit, and the ability to retrieve captured output in case of read
+    /// error.
     ///
+    /// [`Communicator`]: struct.Communicator.html
     /// [`read`]: struct.Communicator.html#method.read
     pub fn communicate_start(&mut self, input_data: Option<Vec<u8>>) -> Communicator {
         communicate::communicate(
@@ -504,30 +510,37 @@ impl Popen {
         )
     }
 
-    /// Feed the subprocess with data and capture its output.
+    /// Feed the subprocess with input data and capture its output.
     ///
-    /// This will send the `input_data` to the subprocess, read its
-    /// output and error, and return them as a pair of
-    /// `Option<Vec<u8>>`.  The corresponding options will be `None` if
-    /// the respective stream was not specified as `Redirection::Pipe`.
+    /// This will write the provided `input_data` to the subprocess's standard
+    /// input, and simultaneously read its standard output and error.  The
+    /// output and error contents are returned as a pair of `Option<Vec<u8>>`.
+    /// The `None` options correspond to streams not specified as
+    /// `Redirection::Pipe` when creating the subprocess.
     ///
-    /// The communication is guaranteed to be deadlock-free.  On Unix-like
-    /// systems this is ensured using `poll()` and on Windows using threads
-    /// behind the scenes.
+    /// The communication is deadlock-free, which is achieved by reading and
+    /// writing in parallel using `poll()` on Unix and threads on Windows.
     ///
-    /// Note that this method will not wait for the program to finish,
-    /// only to close its output stream(s).  The program may continue
-    /// running afterwards, and `wait()` can be used to ensure that
-    /// it has actually finished.
+    /// Note that this method does not wait for the subprocess to finish, only
+    /// to close its output/error streams.  It is rare but possible for the
+    /// program to continue running after having closed the streams, in which
+    /// case `Popen::Drop` will wait for it to finish.  If such a wait is
+    /// undesirable, it can be prevented by waiting explicitly using `wait()`,
+    /// by detaching the process using `detach()`, or by terminating it with
+    /// `terminate()`.
     ///
-    /// For additional control over communication, such as timeouts and size
-    /// limits, call [`communicate_start()`].
+    /// For additional control over communication, such as timeout and size
+    /// limit, call [`communicate_start()`].
     ///
     /// # Panics
     ///
     /// If `input_data` is provided and `stdin` was not redirected to a pipe.
     /// Also, if `input_data` is not provided and `stdin` was redirected to a
     /// pipe.
+    ///
+    /// # Errors
+    ///
+    /// * `Err(::std::io::Error)` if a system call fails
     ///
     /// [`communicate_start()`]: struct.Popen.html#method.communicate_start
     pub fn communicate_bytes(

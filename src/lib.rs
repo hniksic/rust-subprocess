@@ -11,8 +11,9 @@
 //! Compared to `std::process`, the module follows the following
 //! additional features:
 //!
-//! * The [`communicate`] family of methods for deadlock-free reading
-//!   of subprocess output/error, while simultaneously feeding it input.
+//! * The communicate [family of methods] for deadlock-free capturing of
+//!   subprocess output/error, while simultaneously feeding data to its
+//!   standard input.
 //!
 //! * Advanced [redirection options], such as connecting standard
 //!   streams to arbitary [open files], or [merging] output streams
@@ -62,7 +63,7 @@
 //!
 //! [`Popen`]: struct.Popen.html
 //! [`Exec`]: struct.Exec.html
-//! [`communicate`]: struct.Popen.html#method.communicate
+//! [family of methods]: struct.Popen.html#method.communicate_start
 //! [redirection options]: enum.Redirection.html
 //! [open files]: enum.Redirection.html#variant.File
 //! [merging]: enum.Redirection.html#variant.Merge
