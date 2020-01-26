@@ -244,7 +244,7 @@ fn communicate_input_output_long() {
 #[test]
 fn communicate_timeout() {
     let mut p = Popen::create(
-        &["sh", "-c", "echo foo; sleep 1"],
+        &["sh", "-c", "printf foo; sleep 1"],
         PopenConfig {
             stdout: Redirection::Pipe,
             stderr: Redirection::Pipe,
@@ -257,7 +257,10 @@ fn communicate_timeout() {
         .limit_time(Duration::from_millis(100))
         .read()
     {
-        Err(e) => assert_eq!(e.kind(), io::ErrorKind::TimedOut),
+        Err(e) => {
+            assert_eq!(e.kind(), io::ErrorKind::TimedOut);
+            assert_eq!(e.capture, (Some(b"foo".to_vec()), Some(vec![])));
+        }
         other => panic!("unexpected result {:?}", other),
     }
     p.kill().unwrap();

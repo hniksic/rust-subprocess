@@ -579,7 +579,9 @@ impl Popen {
         &mut self,
         input_data: Option<&[u8]>,
     ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-        self.communicate_start(input_data.map(|i| i.to_vec())).read()
+        self.communicate_start(input_data.map(|i| i.to_vec()))
+            .read()
+            .map_err(|e| e.error)
     }
 
     /// Feed the subprocess with data and capture its output as string.
@@ -1300,6 +1302,12 @@ impl From<FromUtf8Error> for PopenError {
 impl From<io::Error> for PopenError {
     fn from(err: io::Error) -> PopenError {
         PopenError::IoError(err)
+    }
+}
+
+impl From<communicate::CommunicateError> for PopenError {
+    fn from(err: communicate::CommunicateError) -> PopenError {
+        PopenError::IoError(err.error)
     }
 }
 
