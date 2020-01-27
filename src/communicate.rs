@@ -5,7 +5,7 @@ use std::io::{self, ErrorKind};
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
-mod os {
+mod raw {
     use crate::posix;
     use std::cmp::min;
     use std::fs::File;
@@ -53,7 +53,7 @@ mod os {
     }
 
     #[derive(Debug)]
-    pub struct Communicator {
+    pub struct RawCommunicator {
         stdin: Option<File>,
         stdout: Option<File>,
         stderr: Option<File>,
@@ -61,15 +61,15 @@ mod os {
         input_pos: usize,
     }
 
-    impl Communicator {
+    impl RawCommunicator {
         pub fn new(
             stdin: Option<File>,
             stdout: Option<File>,
             stderr: Option<File>,
             input_data: Option<Vec<u8>>,
-        ) -> Communicator {
+        ) -> RawCommunicator {
             let input_data = input_data.unwrap_or_else(Vec::new);
-            Communicator {
+            RawCommunicator {
                 stdin,
                 stdout,
                 stderr,
@@ -148,11 +148,11 @@ mod os {
                 }
                 if out_ready {
                     let total = outvec.len() + errvec.len();
-                    Communicator::do_read(&mut stdout_ref, outvec, size_limit, total)?;
+                    RawCommunicator::do_read(&mut stdout_ref, outvec, size_limit, total)?;
                 }
                 if err_ready {
                     let total = outvec.len() + errvec.len();
-                    Communicator::do_read(&mut stderr_ref, errvec, size_limit, total)?;
+                    RawCommunicator::do_read(&mut stderr_ref, errvec, size_limit, total)?;
                 }
             }
 
@@ -181,7 +181,7 @@ mod os {
 }
 
 #[cfg(windows)]
-mod os {
+mod raw {
     use std::fs::File;
     use std::io::{self, Read, Write};
     use std::mem;
@@ -202,13 +202,13 @@ mod os {
         Err(io::Error),
     }
 
-    // Messages exchanged between Communicator's helper threads.
+    // Messages exchanged between RawCommunicator's helper threads.
     type Message = (StreamIdent, Payload);
 
     fn read_and_transmit(mut outfile: File, ident: StreamIdent, sink: SyncSender<Message>) {
         let mut chunk = [0u8; 4096];
         // Note: failing to send to the sink means we're done.  Sending will
-        // fail if the main thread drops the Communicator (and with it the
+        // fail if the main thread drops the RawCommunicator (and with it the
         // receiver) prematurely e.g. because a limit was reached or another
         // helper encountered an IO error.
         loop {
@@ -235,7 +235,7 @@ mod os {
     }
 
     #[derive(Debug)]
-    pub struct Communicator {
+    pub struct RawCommunicator {
         rx: mpsc::Receiver<Message>,
         helper_set: u8,
         requested_streams: u8,
@@ -244,13 +244,13 @@ mod os {
 
     struct Timeout;
 
-    impl Communicator {
+    impl RawCommunicator {
         pub fn new(
             stdin: Option<File>,
             stdout: Option<File>,
             stderr: Option<File>,
             input_data: Option<Vec<u8>>,
-        ) -> Communicator {
+        ) -> RawCommunicator {
             let mut helper_set = 0u8;
             let mut requested_streams = 0u8;
 
@@ -279,7 +279,7 @@ mod os {
             read_stderr.map(|f| spawn_curried(f, tx.clone()));
             write_stdin.map(|f| spawn_curried(f, tx.clone()));
 
-            Communicator {
+            RawCommunicator {
                 rx,
                 helper_set,
                 requested_streams,
@@ -400,6 +400,8 @@ mod os {
     }
 }
 
+use raw::RawCommunicator;
+
 /// Deadlock-free communication with the subprocess.
 ///
 /// Normally care must be taken to avoid deadlock when communicating to a
@@ -409,7 +411,7 @@ mod os {
 /// `poll()`, and on Windows using threads.
 #[derive(Debug)]
 pub struct Communicator {
-    inner: os::Communicator,
+    inner: RawCommunicator,
     size_limit: Option<usize>,
     time_limit: Option<Duration>,
 }
@@ -422,7 +424,7 @@ impl Communicator {
         input_data: Option<Vec<u8>>,
     ) -> Communicator {
         Communicator {
-            inner: os::Communicator::new(stdin, stdout, stderr, input_data),
+            inner: RawCommunicator::new(stdin, stdout, stderr, input_data),
             size_limit: None,
             time_limit: None,
         }
