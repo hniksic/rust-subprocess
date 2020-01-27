@@ -146,7 +146,9 @@ pub struct PopenConfig {
     #[cfg(unix)]
     pub setgid: Option<u32>,
 
-    // force construction using ..Default::default()
+    // Add this field to force construction using ..Default::default() for
+    // backward compatibility.  Unfortunately we can't mark this non-public
+    // because then ..Default::default() wouldn't work either.
     #[doc(hidden)]
     pub _use_default_to_construct: (),
 }
@@ -1237,6 +1239,7 @@ impl Drop for Popen {
 /// [`Popen`]: struct.Popen.html
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum PopenError {
     /// The underlying error is io::Error.
     IoError(io::Error),
