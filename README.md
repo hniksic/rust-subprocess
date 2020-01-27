@@ -2,6 +2,7 @@
 
 [![](http://meritbadge.herokuapp.com/subprocess)](https://crates.io/crates/subprocess)
 [![Build Status](https://travis-ci.org/hniksic/rust-subprocess.svg?branch=master)](https://travis-ci.org/hniksic/rust-subprocess)
+[![docs.rs](https://docs.rs/subprocess/badge.svg)](https://docs.rs/subprocess)
 
 The `subprocess` library provides facilities for execution of and
 interaction with external processes and pipelines.  It is inspired by
