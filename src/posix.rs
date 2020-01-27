@@ -9,6 +9,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::ptr;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use libc;
 use libc::{c_char, c_int};
@@ -362,9 +363,9 @@ pub fn reset_sigpipe() -> Result<()> {
             &set,
             ptr::null_mut(),
         ))?;
-        let ret = libc::signal(libc::SIGPIPE, libc::SIG_DFL);
-        if ret == libc::SIG_ERR {
-            return Err(Error::last_os_error());
+        match libc::signal(libc::SIGPIPE, libc::SIG_DFL) {
+            libc::SIG_ERR => return Err(Error::last_os_error()),
+            _ => (),
         }
     }
     Ok(())
@@ -388,20 +389,33 @@ impl PollFd {
 
 pub use libc::{POLLERR, POLLHUP, POLLIN, POLLNVAL, POLLOUT, POLLPRI};
 
-pub fn poll(fds: &mut [PollFd], timeout: Option<u32>) -> Result<usize> {
-    let cnt;
-    let timeout = timeout
-        .map(|t| {
-            if t > i32::max_value() as u32 {
-                i32::max_value()
+pub fn poll(fds: &mut [PollFd], mut timeout: Option<Duration>) -> Result<usize> {
+    let deadline = timeout.map(|timeout| Instant::now() + timeout);
+    loop {
+        // poll() accepts a maximum timeout of 2**31-1 ms, which is
+        // less than 25 days.  The caller can specify Durations much
+        // larger than that, so support them by waiting in a loop.
+        let (timeout_ms, overflow) = timeout.map(|timeout| {
+            let timeout = timeout.as_millis();
+            if timeout <= i32::max_value() as u128 {
+                (timeout as i32, false)
             } else {
-                t as i32
+                (i32::max_value(), true)
             }
-        })
-        .unwrap_or(-1);
-    unsafe {
+        }).unwrap_or((-1, false));
         let fds_ptr = fds.as_ptr() as *mut libc::pollfd;
-        cnt = check_err(libc::poll(fds_ptr, fds.len() as libc::nfds_t, timeout))?;
+        let cnt = unsafe {
+            check_err(libc::poll(fds_ptr, fds.len() as libc::nfds_t, timeout_ms))?
+        };
+        if cnt != 0 || !overflow {
+            return Ok(cnt as usize);
+        }
+
+        let deadline = deadline.unwrap();
+        let now = Instant::now();
+        if now >= deadline {
+            return Ok(0);
+        }
+        timeout = Some(deadline - now);
     }
-    Ok(cnt as usize)
 }

@@ -1089,16 +1089,7 @@ mod os {
                 ..
             } = self.child_state
             {
-                let millis = timeout.map(|t| {
-                    if t <= Duration::new(4294967, 295_000_000) {
-                        (t.as_secs() as u32 * 1_000 + t.subsec_nanos() / 1_000_000)
-                    } else {
-                        // Clamp to avoid overflow.  We could support timeouts
-                        // longer than 49.71 days with multiple waits.
-                        u32::max_value()
-                    }
-                });
-                let event = win32::WaitForSingleObject(handle, millis)?;
+                let event = win32::WaitForSingleObject(handle, timeout)?;
                 if let win32::WaitEvent::OBJECT_0 = event {
                     let exit_code = win32::GetExitCodeProcess(handle)?;
                     new_child_state = Some(Finished(ExitStatus::Exited(exit_code)));

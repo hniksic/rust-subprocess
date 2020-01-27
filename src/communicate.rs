@@ -11,15 +11,16 @@ mod raw {
     use std::fs::File;
     use std::io::{self, Read, Write};
     use std::os::unix::io::AsRawFd;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
-    fn millisecs_until(t: Instant) -> u32 {
-        let now = Instant::now();
-        if t <= now {
-            return 0;
-        }
-        let diff = t - now;
-        (diff.as_secs() * 1000) as u32 + diff.subsec_millis()
+    fn to_poll(f: Option<&File>, for_read: bool) -> posix::PollFd {
+        let optfd = f.map(File::as_raw_fd);
+        let events = if for_read {
+            posix::POLLIN
+        } else {
+            posix::POLLOUT
+        };
+        posix::PollFd::new(optfd, events)
     }
 
     fn poll3(
@@ -28,22 +29,21 @@ mod raw {
         ferr: Option<&File>,
         deadline: Option<Instant>,
     ) -> io::Result<(bool, bool, bool)> {
-        fn to_poll(f: Option<&File>, for_read: bool) -> posix::PollFd {
-            let optfd = f.map(File::as_raw_fd);
-            let events = if for_read {
-                posix::POLLIN
+        let timeout = deadline.map(|deadline| {
+            let now = Instant::now();
+            if now >= deadline {
+                Duration::from_secs(0)
             } else {
-                posix::POLLOUT
-            };
-            posix::PollFd::new(optfd, events)
-        }
+                deadline - now
+            }
+        });
 
         let mut fds = [
             to_poll(fin, false),
             to_poll(fout, true),
             to_poll(ferr, true),
         ];
-        posix::poll(&mut fds, deadline.map(millisecs_until))?;
+        posix::poll(&mut fds, timeout)?;
 
         Ok((
             fds[0].test(posix::POLLOUT | posix::POLLHUP),

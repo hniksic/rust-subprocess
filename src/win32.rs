@@ -10,6 +10,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::ptr;
 use std::rc::Rc;
+use std::time::{Instant, Duration};
 
 use winapi;
 use winapi::shared::minwindef::{BOOL, DWORD, LPVOID};
@@ -156,16 +157,37 @@ pub enum WaitEvent {
     TIMEOUT,
 }
 
-pub fn WaitForSingleObject(handle: &Handle, duration: Option<u32>) -> Result<WaitEvent> {
-    const WAIT_ABANDONED: u32 = 0x80;
-    const WAIT_OBJECT_0: u32 = 0x0;
-    const WAIT_FAILED: u32 = 0xFFFFFFFF;
-    const WAIT_TIMEOUT: u32 = 0x102;
-    const INFINITE: u32 = 0xFFFFFFFF;
+pub fn WaitForSingleObject(handle: &Handle, mut timeout: Option<Duration>) -> Result<WaitEvent> {
+    use winapi::um::winbase::{WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_FAILED, INFINITE};
+    use winapi::shared::winerror::WAIT_TIMEOUT;
+    let deadline = timeout.map(|timeout| Instant::now() + timeout);
 
-    let result = unsafe {
-        synchapi::WaitForSingleObject(handle.as_raw_handle(), duration.unwrap_or(INFINITE))
+    let result = loop {
+        // Allow timeouts greater than 50 days by clamping the
+        // timeout and sleeping in a loop.
+        let (timeout_ms, overflow) = timeout.map(|timeout| {
+            let timeout = timeout.as_millis();
+            if timeout < INFINITE as u128 {
+                (timeout as u32, false)
+            } else {
+                (INFINITE - 1, true)
+            }
+        }).unwrap_or((INFINITE, false));
+
+        let result = unsafe {
+            synchapi::WaitForSingleObject(handle.as_raw_handle(), timeout_ms)
+        };
+        if result != WAIT_TIMEOUT || !overflow {
+            break result;
+        }
+        let deadline = deadline.unwrap();
+        let now = Instant::now();
+        if now >= deadline {
+            break WAIT_TIMEOUT;
+        }
+        timeout = Some(deadline - now);
     };
+
     if result == WAIT_OBJECT_0 {
         Ok(WaitEvent::OBJECT_0)
     } else if result == WAIT_ABANDONED {
