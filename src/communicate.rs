@@ -273,7 +273,7 @@ mod raw {
                 }
             });
 
-            let (tx, rx) = mpsc::sync_channel(1);
+            let (tx, rx) = mpsc::sync_channel(0);
 
             read_stdout.map(|f| spawn_curried(f, tx.clone()));
             read_stderr.map(|f| spawn_curried(f, tx.clone()));
