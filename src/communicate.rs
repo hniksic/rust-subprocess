@@ -437,7 +437,7 @@ impl Communicator {
     /// options correspond to streams not specified as `Redirection::Pipe`
     /// when creating the subprocess.
     ///
-    /// By default `read()` will read all requested data.
+    /// By default `read()` will read all data until end-of-file.
     ///
     /// If `limit_time` has been called, the method will read for no more than
     /// the specified duration.  In case of timeout, an error of kind
