@@ -95,7 +95,7 @@ mod raw {
             }
             let n = source_ref.unwrap().read(buf)?;
             if n != 0 {
-                dest.extend_from_slice(&mut buf[..n]);
+                dest.extend_from_slice(&buf[..n]);
             } else {
                 *source_ref = None;
             }

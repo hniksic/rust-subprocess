@@ -173,9 +173,9 @@ impl PopenConfig {
             env: self.env.clone(),
             cwd: self.cwd.clone(),
             #[cfg(unix)]
-            setuid: self.setuid.clone(),
+            setuid: self.setuid,
             #[cfg(unix)]
-            setgid: self.setgid.clone(),
+            setgid: self.setgid,
             _use_default_to_construct: (),
         })
     }
@@ -185,9 +185,7 @@ impl PopenConfig {
     /// The returned value is in the format accepted by the `env`
     /// member of `PopenConfig`.
     pub fn current_env() -> Vec<(OsString, OsString)> {
-        env::vars_os()
-            .map(|(k, v)| (k.to_owned(), v.to_owned()))
-            .collect()
+        env::vars_os().collect()
     }
 }
 

@@ -69,6 +69,6 @@ pub fn get_standard_stream(which: StandardStream) -> io::Result<Rc<File>> {
         }
         let stream = make_standard_stream(which)?;
         streams.borrow_mut()[which as usize] = Some(stream.clone());
-        Ok(stream.clone())
+        Ok(stream)
     })
 }
