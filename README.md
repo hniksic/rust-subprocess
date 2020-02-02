@@ -5,78 +5,68 @@
 [![docs.rs](https://docs.rs/subprocess/badge.svg)](https://docs.rs/subprocess)
 
 The `subprocess` library provides facilities for execution of and
-interaction with external processes and pipelines.  It is inspired by
-Python's `subprocess` module, adding a Rust spin on top.  `subprocess`
-is [hosted on crates.io](https://crates.io/crates/subprocess), with
-[API Documentation on docs.rs](https://docs.rs/subprocess/).
+interaction with external processes and pipelines, inspired by
+Python's `subprocess` module.  `subprocess` is [hosted on
+crates.io](https://crates.io/crates/subprocess), with [API
+Documentation on docs.rs](https://docs.rs/subprocess/).
 
 ## Features
 
-The following features are available:
-
-* Launching external processes with optional redirection of standard
-  input, output, and error.
-
-* Connecting multiple commands into OS-level pipelines.
+This library is about launching external processes with optional redirection
+of standard input, output, and error.  It covers similar ground as the
+[`std::process`](https://doc.rust-lang.org/std/process/index.html) standard
+library module, but with additional functionality:
 
 * The *communicate* [family of
   methods](https://docs.rs/subprocess/latest/subprocess/struct.Popen.html#method.communicate_start)
-  for deadlock-free capturing of the subprocess's output/error to
-  memory while feeding its input.  Capturing supports timeout and read
-  size limit.
+  for deadlock-free capturing of subprocess output/error to memory, while
+  simultaneously feeding data to its standard input.  Capturing supports
+  optional timeout and read size limit.
 
-* Builder API for creating commands and pipelines.
+* Connecting multiple commands into OS-level pipelines.
 
-* Waiting for the process to finish and polling its status: `poll`,
-  `wait`, and `wait_timeout`.
+* Flexible redirection options, such as connecting standard streams to
+  arbitrary files, or merging output streams like shell's `2>&1` and `1>&2`
+  operators.
 
-* Redirecting standard streams to arbitrary files, and merging of
-  output and error, the equivalent of `2>&1` and `1>&2`.
+* Non-blocking and timeout methods to wait on the process: `poll`, `wait`, and
+  `wait_timeout`.
 
-The crate has minimal dependencies to third-party crates, only
-requiring `libc` on Unix and `winapi` on Windows.  It is intended to
-work on Unix-like platforms as well as on reasonably recent Windows.
-It is regularly tested on Linux, MacOS and Windows.
+The crate has minimal dependencies to third-party crates, only requiring
+`libc` on Unix and `winapi` on Windows.  It is intended to work on Unix-like
+platforms as well as on reasonably recent Windows.  It is regularly tested on
+Linux, MacOS and Windows.
 
 ## API Overview
 
-The API is separated in two parts: the low-level `Popen` API similar
-to Python's `subprocess.Popen`, and the higher-level API for
-convenient creation of commands and pipelines.  The two can be mixed,
-so it is possible to use builder to create `Popen` instances, and then
-to continue working with them directly.
+The API is separated in two parts: the low-level `Popen` API similar to
+Python's
+[`subprocess.Popen`](https://docs.python.org/3/library/subprocess.html#subprocess.Popen),
+and the higher-level API for convenient creation of commands and pipelines.
+The two can be mixed, so it is possible to use builder to create `Popen`
+instances, and then to continue working with them directly.
 
-The `Popen` type offers some functionality currently missing from the
-Rust standard library.  It provides methods for polling the process,
-waiting with timeout, and the *communicate* output capturing methods,
-useful enough to have been [created
-independently](https://crates.io/crates/subprocess-communicate).
-While the design follows Python's [`subprocess`
+While `Popen` loosely follows Python's [`subprocess`
 module](https://docs.python.org/3/library/subprocess.html#popen-constructor),
 it is not a literal translation.  Some of the changes accommodate the
-differences between the languages, such as the lack of default and
-keyword arguments in Rust, and others take advantage of Rust's more
-advanced type system, or of additional capabilities such as the
-ownership system and the `Drop` trait.  Python's utility functions
-such as `subprocess.run` are not included because they have better
-alternatives in the form of the builder API.
+differences between the languages, such as the lack of default and keyword
+arguments in Rust, and others take advantage of Rust's more advanced type
+system, or of additional capabilities such as the ownership system and the
+`Drop` trait.  Python's utility functions such as `subprocess.run` are not
+included because they can be better expressed using the builder pattern.
 
-The builder API offers a more Rustic process creation interface, along
-with convenience methods for capturing output and building pipelines.
+The high-level API offers an elegant process and pipeline creation interface,
+along with convenience methods for capturing their output and exit status.
 
 ## Examples
 
-Note: the examples assume they run in a function returning a
-`subprocess::Result` or equivalent. If you are pasting them to a
-function that doesn't return a `Result`, replace `?` with
-`.expect("informative message")`.
-
-### Commands
+### Spawning and redirecting
 
 Execute an command and wait for it to complete:
 
 ```rust
 let exit_status = Exec::cmd("umount").arg(dirname).join()?;
+assert!(exit_status.success());
 ```
 
 To prevent quoting issues and injection attacks, subprocess will not
@@ -91,8 +81,9 @@ Start a subprocess and obtain its output as a `Read` trait object,
 like C's `popen`:
 
 ```rust
-let stream = Exec::cmd("ls").stream_stdout()?;
-// call stream.read_to_string, construct io::BufReader(stream), etc.
+let stream = Exec::cmd("find /").stream_stdout()?;
+// Call stream.read_to_string, construct io::BufReader(stream) and iterate it
+// by lines, etc...
 ```
 
 Capture the output of a command:
@@ -122,7 +113,7 @@ let out = Exec::cmd("sort")
   .stdout(Redirection::Pipe)
   .capture()?
   .stdout_str();
-assert!(out == "a\nb\nc\n");
+assert_eq!(out, "a\nb\nc\n");
 ```
 
 Connecting `stdin` to an open file would have worked as well.
@@ -149,7 +140,7 @@ let dir_checksum = {
 }.capture()?.stdout_str();
 ```
 
-### Low-level Popen type
+### The low-level Popen type
 
 ```rust
 let mut p = Popen::create(&["command", "arg1", "arg2"], PopenConfig {
@@ -170,7 +161,7 @@ if let Some(exit_status) = p.poll() {
 }
 ```
 
-### Interacting with subprocess
+### Querying and terminating
 
 Check whether a previously launched process is still running:
 

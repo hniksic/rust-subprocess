@@ -354,9 +354,9 @@ mod exec {
         /// Starts the process, waits for it to finish, and returns
         /// the exit status.
         ///
-        /// This method will wait for as long as necessary for the
-        /// process to finish.  If a timeout is needed, use
-        /// `popen()?.wait_timeout(...)` instead.
+        /// This method will wait for as long as necessary for the process to
+        /// finish.  If a timeout is needed, use
+        /// `<...>.detached().popen()?.wait_timeout(...)` instead.
         pub fn join(self) -> PopenResult<ExitStatus> {
             self.check_no_stdin_data("join");
             self.popen()?.wait()
