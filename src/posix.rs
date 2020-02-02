@@ -188,7 +188,7 @@ impl FinishExec {
             // make sure enough room is present for the largest of the
             // PATH components, plus 1 for the intervening '/'.
             max_exe_len += 1 + split_path(search_path)
-                .map(|dir| dir.len())
+                .map(OsStr::len)
                 .max()
                 .unwrap_or(0);
         }
@@ -237,7 +237,7 @@ impl FinishExec {
 
         unsafe {
             match self.envvec.as_ref() {
-                Some(ref envvec) => libc::execve(
+                Some(envvec) => libc::execve(
                     exe_buf.as_ptr() as *const c_char,
                     self.argvec.as_c_vec(),
                     envvec.as_c_vec(),
