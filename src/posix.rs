@@ -52,13 +52,10 @@ pub fn setgid(gid: u32) -> Result<()> {
 }
 
 fn os_to_cstring(s: &OsStr) -> Result<CString> {
-    let bytes = s.as_bytes();
-    if bytes.iter().any(|&b| b == 0) {
-        return Err(Error::from_raw_os_error(libc::EINVAL));
-    }
-    Ok(CString::new(bytes)
-        // not expected to fail on Unix, as Unix paths *are* C strings
-        .expect("converting Unix path to C string"))
+    // Like CString::new, but returns an io::Result for consistency with
+    // everything else.
+    CString::new(s.as_bytes())
+        .map_err(|_| Error::from_raw_os_error(libc::EINVAL))
 }
 
 #[derive(Debug)]
