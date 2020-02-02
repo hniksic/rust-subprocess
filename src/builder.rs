@@ -119,6 +119,7 @@ mod exec {
     /// [`Popen`]: struct.Popen.html
     /// [`Popen::create`]: struct.Popen.html#method.create
 
+    #[must_use]
     pub struct Exec {
         command: OsString,
         args: Vec<OsString>,
@@ -750,6 +751,7 @@ mod pipeline {
     /// [`Exec`]: struct.Exec.html
     /// [`Pipeline`]: struct.Pipeline.html
 
+    #[must_use]
     pub struct Pipeline {
         cmds: Vec<Exec>,
         stdin: Redirection,
