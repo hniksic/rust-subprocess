@@ -75,6 +75,11 @@
 
 #![warn(missing_docs)]
 
+#![allow(
+    clippy::type_complexity,
+    clippy::single_match,
+)]
+
 mod builder;
 mod communicate;
 mod popen;

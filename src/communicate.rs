@@ -33,7 +33,7 @@ mod raw {
         // multiple streams, and for timeout.  If we're interacting with a
         // single stream without timeout, we can skip the actual poll()
         // syscall and just tell the caller to go ahead with reading/writing.
-        if let None = deadline {
+        if deadline.is_none() {
             match (&fin, &fout, &ferr) {
                 (None, None, Some(..)) => return Ok((false, false, true)),
                 (None, Some(..), None) => return Ok((false, true, false)),
