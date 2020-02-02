@@ -395,18 +395,18 @@ pub fn poll(fds: &mut [PollFd], mut timeout: Option<Duration>) -> Result<usize> 
         // poll() accepts a maximum timeout of 2**31-1 ms, which is
         // less than 25 days.  The caller can specify Durations much
         // larger than that, so support them by waiting in a loop.
-        let (timeout_ms, overflow) = timeout.map(|timeout| {
-            let timeout = timeout.as_millis();
-            if timeout <= i32::max_value() as u128 {
-                (timeout as i32, false)
-            } else {
-                (i32::max_value(), true)
-            }
-        }).unwrap_or((-1, false));
+        let (timeout_ms, overflow) = timeout
+            .map(|timeout| {
+                let timeout = timeout.as_millis();
+                if timeout <= i32::max_value() as u128 {
+                    (timeout as i32, false)
+                } else {
+                    (i32::max_value(), true)
+                }
+            })
+            .unwrap_or((-1, false));
         let fds_ptr = fds.as_ptr() as *mut libc::pollfd;
-        let cnt = unsafe {
-            check_err(libc::poll(fds_ptr, fds.len() as libc::nfds_t, timeout_ms))?
-        };
+        let cnt = unsafe { check_err(libc::poll(fds_ptr, fds.len() as libc::nfds_t, timeout_ms))? };
         if cnt != 0 || !overflow {
             return Ok(cnt as usize);
         }
