@@ -13,7 +13,7 @@ mod raw {
     use std::os::unix::io::AsRawFd;
     use std::time::{Duration, Instant};
 
-    fn to_poll(f: Option<&File>, for_read: bool) -> posix::PollFd {
+    fn as_pollfd(f: Option<&File>, for_read: bool) -> posix::PollFd {
         let optfd = f.map(File::as_raw_fd);
         let events = if for_read {
             posix::POLLIN
@@ -23,12 +23,25 @@ mod raw {
         posix::PollFd::new(optfd, events)
     }
 
-    fn poll3(
+    fn maybe_poll(
         fin: Option<&File>,
         fout: Option<&File>,
         ferr: Option<&File>,
         deadline: Option<Instant>,
     ) -> io::Result<(bool, bool, bool)> {
+        // Polling is needed to prevent deadlock when interacting with
+        // multiple streams, and for timeout.  If we're interacting with a
+        // single stream without timeout, we can skip the actual poll()
+        // syscall and just tell the caller to go ahead with reading/writing.
+        if let None = deadline {
+            match (&fin, &fout, &ferr) {
+                (None, None, Some(..)) => return Ok((false, false, true)),
+                (None, Some(..), None) => return Ok((false, true, false)),
+                (Some(..), None, None) => return Ok((true, false, false)),
+                _ => (),
+            }
+        }
+
         let timeout = deadline.map(|deadline| {
             let now = Instant::now();
             if now >= deadline {
@@ -39,9 +52,9 @@ mod raw {
         });
 
         let mut fds = [
-            to_poll(fin, false),
-            to_poll(fout, true),
-            to_poll(ferr, true),
+            as_pollfd(fin, false),
+            as_pollfd(fout, true),
+            as_pollfd(ferr, true),
         ];
         posix::poll(&mut fds, timeout)?;
 
@@ -129,7 +142,7 @@ mod raw {
                 }
 
                 let (in_ready, out_ready, err_ready) =
-                    poll3(self.stdin.as_ref(), stdout_ref, stderr_ref, deadline)?;
+                    maybe_poll(self.stdin.as_ref(), stdout_ref, stderr_ref, deadline)?;
                 if !in_ready && !out_ready && !err_ready {
                     return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout"));
                 }
@@ -141,18 +154,26 @@ mod raw {
                     if self.input_pos == self.input_data.len() {
                         // close stdin when done writing, so the child receives EOF
                         self.stdin.take();
-                        // free the input data vector, we don't need it any more
+                        // deallocate the input data, we don't need it any more
                         self.input_data.clear();
                         self.input_data.shrink_to_fit();
                     }
                 }
                 if out_ready {
-                    let total = outvec.len() + errvec.len();
-                    RawCommunicator::do_read(&mut stdout_ref, outvec, size_limit, total)?;
+                    RawCommunicator::do_read(
+                        &mut stdout_ref,
+                        outvec,
+                        size_limit,
+                        outvec.len() + errvec.len(),
+                    )?;
                 }
                 if err_ready {
-                    let total = outvec.len() + errvec.len();
-                    RawCommunicator::do_read(&mut stderr_ref, errvec, size_limit, total)?;
+                    RawCommunicator::do_read(
+                        &mut stderr_ref,
+                        errvec,
+                        size_limit,
+                        outvec.len() + errvec.len(),
+                    )?;
                 }
             }
 
@@ -297,7 +318,7 @@ mod raw {
                     Ok(message) => Ok(message),
                     Err(RecvTimeoutError::Timeout) => Err(Timeout),
                     // should never be disconnected, the helper threads always
-                    // announce their exit
+                    // announce their exit beforehand
                     Err(RecvTimeoutError::Disconnected) => unreachable!(),
                 }
             } else {
