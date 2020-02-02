@@ -283,7 +283,7 @@ impl Redirection {
             Redirection::Pipe => Redirection::Pipe,
             Redirection::Merge => Redirection::Merge,
             Redirection::File(ref f) => Redirection::File(f.try_clone()?),
-            Redirection::RcFile(ref f) => Redirection::RcFile(f.clone()),
+            Redirection::RcFile(ref f) => Redirection::RcFile(Rc::clone(&f)),
         })
     }
 }
@@ -387,7 +387,7 @@ impl Popen {
             if src.is_none() {
                 *src = Some(os_common::get_standard_stream(src_id)?);
             }
-            *dest = Some(src.as_ref().unwrap().clone());
+            *dest = Some(Rc::clone(src.as_ref().unwrap()));
             Ok(())
         }
 

@@ -858,7 +858,7 @@ mod pipeline {
                 self.cmds = self
                     .cmds
                     .into_iter()
-                    .map(|cmd| cmd.stderr(Redirection::RcFile(stderr_to.clone())))
+                    .map(|cmd| cmd.stderr(Redirection::RcFile(Rc::clone(&stderr_to))))
                     .collect();
             }
 

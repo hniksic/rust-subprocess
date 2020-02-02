@@ -337,7 +337,7 @@ pub fn make_standard_stream(which: StandardStream) -> Result<Rc<File>> {
     // Leak the Rc so the object we return doesn't close the underlying file
     // descriptor.  We didn't open it, and it is shared by everything else, so
     // we are not allowed to close it either.
-    mem::forget(stream.clone());
+    mem::forget(Rc::clone(&stream));
     Ok(stream)
 }
 

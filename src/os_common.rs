@@ -65,10 +65,10 @@ use crate::win32::make_standard_stream;
 pub fn get_standard_stream(which: StandardStream) -> io::Result<Rc<File>> {
     STREAMS.with(|streams| {
         if let Some(ref stream) = streams.borrow()[which as usize] {
-            return Ok(stream.clone());
+            return Ok(Rc::clone(&stream));
         }
         let stream = make_standard_stream(which)?;
-        streams.borrow_mut()[which as usize] = Some(stream.clone());
+        streams.borrow_mut()[which as usize] = Some(Rc::clone(&stream));
         Ok(stream)
     })
 }

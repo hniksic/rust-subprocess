@@ -232,7 +232,7 @@ pub fn make_standard_stream(which: StandardStream) -> Result<Rc<File>> {
         let stream = Rc::new(File::from_raw_handle(raw));
         // Leak the Rc so the object we return doesn't close the underlying
         // system handle.
-        mem::forget(stream.clone());
+        mem::forget(Rc::clone(&stream));
         Ok(stream)
     }
 }
