@@ -54,8 +54,7 @@ pub fn setgid(gid: u32) -> Result<()> {
 fn os_to_cstring(s: &OsStr) -> Result<CString> {
     // Like CString::new, but returns an io::Result for consistency with
     // everything else.
-    CString::new(s.as_bytes())
-        .map_err(|_| Error::from_raw_os_error(libc::EINVAL))
+    CString::new(s.as_bytes()).map_err(|_| Error::from_raw_os_error(libc::EINVAL))
 }
 
 #[derive(Debug)]
@@ -187,10 +186,7 @@ impl FinishExec {
         if let Some(ref search_path) = search_path {
             // make sure enough room is present for the largest of the
             // PATH components, plus 1 for the intervening '/'.
-            max_exe_len += 1 + split_path(search_path)
-                .map(OsStr::len)
-                .max()
-                .unwrap_or(0);
+            max_exe_len += 1 + split_path(search_path).map(OsStr::len).max().unwrap_or(0);
         }
 
         FinishExec {

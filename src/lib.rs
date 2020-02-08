@@ -73,11 +73,7 @@
 //! [pipelines]: struct.Pipeline.html
 
 #![warn(missing_docs)]
-
-#![allow(
-    clippy::type_complexity,
-    clippy::single_match,
-)]
+#![allow(clippy::type_complexity, clippy::single_match)]
 
 mod builder;
 mod communicate;
