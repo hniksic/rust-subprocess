@@ -398,7 +398,9 @@ mod raw {
             let mut outvec = vec![];
             let mut errvec = vec![];
 
-            let check = self.read_into(deadline, size_limit, &mut outvec, &mut errvec);
+            let err = self
+                .read_into(deadline, size_limit, &mut outvec, &mut errvec)
+                .err();
             let output = {
                 let (mut o, mut e) = (None, None);
                 if self.requested_streams & StreamIdent::Out as u8 != 0 {
@@ -413,10 +415,7 @@ mod raw {
                 }
                 (o, e)
             };
-            match check {
-                Ok(()) => (None, output),
-                Err(e) => (Some(e), output),
-            }
+            (check.err(), output)
         }
     }
 }
