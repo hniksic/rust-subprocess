@@ -584,7 +584,7 @@ impl Popen {
     /// is still running, `None` is returned, otherwise
     /// `Some(exit_status)`.  This method is guaranteed not to block
     /// and is exactly equivalent to
-    /// `wait_timeout(Duration::new(0, 0)).unwrap_or(None)`.
+    /// `wait_timeout(Duration::from_secs(0)).unwrap_or(None)`.
     pub fn poll(&mut self) -> Option<ExitStatus> {
         self.wait_timeout(Duration::from_secs(0)).unwrap_or(None)
     }
@@ -674,7 +674,7 @@ mod os {
             set_inheritable(&exec_fail_pipe.1, false)?;
             {
                 let child_ends = self.setup_streams(config.stdin, config.stdout, config.stderr)?;
-                let child_env = config.env.map(format_env);
+                let child_env = config.env.map(|env| format_env(&env));
                 let cmd_to_exec = config.executable.as_ref().unwrap_or(&argv[0]);
                 let just_exec = posix::stage_exec(
                     cmd_to_exec,
@@ -780,16 +780,15 @@ mod os {
         }
     }
 
-    fn format_env(env: Vec<(OsString, OsString)>) -> Vec<OsString> {
-        // Convert Vec of (key, val) pairs to Vec of key=val, as
-        // required by execvpe.  Also eliminate dups, with the
-        // later-appearing one taking precedence.
-        let mut seen = HashSet::<OsString>::new();
+    fn format_env(env: &[(OsString, OsString)]) -> Vec<OsString> {
+        // Convert Vec of (key, val) pairs to Vec of key=val, as required by
+        // execvpe.  Eliminate dups, in favor of later-appearing entries.
+        let mut seen = HashSet::<&OsStr>::new();
         let mut formatted: Vec<_> = env
-            .into_iter()
+            .iter()
             .rev()
-            .filter(|&(ref k, ref _v)| seen.insert(k.clone()))
-            .map(|(ref k, ref v)| {
+            .filter(|&(k, _)| seen.insert(k))
+            .map(|(k, v)| {
                 let mut fmt = k.clone();
                 fmt.push("=");
                 fmt.push(v);
