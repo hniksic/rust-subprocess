@@ -188,15 +188,14 @@ mod raw {
             let mut outvec = Vec::<u8>::new();
             let mut errvec = Vec::<u8>::new();
 
-            let check = self.read_into(deadline, size_limit, &mut outvec, &mut errvec);
+            let err = self
+                .read_into(deadline, size_limit, &mut outvec, &mut errvec)
+                .err();
             let output = (
                 self.stdout.as_ref().map(|_| outvec),
                 self.stderr.as_ref().map(|_| errvec),
             );
-            match check {
-                Ok(()) => (None, output),
-                Err(e) => (Some(e), output),
-            }
+            (err, output)
         }
     }
 }
@@ -415,7 +414,7 @@ mod raw {
                 }
                 (o, e)
             };
-            (check.err(), output)
+            (err, output)
         }
     }
 }
