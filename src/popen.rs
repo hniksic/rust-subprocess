@@ -965,7 +965,7 @@ mod os {
             ensure_child_stream(&mut child_stdout, StandardStream::Output)?;
             ensure_child_stream(&mut child_stderr, StandardStream::Error)?;
             let cmdline = assemble_cmdline(argv)?;
-            let env_block = config.env.map(format_env_block);
+            let env_block = config.env.map(|env| format_env_block(&env));
             // CreateProcess doesn't search for appname in the PATH.
             // We do it ourselves to match the Unix behavior.
             let executable = config.executable.map(locate_in_path);
@@ -1042,7 +1042,7 @@ mod os {
         }
     }
 
-    fn format_env_block(env: Vec<(OsString, OsString)>) -> Vec<u16> {
+    fn format_env_block(env: &[(OsString, OsString)]) -> Vec<u16> {
         fn to_uppercase(s: &OsStr) -> OsString {
             OsString::from_wide(
                 &s.encode_wide()
@@ -1053,18 +1053,18 @@ mod os {
                             c
                         }
                     })
-                    .collect::<Vec<u16>>(),
+                    .collect::<Vec<_>>(),
             )
         }
-        let mut pruned = {
+        let mut pruned: Vec<_> = {
             let mut seen = HashSet::<OsString>::new();
-            env.into_iter()
+            env.iter()
                 .rev()
-                .filter(|&(ref k, ref _v)| seen.insert(to_uppercase(&k)))
-                .collect::<Vec<_>>()
+                .filter(|&(k, _)| seen.insert(to_uppercase(k)))
+                .collect()
         };
         pruned.reverse();
-        let mut block = Vec::<u16>::new();
+        let mut block = vec![];
         for (k, v) in pruned {
             block.extend(k.encode_wide());
             block.push('=' as u16);
