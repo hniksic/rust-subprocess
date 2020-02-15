@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::env;
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
@@ -9,7 +10,7 @@ use std::result;
 use std::time::Duration;
 
 use crate::communicate;
-use crate::os_common::{self, ExitStatus, StandardStream};
+use crate::os_common::{ExitStatus, StandardStream};
 
 use self::ChildState::*;
 
@@ -385,7 +386,7 @@ impl Popen {
             // the same File.  If the file is unavailable, use the
             // appropriate system output stream.
             if src.is_none() {
-                *src = Some(os_common::get_standard_stream(src_id)?);
+                *src = Some(get_standard_stream(src_id)?);
             }
             *dest = Some(Rc::clone(src.as_ref().unwrap()));
             Ok(())
@@ -1107,7 +1108,7 @@ mod os {
         // failing because the shell tries to redirect stdout to
         // stderr, but fails because it didn't receive a valid stdout.
         if stream.is_none() {
-            *stream = Some(os_common::get_standard_stream(which)?);
+            *stream = Some(get_standard_stream(which)?);
         }
         Ok(())
     }
@@ -1221,6 +1222,26 @@ impl Drop for Popen {
             self.wait().ok();
         }
     }
+}
+
+thread_local! {
+    static STREAMS: RefCell<[Option<Rc<File>>; 3]> = RefCell::default();
+}
+
+#[cfg(unix)]
+use crate::posix::make_standard_stream;
+#[cfg(windows)]
+use crate::win32::make_standard_stream;
+
+fn get_standard_stream(which: StandardStream) -> io::Result<Rc<File>> {
+    STREAMS.with(|streams| {
+        if let Some(ref stream) = streams.borrow()[which as usize] {
+            return Ok(Rc::clone(&stream));
+        }
+        let stream = make_standard_stream(which)?;
+        streams.borrow_mut()[which as usize] = Some(Rc::clone(&stream));
+        Ok(stream)
+    })
 }
 
 /// Error in [`Popen`] calls.

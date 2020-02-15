@@ -1,8 +1,3 @@
-use std::cell::RefCell;
-use std::fs::File;
-use std::io;
-use std::rc::Rc;
-
 /// Exit status of a process.
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -51,24 +46,4 @@ pub enum StandardStream {
     Input = 0,
     Output = 1,
     Error = 2,
-}
-
-thread_local! {
-    static STREAMS: RefCell<[Option<Rc<File>>; 3]> = RefCell::default();
-}
-
-#[cfg(unix)]
-use crate::posix::make_standard_stream;
-#[cfg(windows)]
-use crate::win32::make_standard_stream;
-
-pub fn get_standard_stream(which: StandardStream) -> io::Result<Rc<File>> {
-    STREAMS.with(|streams| {
-        if let Some(ref stream) = streams.borrow()[which as usize] {
-            return Ok(Rc::clone(&stream));
-        }
-        let stream = make_standard_stream(which)?;
-        streams.borrow_mut()[which as usize] = Some(Rc::clone(&stream));
-        Ok(stream)
-    })
 }
