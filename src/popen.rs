@@ -1269,13 +1269,6 @@ impl From<communicate::CommunicateError> for PopenError {
 }
 
 impl Error for PopenError {
-    fn description(&self) -> &str {
-        match *self {
-            PopenError::IoError(ref err) => err.description(),
-            PopenError::LogicError(description) => description,
-        }
-    }
-
     fn cause(&self) -> Option<&dyn Error> {
         match *self {
             PopenError::IoError(ref err) => Some(err as &dyn Error),

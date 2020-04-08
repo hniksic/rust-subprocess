@@ -577,10 +577,6 @@ impl CommunicateError {
 }
 
 impl Error for CommunicateError {
-    fn description(&self) -> &str {
-        self.error.description()
-    }
-
     fn cause(&self) -> Option<&dyn Error> {
         self.error.source()
     }
