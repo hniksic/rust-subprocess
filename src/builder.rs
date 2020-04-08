@@ -774,6 +774,17 @@ mod pipeline {
             }
         }
 
+        /// Creates a new pipeline by combining a commands vector.
+        pub fn from_vec(cmds: Vec<Exec>) -> Pipeline {
+          Pipeline {
+              cmds: cmds,
+              stdin: Redirection::None,
+              stdout: Redirection::None,
+              stderr_file: None,
+              stdin_data: None,
+          }
+      }
+
         /// Specifies how to set up the standard input of the first
         /// command in the pipeline.
         ///
