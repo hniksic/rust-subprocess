@@ -278,7 +278,7 @@ mod exec {
         /// * [`NullFile`], which will redirect the standard input to read from
         ///    `/dev/null`.
         ///
-        /// [`Redirection`]: struct.Redirection.html
+        /// [`Redirection`]: enum.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
         pub fn stdin(mut self, stdin: impl Into<InputRedirection>) -> Exec {
             match (&self.config.stdin, stdin.into()) {
@@ -304,7 +304,7 @@ mod exec {
         /// * [`NullFile`], which will redirect the standard output to go to
         ///    `/dev/null`.
         ///
-        /// [`Redirection`]: struct.Redirection.html
+        /// [`Redirection`]: enum.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
         pub fn stdout(mut self, stdout: impl Into<OutputRedirection>) -> Exec {
             match (&self.config.stdout, stdout.into().into_redirection()) {
@@ -324,7 +324,7 @@ mod exec {
         /// * [`NullFile`], which will redirect the standard error to go to
         ///    `/dev/null`.
         ///
-        /// [`Redirection`]: struct.Redirection.html
+        /// [`Redirection`]: enum.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
         pub fn stderr(mut self, stderr: impl Into<OutputRedirection>) -> Exec {
             match (&self.config.stderr, stderr.into().into_redirection()) {
@@ -787,7 +787,7 @@ mod pipeline {
         /// * `NullFile`, which will redirect the standard input to read from
         ///    /dev/null.
         ///
-        /// [`Redirection`]: struct.Redirection.html
+        /// [`Redirection`]: enum.Redirection.html
         pub fn stdin(mut self, stdin: impl Into<InputRedirection>) -> Pipeline {
             match stdin.into() {
                 InputRedirection::AsRedirection(r) => self.stdin = r,
@@ -809,7 +809,7 @@ mod pipeline {
         /// * `NullFile`, which will redirect the standard output to write to
         ///    /dev/null.
         ///
-        /// [`Redirection`]: struct.Redirection.html
+        /// [`Redirection`]: enum.Redirection.html
         pub fn stdout(mut self, stdout: impl Into<OutputRedirection>) -> Pipeline {
             self.stdout = stdout.into().into_redirection();
             self
