@@ -23,7 +23,7 @@ pub enum ExitStatus {
     /// It is known that the process has completed, but its exit
     /// status is unavailable.
     ///
-    /// This should not occur in normal operation, but if possible if
+    /// This should not occur in normal operation, but is possible if
     /// for example some foreign code calls `waitpid()` on the PID of
     /// the child process.
     Undetermined,
