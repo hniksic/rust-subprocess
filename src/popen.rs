@@ -1284,17 +1284,10 @@ impl From<communicate::CommunicateError> for PopenError {
 }
 
 impl Error for PopenError {
-    fn description(&self) -> &str {
-        match *self {
-            PopenError::IoError(ref err) => err.description(),
-            PopenError::LogicError(description) => description,
-        }
-    }
-
-    fn cause(&self) -> Option<&dyn Error> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match *self {
             PopenError::IoError(ref err) => Some(err as &dyn Error),
-            PopenError::LogicError(_) => None,
+            PopenError::LogicError(_msg) => None,
         }
     }
 }

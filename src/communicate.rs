@@ -581,11 +581,7 @@ impl CommunicateError {
 }
 
 impl Error for CommunicateError {
-    fn description(&self) -> &str {
-        self.error.description()
-    }
-
-    fn cause(&self) -> Option<&dyn Error> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         self.error.source()
     }
 }
