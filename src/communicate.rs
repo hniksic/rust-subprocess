@@ -185,8 +185,8 @@ mod raw {
             deadline: Option<Instant>,
             size_limit: Option<usize>,
         ) -> (Option<io::Error>, (Option<Vec<u8>>, Option<Vec<u8>>)) {
-            let mut outvec = Vec::<u8>::new();
-            let mut errvec = Vec::<u8>::new();
+            let mut outvec = vec![];
+            let mut errvec = vec![];
 
             let err = self
                 .read_into(deadline, size_limit, &mut outvec, &mut errvec)
@@ -249,7 +249,7 @@ mod raw {
         }
     }
 
-    fn spawn_curried<T: Send + 'static>(f: impl FnOnce(T) + Send + 'static, arg: T) {
+    fn spawn_with_arg<T: Send + 'static>(f: impl FnOnce(T) + Send + 'static, arg: T) {
         thread::spawn(move || f(arg));
     }
 
@@ -294,9 +294,9 @@ mod raw {
 
             let (tx, rx) = mpsc::sync_channel(0);
 
-            read_stdout.map(|f| spawn_curried(f, tx.clone()));
-            read_stderr.map(|f| spawn_curried(f, tx.clone()));
-            write_stdin.map(|f| spawn_curried(f, tx.clone()));
+            read_stdout.map(|f| spawn_with_arg(f, tx.clone()));
+            read_stderr.map(|f| spawn_with_arg(f, tx.clone()));
+            write_stdin.map(|f| spawn_with_arg(f, tx.clone()));
 
             RawCommunicator {
                 rx,

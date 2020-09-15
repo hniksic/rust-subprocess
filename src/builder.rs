@@ -202,7 +202,7 @@ mod exec {
         /// When this is invoked, the subprocess will not inherit the
         /// environment of this process.
         pub fn env_clear(mut self) -> Exec {
-            self.config.env = Some(Vec::new());
+            self.config.env = Some(vec![]);
             self
         }
 
@@ -1033,7 +1033,7 @@ mod pipeline {
 
     impl fmt::Debug for Pipeline {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            let mut args = Vec::new();
+            let mut args = vec![];
             for cmd in &self.cmds {
                 args.push(cmd.to_cmdline_lossy());
             }

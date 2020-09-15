@@ -1159,7 +1159,7 @@ mod os {
     }
 
     fn assemble_cmdline(argv: Vec<OsString>) -> io::Result<OsString> {
-        let mut cmdline = Vec::<u16>::new();
+        let mut cmdline = vec![];
         let mut is_first = true;
         for arg in argv {
             if !is_first {
