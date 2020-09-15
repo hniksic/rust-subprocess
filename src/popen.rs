@@ -673,7 +673,6 @@ mod os {
     use std::ffi::OsString;
     use std::fs::File;
     use std::io::{self, Read, Write};
-    use std::mem;
     use std::os::unix::io::AsRawFd;
     use std::time::{Duration, Instant};
 
@@ -707,7 +706,7 @@ mod os {
                             };
                         }
                         None => {
-                            mem::drop(exec_fail_pipe.0);
+                            drop(exec_fail_pipe.0);
                             let result = Popen::do_exec(
                                 just_exec,
                                 child_ends,
@@ -735,7 +734,7 @@ mod os {
                     }
                 }
             }
-            mem::drop(exec_fail_pipe.1);
+            drop(exec_fail_pipe.1);
             let mut error_buf = [0u8; 4];
             let read_cnt = exec_fail_pipe.0.read(&mut error_buf)?;
             if read_cnt == 0 {

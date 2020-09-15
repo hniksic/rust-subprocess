@@ -144,7 +144,7 @@ pub fn CreateProcess(
         )
     })?;
     unsafe {
-        mem::drop(Handle::from_raw_handle(pinfo.hThread));
+        drop(Handle::from_raw_handle(pinfo.hThread));
         Ok((
             Handle::from_raw_handle(pinfo.hProcess),
             pinfo.dwProcessId as u64,

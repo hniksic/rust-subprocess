@@ -204,7 +204,6 @@ mod raw {
 mod raw {
     use std::fs::File;
     use std::io::{self, Read, Write};
-    use std::mem;
     use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
     use std::thread;
     use std::time::Instant;
@@ -288,8 +287,8 @@ mod raw {
                 let input_data = input_data.expect("must provide input to redirected stdin");
                 helper_set |= StreamIdent::In as u8;
                 move |tx: SyncSender<_>| match stdin.write_all(&input_data) {
-                    Ok(()) => mem::drop(tx.send((StreamIdent::In, Payload::EOF))),
-                    Err(e) => mem::drop(tx.send((StreamIdent::In, Payload::Err(e)))),
+                    Ok(()) => drop(tx.send((StreamIdent::In, Payload::EOF))),
+                    Err(e) => drop(tx.send((StreamIdent::In, Payload::Err(e)))),
                 }
             });
 
