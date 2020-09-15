@@ -31,11 +31,10 @@ pub use communicate::Communicator;
 /// error streams can be connected to the parent and available as [`stdin`],
 /// [`stdout`], and [`stderr`] public fields.  If you need to read the output
 /// and errors into memory (or provide input as a memory slice), use the
-/// [`communicate`] family of methods, which guarantee deadlock-free
-/// communication with the subprocess.
+/// [`communicate`] family of methods.
 ///
 /// `Popen` instances can be obtained with the [`create`] method, or
-/// using the [`popen`] method of the [`Exec`] class.  Subprocesses
+/// using the [`popen`] method of the [`Exec`] type.  Subprocesses
 /// can be connected into pipes, most easily achieved using using
 /// [`Exec`].
 ///
@@ -487,13 +486,27 @@ impl Popen {
 
     /// Prepare to communicate with the subprocess.
     ///
-    /// Communicating refers to providing the given `input_data` to the
-    /// subprocess's standard input, while simultaneously reading from its
-    /// standard output and error streams.
+    /// Communicating refers to unattended data exchange with the subprocess.
+    /// During communication the given `input_data` is written to the
+    /// subprocess's standard input which is then closed, while simultaneously
+    /// its standard output and error streams are read until end-of-file is
+    /// reached.
     ///
-    /// This method does not start the actual communication, it just sets it
-    /// up and returns a [`Communicator`] handle.  Call the [`read`] method on
-    /// the returned handle to communicate.
+    /// The difference between this and simply writing input data to
+    /// `self.stdin` and then reading output from `self.stdout` and
+    /// `self.stderr` is that the reading and the writing are performed
+    /// simultaneously.  A naive implementation that writes and then reads has
+    /// an issue when the subprocess responds to part of the input by
+    /// providing output.  The output must be read for the subprocess to
+    /// accept further input, but the parent process is still blocked on
+    /// writing the rest of the input daata.  Since neither process can
+    /// proceed, a deadlock occurs.  This is why a correct implementation must
+    /// write and read at the same time.
+    ///
+    /// This method does not perform the actual communication, it just sets it
+    /// up and returns a [`Communicator`].  Call the [`read`] or
+    /// [`read_string`] method on the `Communicator` to exchange data with the
+    /// subprocess.
     ///
     /// Compared to `communicate()` and `communicate_bytes()`, the
     /// `Communicator` provides more control, such as timeout, read size
@@ -502,6 +515,7 @@ impl Popen {
     ///
     /// [`Communicator`]: struct.Communicator.html
     /// [`read`]: struct.Communicator.html#method.read
+    /// [`read_string`]: struct.Communicator.html#method.read_string
     pub fn communicate_start(&mut self, input_data: Option<Vec<u8>>) -> Communicator {
         communicate::communicate(
             self.stdin.take(),
@@ -519,8 +533,9 @@ impl Popen {
     /// The `None` options correspond to streams not specified as
     /// `Redirection::Pipe` when creating the subprocess.
     ///
-    /// The communication is deadlock-free, which is achieved by reading and
-    /// writing in parallel using `poll()` on Unix and threads on Windows.
+    /// This implementation reads and writes simultaneously, avoiding deadlock
+    /// in case the subprocess starts writing output before reading the whole
+    /// input - see [`communicate_start()`] for details.
     ///
     /// Note that this method does not wait for the subprocess to finish, only
     /// to close its output/error streams.  It is rare but possible for the

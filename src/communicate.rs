@@ -421,13 +421,17 @@ mod raw {
 
 use raw::RawCommunicator;
 
-/// Deadlock-free communication with the subprocess.
+/// Unattended data exchange with the subprocess.
 ///
-/// Normally care must be taken to avoid deadlock when communicating to a
-/// subprocess that both expects input and provides output.  This
-/// implementation avoids deadlock by reading from and writing to the
+/// When a subprocess both expects input and provides output, care must be
+/// taken to avoid deadlock.  The issue arises when the subprocess responds to
+/// part of the input data by providing some output which must be read for the
+/// subprocess to accept further input.  If the parent process is blocked on
+/// writing the input, it cannot read the output and a deadlock occurs.  This
+/// implementation avoids this issue by by reading from and writing to the
 /// subprocess in parallel.  On Unix-like systems this is achieved using
 /// `poll()`, and on Windows using threads.
+#[must_use]
 #[derive(Debug)]
 pub struct Communicator {
     inner: RawCommunicator,
