@@ -688,12 +688,12 @@ mod os {
             set_inheritable(&exec_fail_pipe.1, false)?;
             {
                 let child_ends = self.setup_streams(config.stdin, config.stdout, config.stderr)?;
-                let child_env = config.env.map(|env| format_env(&env));
+                let child_env = config.env.as_deref().map(format_env);
                 let cmd_to_exec = config.executable.as_ref().unwrap_or(&argv[0]);
                 let just_exec = posix::stage_exec(
                     cmd_to_exec,
                     &argv[..],
-                    child_env.as_ref().map(::std::ops::Deref::deref),
+                    child_env.as_deref(),
                 )?;
                 unsafe {
                     // unsafe because after the call to fork() the
