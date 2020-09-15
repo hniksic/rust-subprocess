@@ -30,6 +30,7 @@ use crate::os_common::StandardStream;
 pub struct Handle(RawHandle);
 
 unsafe impl Send for Handle {}
+unsafe impl Sync for Handle {}
 
 impl Drop for Handle {
     fn drop(&mut self) {
