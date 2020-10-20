@@ -692,7 +692,7 @@ mod os {
                 let cmd_to_exec = config.executable.as_ref().unwrap_or(&argv[0]);
                 let just_exec = posix::stage_exec(
                     cmd_to_exec,
-                    &argv[..],
+                    &argv,
                     child_env.as_deref(),
                 )?;
                 unsafe {
@@ -710,7 +710,7 @@ mod os {
                             let result = Popen::do_exec(
                                 just_exec,
                                 child_ends,
-                                config.cwd.as_ref().map(|x| &x[..]),
+                                config.cwd.as_deref(),
                                 config.setuid,
                                 config.setgid,
                             );
@@ -987,7 +987,7 @@ mod os {
                 executable.as_ref().map(OsString::as_ref),
                 &cmdline,
                 &env_block,
-                &config.cwd.as_ref().map(|os| &os[..]),
+                &config.cwd.as_deref(),
                 true,
                 0,
                 raw(&child_stdin),
@@ -1089,7 +1089,7 @@ mod os {
         block
     }
 
-    trait PopenOsImpl: super::PopenOs {
+    trait PopenOsImpl {
         fn wait_handle(&mut self, timeout: Option<Duration>) -> io::Result<Option<ExitStatus>>;
     }
 
@@ -1264,7 +1264,7 @@ fn get_standard_stream(which: StandardStream) -> io::Result<Rc<File>> {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PopenError {
-    /// The underlying error is io::Error.
+    /// An IO system call failed while executing the requested operation.
     IoError(io::Error),
     /// A logical error was made, e.g. invalid arguments detected at run-time.
     LogicError(&'static str),
@@ -1285,7 +1285,7 @@ impl From<communicate::CommunicateError> for PopenError {
 impl Error for PopenError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match *self {
-            PopenError::IoError(ref err) => Some(err as &dyn Error),
+            PopenError::IoError(ref err) => Some(err),
             PopenError::LogicError(_msg) => None,
         }
     }

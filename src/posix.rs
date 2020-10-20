@@ -11,7 +11,6 @@ use std::ptr;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use libc;
 use libc::{c_char, c_int};
 
 use crate::os_common::{ExitStatus, StandardStream};

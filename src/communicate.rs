@@ -155,8 +155,7 @@ mod raw {
                         // close stdin when done writing, so the child receives EOF
                         self.stdin.take();
                         // deallocate the input data, we don't need it any more
-                        self.input_data.clear();
-                        self.input_data.shrink_to_fit();
+                        self.input_data = Vec::new();
                     }
                 }
                 if out_ready {
