@@ -815,7 +815,7 @@ mod os {
 
     trait PopenOsImpl: super::PopenOs {
         fn do_exec(
-            just_exec: impl Fn() -> io::Result<()>,
+            just_exec: impl FnMut() -> io::Result<()>,
             child_ends: (Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>),
             cwd: Option<&OsStr>,
             setuid: Option<u32>,
@@ -826,7 +826,7 @@ mod os {
 
     impl PopenOsImpl for Popen {
         fn do_exec(
-            just_exec: impl Fn() -> io::Result<()>,
+            mut just_exec: impl FnMut() -> io::Result<()>,
             child_ends: (Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>),
             cwd: Option<&OsStr>,
             setuid: Option<u32>,

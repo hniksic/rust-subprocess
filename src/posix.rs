@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::env;
 use std::ffi::{CString, OsStr, OsString};
 use std::fs::File;
@@ -74,7 +73,7 @@ impl CVec {
         let strings = maybe_strings?;
         let ptrs: Vec<_> = strings
             .iter()
-            .map(|s| s.as_bytes_with_nul().as_ptr() as *const c_char)
+            .map(|s| s.as_bytes_with_nul().as_ptr() as _)
             .chain(iter::once(ptr::null()))
             .collect();
         Ok(CVec { strings, ptrs })
@@ -85,6 +84,7 @@ impl CVec {
     }
 }
 
+#[derive(Debug)]
 struct SplitPath<'a> {
     path: &'a OsStr,
     last: usize,
@@ -156,26 +156,21 @@ mod tests {
     }
 }
 
-struct FinishExec {
+struct PrepExec {
     cmd: OsString,
     argvec: CVec,
     envvec: Option<CVec>,
     search_path: Option<OsString>,
-
-    // Use of interior mutability for exe_buf makes it much easier to
-    // implement and use FinishExec::set_exe.  Also, exe_buf only
-    // exists due to the prohibition of allocation after fork() -
-    // FinishExec::finish() doesn't observably mutate FinishExec.
-    exe_buf: RefCell<Vec<u8>>,
+    exe_buf: Vec<u8>,
 }
 
-impl FinishExec {
+impl PrepExec {
     fn new(
         cmd: OsString,
         argvec: CVec,
         envvec: Option<CVec>,
         search_path: Option<OsString>,
-    ) -> FinishExec {
+    ) -> PrepExec {
         // Avoid allocation after fork() by pre-allocating the buffer
         // that will be used for constructing the executable C string.
 
@@ -188,16 +183,16 @@ impl FinishExec {
             max_exe_len += 1 + split_path(search_path).map(OsStr::len).max().unwrap_or(0);
         }
 
-        FinishExec {
+        PrepExec {
             cmd,
             argvec,
             envvec,
             search_path,
-            exe_buf: RefCell::new(Vec::with_capacity(max_exe_len)),
+            exe_buf: Vec::with_capacity(max_exe_len),
         }
     }
 
-    fn finish(&self) -> Result<()> {
+    fn exec(&mut self) -> Result<()> {
         // Invoked after fork() - no heap allocation allowed
 
         if let Some(ref search_path) = self.search_path {
@@ -205,21 +200,20 @@ impl FinishExec {
             // (although glibc has one), so we have to iterate over
             // PATH ourselves
             for dir in split_path(search_path.as_os_str()) {
-                self.set_exe(&[dir.as_bytes(), b"/", self.cmd.as_bytes()]);
-                self.exec().ok();
+                PrepExec::set_exe(&mut self.exe_buf, &[dir.as_bytes(), b"/", self.cmd.as_bytes()]);
+                let _ = self.libc_exec();
             }
             return Err(Error::last_os_error());
         }
 
-        self.set_exe(&[self.cmd.as_bytes()]);
-        self.exec()?;
+        PrepExec::set_exe(&mut self.exe_buf, &[self.cmd.as_bytes()]);
+        self.libc_exec()?;
 
         // failed exec can only return Err(..)
         unreachable!();
     }
 
-    fn set_exe(&self, byte_slices: &[&[u8]]) {
-        let mut exe_buf = self.exe_buf.borrow_mut();
+    fn set_exe(exe_buf: &mut Vec<u8>, byte_slices: &[&[u8]]) {
         exe_buf.truncate(0);
         for byte_slice in byte_slices {
             exe_buf.extend_from_slice(byte_slice);
@@ -227,17 +221,15 @@ impl FinishExec {
         exe_buf.push(0);
     }
 
-    fn exec(&self) -> Result<()> {
-        let exe_buf = self.exe_buf.borrow();
-
+    fn libc_exec(&self) -> Result<()> {
         unsafe {
             match self.envvec.as_ref() {
                 Some(envvec) => libc::execve(
-                    exe_buf.as_ptr() as *const c_char,
+                    self.exe_buf.as_ptr() as *const c_char,
                     self.argvec.as_c_vec(),
                     envvec.as_c_vec(),
                 ),
-                None => libc::execv(exe_buf.as_ptr() as *const c_char, self.argvec.as_c_vec()),
+                None => libc::execv(self.exe_buf.as_ptr() as *const c_char, self.argvec.as_c_vec()),
             }
         };
         Err(Error::last_os_error())
@@ -248,7 +240,7 @@ pub fn stage_exec(
     cmd: impl AsRef<OsStr>,
     args: &[impl AsRef<OsStr>],
     env: Option<&[impl AsRef<OsStr>]>,
-) -> Result<impl Fn() -> Result<()>> {
+) -> Result<impl FnMut() -> Result<()>> {
     let cmd = cmd.as_ref().to_owned();
     let argvec = CVec::new(args)?;
     let envvec = if let Some(env) = env {
@@ -265,8 +257,9 @@ pub fn stage_exec(
         None
     };
 
-    let exec = FinishExec::new(cmd, argvec, envvec, search_path);
-    Ok(move || exec.finish())
+    // Allocate now and return a closure that just does the exec.
+    let mut prep = PrepExec::new(cmd, argvec, envvec, search_path);
+    Ok(move || prep.exec())
 }
 
 pub fn _exit(status: u8) -> ! {
