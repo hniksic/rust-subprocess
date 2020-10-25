@@ -161,7 +161,7 @@ struct PrepExec {
     argvec: CVec,
     envvec: Option<CVec>,
     search_path: Option<OsString>,
-    exe_buf: Vec<u8>,
+    prealloc_exe: Vec<u8>,
 }
 
 impl PrepExec {
@@ -188,59 +188,71 @@ impl PrepExec {
             argvec,
             envvec,
             search_path,
-            exe_buf: Vec::with_capacity(max_exe_len),
+            prealloc_exe: Vec::with_capacity(max_exe_len),
         }
     }
 
-    fn exec(&mut self) -> Result<()> {
+    fn exec(mut self) -> Result<()> {
         // Invoked after fork() - no heap allocation allowed
+        let mut exe = std::mem::take(&mut self.prealloc_exe);
 
         if let Some(ref search_path) = self.search_path {
-            // POSIX specifies execvp and execve, but not execvpe
-            // (although glibc has one), so we have to iterate over
-            // PATH ourselves
+            let mut err = Ok(());
+            // POSIX requires execvp and execve, but not execvpe (although
+            // glibc provides one), so we have to iterate over PATH ourselves
             for dir in split_path(search_path.as_os_str()) {
-                PrepExec::set_exe(&mut self.exe_buf, &[dir.as_bytes(), b"/", self.cmd.as_bytes()]);
-                let _ = self.libc_exec();
+                err = self.libc_exec(PrepExec::assemble_exe(
+                    &mut exe,
+                    &[dir.as_bytes(), b"/", self.cmd.as_bytes()],
+                ));
+                // if exec succeeds, we won't run anymore; if we're here, it failed
+                assert!(err.is_err());
             }
-            return Err(Error::last_os_error());
+            // we haven't found the command anywhere on the path, just return
+            // the last error
+            return err;
         }
 
-        PrepExec::set_exe(&mut self.exe_buf, &[self.cmd.as_bytes()]);
-        self.libc_exec()?;
+        self.libc_exec(PrepExec::assemble_exe(&mut exe, &[self.cmd.as_bytes()]))?;
 
         // failed exec can only return Err(..)
         unreachable!();
     }
 
-    fn set_exe(exe_buf: &mut Vec<u8>, byte_slices: &[&[u8]]) {
-        exe_buf.truncate(0);
-        for byte_slice in byte_slices {
-            exe_buf.extend_from_slice(byte_slice);
+    fn assemble_exe<'a>(storage: &'a mut Vec<u8>, components: &[&[u8]]) -> &'a [u8] {
+        storage.truncate(0);
+        for comp in components {
+            storage.extend_from_slice(comp);
         }
-        exe_buf.push(0);
+        // `storage` will be passed to libc::execve so it must end with \0.
+        storage.push(0u8);
+        storage.as_slice()
     }
 
-    fn libc_exec(&self) -> Result<()> {
+    fn libc_exec(&self, exe: &[u8]) -> Result<()> {
         unsafe {
             match self.envvec.as_ref() {
-                Some(envvec) => libc::execve(
-                    self.exe_buf.as_ptr() as *const c_char,
-                    self.argvec.as_c_vec(),
-                    envvec.as_c_vec(),
-                ),
-                None => libc::execv(self.exe_buf.as_ptr() as *const c_char, self.argvec.as_c_vec()),
+                Some(envvec) => {
+                    libc::execve(exe.as_ptr() as _, self.argvec.as_c_vec(), envvec.as_c_vec())
+                }
+                None => libc::execv(exe.as_ptr() as _, self.argvec.as_c_vec()),
             }
         };
         Err(Error::last_os_error())
     }
 }
 
-pub fn stage_exec(
+/// Prepare everything needed to `exec()` the provided `cmd` after `fork()`.
+///
+/// Since code executed in the child after a `fork()` is not allowed to
+/// allocate (because the lock might be held), this allocates everything
+/// beforehand.
+
+pub fn prep_exec(
     cmd: impl AsRef<OsStr>,
     args: &[impl AsRef<OsStr>],
     env: Option<&[impl AsRef<OsStr>]>,
-) -> Result<impl FnMut() -> Result<()>> {
+) -> Result<impl FnOnce() -> Result<()>> {
     let cmd = cmd.as_ref().to_owned();
     let argvec = CVec::new(args)?;
     let envvec = if let Some(env) = env {
@@ -258,7 +270,7 @@ pub fn stage_exec(
     };
 
     // Allocate now and return a closure that just does the exec.
-    let mut prep = PrepExec::new(cmd, argvec, envvec, search_path);
+    let prep = PrepExec::new(cmd, argvec, envvec, search_path);
     Ok(move || prep.exec())
 }
 
