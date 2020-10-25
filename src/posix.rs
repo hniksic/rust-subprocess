@@ -84,47 +84,26 @@ impl CVec {
     }
 }
 
-#[derive(Debug)]
-struct SplitPath<'a> {
-    path: &'a OsStr,
-    last: usize,
-    current: usize,
-}
-
-impl<'a> Iterator for SplitPath<'a> {
-    type Item = &'a OsStr;
-
-    fn next(&mut self) -> Option<&'a OsStr> {
-        let bytes = self.path.as_bytes();
-        for i in self.current..bytes.len() {
-            if bytes[i] == b':' {
-                let piece = OsStr::from_bytes(&bytes[self.last..i]);
-                self.last = i + 1;
-                if !piece.is_empty() {
-                    self.current = i + 1;
-                    return Some(piece);
-                }
+fn split_path(mut path: &OsStr) -> impl Iterator<Item = &OsStr> {
+    // Can't use `env::split`_path because it allocates OsString objects, and
+    // we need to iterate over PATH after fork() when allocations are strictly
+    // verboten.  We can't use `str::split()` either because PATH is an
+    // `OsStr`, and there is no `OsStr::split()`.
+    std::iter::from_fn(move || {
+        while let Some(pos) = path.as_bytes().iter().position(|&c| c == b':') {
+            let piece = OsStr::from_bytes(&path.as_bytes()[..pos]);
+            path = OsStr::from_bytes(&path.as_bytes()[pos + 1..]);
+            if !piece.is_empty() {
+                return Some(piece);
             }
         }
-        self.current = bytes.len();
-        if self.last != bytes.len() {
-            let piece = OsStr::from_bytes(&bytes[self.last..]);
-            self.last = bytes.len();
+        let piece = path;
+        path = OsStr::new("");
+        if !piece.is_empty() {
             return Some(piece);
         }
         None
-    }
-}
-
-fn split_path(path: &OsStr) -> SplitPath {
-    // Can't use env::split_path because it allocates OsString
-    // objects, and we need to iterate over PATH after fork() when
-    // allocations are strictly verboten.
-    SplitPath {
-        path,
-        last: 0,
-        current: 0,
-    }
+    })
 }
 
 #[cfg(test)]
