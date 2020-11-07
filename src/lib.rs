@@ -72,7 +72,7 @@
 //! [`subprocess.Popen`]: https://docs.python.org/3/library/subprocess.html#subprocess.Popen
 //! [pipelines]: struct.Pipeline.html
 
-#![warn(missing_docs)]
+#![warn(missing_debug_implementations, rust_2018_idioms, missing_docs)]
 #![allow(clippy::type_complexity, clippy::single_match)]
 
 mod builder;

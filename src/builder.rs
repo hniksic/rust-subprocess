@@ -512,7 +512,7 @@ mod exec {
     }
 
     impl fmt::Debug for Exec {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "Exec {{ {} }}", self.to_cmdline_lossy())
         }
     }
@@ -563,6 +563,7 @@ mod exec {
     ///
     /// [`Exec::capture`]: struct.Exec.html#method.capture
     /// [`Pipeline::capture`]: struct.Pipeline.html#method.capture
+    #[derive(Debug)]
     pub struct CaptureData {
         /// Standard output as bytes.
         pub stdout: Vec<u8>,
@@ -591,6 +592,7 @@ mod exec {
         }
     }
 
+    #[derive(Debug)]
     pub enum InputRedirection {
         AsRedirection(Redirection),
         FeedData(Vec<u8>),
@@ -1032,7 +1034,7 @@ mod pipeline {
     }
 
     impl fmt::Debug for Pipeline {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             let mut args = vec![];
             for cmd in &self.cmds {
                 args.push(cmd.to_cmdline_lossy());

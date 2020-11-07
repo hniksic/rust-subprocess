@@ -585,7 +585,7 @@ impl Error for CommunicateError {
 }
 
 impl fmt::Display for CommunicateError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.error.fmt(f)
     }
 }
