@@ -1,10 +1,13 @@
 use std::env;
 use std::fs::File;
+use std::sync::Mutex;
 
 use std::io::prelude::*;
+use std::sync::MutexGuard;
 
 use crate::{Exec, ExitStatus, NullFile, Redirection};
 
+use lazy_static::lazy_static;
 use tempdir::TempDir;
 
 use crate::tests::common::read_whole_file;
@@ -302,35 +305,64 @@ fn env_extend() {
         .success());
 }
 
+lazy_static! {
+    static ref MUTATE_ENV: Mutex<()> = Mutex::new(());
+}
+
+struct TmpEnvVar<'a> {
+    varname: &'static str,
+    #[allow(dead_code)]
+    mutate_guard: MutexGuard<'a, ()>,
+}
+
+impl<'a> TmpEnvVar<'a> {
+    fn new(varname: &'static str) -> TmpEnvVar<'a> {
+        TmpEnvVar {
+            varname,
+            mutate_guard: MUTATE_ENV.lock().unwrap(),
+        }
+    }
+}
+
+impl Drop for TmpEnvVar<'_> {
+    fn drop(&mut self) {
+        env::remove_var(self.varname);
+    }
+}
+
+fn tmp_env_var<'a>(varname: &'static str, tmp_value: &'static str) -> TmpEnvVar<'a> {
+    env::set_var(varname, tmp_value);
+    TmpEnvVar::new(varname)
+}
+
 #[test]
 fn env_inherit() {
     // use a unique name to avoid interference with other tests
     let varname = "TEST_ENV_INHERIT_VARNAME";
-    env::set_var(varname, "inherited");
+    let _guard = tmp_env_var(varname, "inherited");
     assert!(Exec::cmd("sh")
         .args(&["-c", &format!(r#"test "${}" = "inherited""#, varname)])
         .join()
         .unwrap()
         .success());
-    env::remove_var(varname);
 }
 
 #[test]
 fn env_inherit_set() {
     // use a unique name to avoid interference with other tests
     let varname = "TEST_ENV_INHERIT_SET_VARNAME";
-    env::set_var(varname, "inherited");
+    let _guard = tmp_env_var(varname, "inherited");
     assert!(Exec::cmd("sh")
         .args(&["-c", &format!(r#"test "${}" = "new""#, varname)])
         .env(varname, "new")
         .join()
         .unwrap()
         .success());
-    env::remove_var(varname);
 }
 
 #[test]
 fn exec_to_string() {
+    let _guard = MUTATE_ENV.lock().unwrap();
     let cmd = Exec::cmd("sh")
         .arg("arg1")
         .arg("don't")
@@ -341,7 +373,28 @@ fn exec_to_string() {
     assert_eq!(
         format!("{:?}", cmd),
         "Exec { sh arg1 'don'\\''t' 'arg3 arg4' '?' ' ' '\u{009c}' }"
-    )
+    );
+    let cmd = cmd.env("foo", "bar");
+    assert_eq!(
+        format!("{:?}", cmd),
+        "Exec { foo=bar sh arg1 'don'\\''t' 'arg3 arg4' '?' ' ' '\u{009c}' }"
+    );
+    let cmd = cmd.env("bar", "baz");
+    assert_eq!(
+        format!("{:?}", cmd),
+        "Exec { foo=bar bar=baz sh arg1 'don'\\''t' 'arg3 arg4' '?' ' ' '\u{009c}' }"
+    );
+    let cmd = cmd.env_clear();
+    assert_eq!(
+        format!("{:?}", cmd),
+        format!(
+            "Exec {{ {} sh arg1 'don'\\''t' 'arg3 arg4' '?' ' ' '\u{009c}' }}",
+            env::vars()
+                .map(|(k, _)| format!("{}=", k))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    );
 }
 
 #[test]

@@ -18,7 +18,9 @@ pub use self::pipeline::Pipeline;
 pub use exec::unix;
 
 mod exec {
+    use std::collections::HashMap;
     use std::ffi::{OsStr, OsString};
+    use std::env;
     use std::fmt;
     use std::fs::{File, OpenOptions};
     use std::io::{self, Read, Write};
@@ -474,6 +476,27 @@ mod exec {
                 }
             }
             let mut out = String::new();
+            if let Some(ref cmd_env) = self.config.env {
+                let current: Vec<_> = env::vars_os().collect();
+                let current_map: HashMap<_, _> = current.iter().map(|(x, y)| (x, y)).collect();
+                for (k, v) in cmd_env {
+                    if current_map.get(&k) == Some(&&v) {
+                        continue;
+                    }
+                    write_quoted(&mut out, &k.to_string_lossy());
+                    out.push('=');
+                    write_quoted(&mut out, &v.to_string_lossy());
+                    out.push(' ');
+                }
+                let cmd_env: HashMap<_, _> = cmd_env.iter().map(|(k, v)| (k, v)).collect();
+                for (k, _) in current {
+                    if !cmd_env.contains_key(&k) {
+                        write_quoted(&mut out, &k.to_string_lossy());
+                        out.push('=');
+                        out.push(' ');
+                    }
+                }
+            }
             write_quoted(&mut out, &self.command.to_string_lossy());
             for arg in &self.args {
                 out.push(' ');
