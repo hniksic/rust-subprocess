@@ -18,6 +18,7 @@ pub use self::pipeline::Pipeline;
 pub use exec::unix;
 
 mod exec {
+    use std::borrow::Cow;
     use std::collections::HashMap;
     use std::ffi::{OsStr, OsString};
     use std::env;
@@ -459,8 +460,8 @@ mod exec {
             })
         }
 
-        /// Show Exec as command-line string quoted in the Unix style.
-        pub fn to_cmdline_lossy(&self) -> String {
+        // used for Debug impl
+        fn display_escape(s: &str) -> Cow<'_, str> {
             fn nice_char(c: char) -> bool {
                 match c {
                     '-' | '_' | '.' | ',' | '/' => true,
@@ -468,13 +469,15 @@ mod exec {
                     _ => false,
                 }
             }
-            fn write_quoted(out: &mut String, s: &str) {
-                if !s.chars().all(nice_char) {
-                    out.push_str(&format!("'{}'", s.replace("'", r#"'\''"#)));
-                } else {
-                    out.push_str(s);
-                }
+            if !s.chars().all(nice_char) {
+                Cow::Owned(format!("'{}'", s.replace("'", r#"'\''"#)))
+            } else {
+                Cow::Borrowed(s)
             }
+        }
+
+        /// Show Exec as command-line string quoted in the Unix style.
+        pub fn to_cmdline_lossy(&self) -> String {
             let mut out = String::new();
             if let Some(ref cmd_env) = self.config.env {
                 let current: Vec<_> = env::vars_os().collect();
@@ -483,24 +486,24 @@ mod exec {
                     if current_map.get(&k) == Some(&&v) {
                         continue;
                     }
-                    write_quoted(&mut out, &k.to_string_lossy());
+                    out.push_str(&Exec::display_escape(&k.to_string_lossy()));
                     out.push('=');
-                    write_quoted(&mut out, &v.to_string_lossy());
+                    out.push_str(&Exec::display_escape(&v.to_string_lossy()));
                     out.push(' ');
                 }
                 let cmd_env: HashMap<_, _> = cmd_env.iter().map(|(k, v)| (k, v)).collect();
                 for (k, _) in current {
                     if !cmd_env.contains_key(&k) {
-                        write_quoted(&mut out, &k.to_string_lossy());
+                        out.push_str(&Exec::display_escape(&k.to_string_lossy()));
                         out.push('=');
                         out.push(' ');
                     }
                 }
             }
-            write_quoted(&mut out, &self.command.to_string_lossy());
+            out.push_str(&Exec::display_escape(&self.command.to_string_lossy()));
             for arg in &self.args {
                 out.push(' ');
-                write_quoted(&mut out, &arg.to_string_lossy());
+                out.push_str(&Exec::display_escape(&arg.to_string_lossy()));
             }
             out
         }
