@@ -3,9 +3,10 @@ use std::ffi::{CString, OsStr, OsString};
 use std::fs::File;
 use std::io::{Error, Result};
 use std::iter;
+use std::marker::PhantomData;
 use std::mem;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::{FromRawFd, RawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::ptr;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -346,16 +347,17 @@ pub fn reset_sigpipe() -> Result<()> {
 }
 
 #[repr(C)]
-pub struct PollFd(libc::pollfd);
+pub struct PollFd<'a>(libc::pollfd, PhantomData<&'a ()>);
 
-impl PollFd {
-    pub fn new(fd: Option<i32>, events: i16) -> PollFd {
+impl PollFd<'_> {
+    pub fn new<'a>(file: Option<&'a File>, events: i16) -> PollFd<'a> {
         PollFd(libc::pollfd {
-            fd: fd.unwrap_or(-1),
+            fd: file.map(File::as_raw_fd).unwrap_or(-1),
             events,
             revents: 0,
-        })
+        }, PhantomData)
     }
+
     pub fn test(&self, mask: i16) -> bool {
         self.0.revents & mask != 0
     }
@@ -363,7 +365,7 @@ impl PollFd {
 
 pub use libc::{POLLERR, POLLHUP, POLLIN, POLLNVAL, POLLOUT, POLLPRI};
 
-pub fn poll(fds: &mut [PollFd], mut timeout: Option<Duration>) -> Result<usize> {
+pub fn poll(fds: &mut [PollFd<'_>], mut timeout: Option<Duration>) -> Result<usize> {
     let deadline = timeout.map(|timeout| Instant::now() + timeout);
     loop {
         // poll() accepts a maximum timeout of 2**31-1 ms, which is

@@ -10,17 +10,15 @@ mod raw {
     use std::cmp::min;
     use std::fs::File;
     use std::io::{self, Read, Write};
-    use std::os::unix::io::AsRawFd;
     use std::time::{Duration, Instant};
 
-    fn as_pollfd(f: Option<&File>, for_read: bool) -> posix::PollFd {
-        let optfd = f.map(File::as_raw_fd);
+    fn as_pollfd<'a>(f: Option<&'a File>, for_read: bool) -> posix::PollFd<'a> {
         let events = if for_read {
             posix::POLLIN
         } else {
             posix::POLLOUT
         };
-        posix::PollFd::new(optfd, events)
+        posix::PollFd::new(f, events)
     }
 
     fn maybe_poll(
