@@ -108,6 +108,8 @@ pub struct PopenConfig {
     pub stderr: Redirection,
     /// Whether the `Popen` instance is initially detached.
     pub detached: bool,
+    /// Process Creation Flags
+    pub creation_flags: u32,
 
     /// Executable to run.
     ///
@@ -175,6 +177,7 @@ impl PopenConfig {
             stdout: self.stdout.try_clone()?,
             stderr: self.stderr.try_clone()?,
             detached: self.detached,
+            creation_flags: self.creation_flags,
             executable: self.executable.as_ref().cloned(),
             env: self.env.clone(),
             cwd: self.cwd.clone(),
@@ -204,6 +207,7 @@ impl Default for PopenConfig {
             stdout: Redirection::None,
             stderr: Redirection::None,
             detached: false,
+            creation_flags: 0,
             executable: None,
             env: None,
             cwd: None,
@@ -987,7 +991,7 @@ mod os {
                 &env_block,
                 &config.cwd.as_deref(),
                 true,
-                0,
+                config.creation_flags,
                 raw(&child_stdin),
                 raw(&child_stdout),
                 raw(&child_stderr),
