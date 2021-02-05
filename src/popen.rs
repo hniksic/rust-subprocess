@@ -39,6 +39,7 @@ pub use communicate::Communicator;
 /// [`Exec`].
 ///
 /// [`Exec`]: struct.Exec.html
+/// [`popen`]: struct.Exec.html#method.popen
 /// [`stdin`]: struct.Popen.html#structfield.stdin
 /// [`stdout`]: struct.Popen.html#structfield.stdout
 /// [`stderr`]: struct.Popen.html#structfield.stderr
