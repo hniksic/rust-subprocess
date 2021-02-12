@@ -167,7 +167,7 @@ Check whether a previously launched process is still running:
 
 ```rust
 let mut p = Exec::cmd("sleep").arg("2").popen()?;
-thread::sleep(Duration::new(1, 0))
+thread::sleep(Duration::new(1, 0));
 if p.poll().is_none() {
     // poll() returns Some(exit_status) if the process has completed
     println!("process is still running");
