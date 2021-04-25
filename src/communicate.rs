@@ -527,6 +527,9 @@ impl Communicator {
 
     /// Limit the amount of time the next `read()` will spend reading from the
     /// subprocess.
+    ///
+    /// Note: On Windows, zero duration may result in no output from ever being
+    /// read.
     pub fn limit_time(mut self, time: Duration) -> Communicator {
         self.time_limit = Some(time);
         self
