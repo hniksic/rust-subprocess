@@ -305,11 +305,7 @@ mod raw {
 
         fn recv_until(&self, deadline: Option<Instant>) -> Result<Message, Timeout> {
             if let Some(deadline) = deadline {
-                let now = Instant::now();
-                if now >= deadline {
-                    return Err(Timeout);
-                }
-                match self.rx.recv_timeout(deadline - now) {
+                match self.rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                     Ok(message) => Ok(message),
                     Err(RecvTimeoutError::Timeout) => Err(Timeout),
                     // should never be disconnected, the helper threads always
