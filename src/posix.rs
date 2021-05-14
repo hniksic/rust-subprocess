@@ -50,6 +50,11 @@ pub fn setgid(gid: u32) -> Result<()> {
     Ok(())
 }
 
+pub fn setpgid(pid: u32, pgid: u32) -> Result<()> {
+    check_err(unsafe { libc::setpgid(pid as _, pgid as _) })?;
+    Ok(())
+}
+
 fn os_to_cstring(s: &OsStr) -> Result<CString> {
     // Like CString::new, but returns an io::Result for consistency with
     // everything else.
