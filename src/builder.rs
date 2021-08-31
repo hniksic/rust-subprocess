@@ -802,6 +802,17 @@ mod pipeline {
             }
         }
 
+        /// Creates a new pipeline from a list of commands.
+        pub fn from_iter<I>(iterator: I) -> Pipeline where I: Iterator<Item = Exec> {
+            Pipeline {
+                cmds: iterator.collect(),
+                stdin: Redirection::None,
+                stdout: Redirection::None,
+                stderr_file: None,
+                stdin_data: None,
+            }
+        }
+
         /// Specifies how to set up the standard input of the first
         /// command in the pipeline.
         ///
