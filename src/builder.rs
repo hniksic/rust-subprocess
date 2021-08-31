@@ -802,7 +802,23 @@ mod pipeline {
             }
         }
 
-        /// Creates a new pipeline from a list of commands.
+        /// Creates a new pipeline from a list of commands. Useful if
+        /// a pipeline should be created dynamically.
+        ///
+        /// Example:
+        /// ```rust
+        /// use subprocess::Exec;
+        ///
+        /// let commands = vec![
+        ///   Exec::shell("echo tset"),
+        ///   Exec::shell("tr '[:lower:]' '[:upper:]'"),
+        ///   Exec::shell("rev")
+        /// ];
+        ///
+        /// let pipeline = subprocess::Pipeline::from_iter(commands.into_iter());
+        /// let output = pipeline.capture().unwrap().stdout_str();
+        /// assert_eq!(output, "TEST\n");
+        /// ```
         pub fn from_iter<I>(iterator: I) -> Pipeline where I: Iterator<Item = Exec> {
             Pipeline {
                 cmds: iterator.collect(),
