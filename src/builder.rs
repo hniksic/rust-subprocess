@@ -818,10 +818,20 @@ mod pipeline {
         /// let pipeline = subprocess::Pipeline::from_iter(commands.into_iter());
         /// let output = pipeline.capture().unwrap().stdout_str();
         /// assert_eq!(output, "TEST\n");
+        /// Errors:
+        /// Panics when the passed iterator contains less than two (2)
+        /// items.
         /// ```
-        pub fn from_iter<I>(iterator: I) -> Pipeline where I: Iterator<Item = Exec> {
+        pub fn from_iter<I>(iterator: I) -> Pipeline
+        where
+            I: Iterator<Item = Exec>,
+        {
+            let cmds: Vec<_> = iterator.collect();
+
+            assert!(cmds.len() >= 2);
+
             Pipeline {
-                cmds: iterator.collect(),
+                cmds,
                 stdin: Redirection::None,
                 stdout: Redirection::None,
                 stderr_file: None,
