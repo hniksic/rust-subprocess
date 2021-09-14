@@ -828,7 +828,9 @@ mod pipeline {
         {
             let cmds: Vec<_> = iterator.collect();
 
-            assert!(cmds.len() >= 2);
+            if cmds.len() >= 2 {
+                panic!("iterator needs to contain at least two (2) elements")
+            }
 
             Pipeline {
                 cmds,
