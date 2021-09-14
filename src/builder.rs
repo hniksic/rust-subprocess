@@ -806,7 +806,7 @@ mod pipeline {
         /// a pipeline should be created dynamically.
         ///
         /// Example:
-        /// ```rust
+        /// ```
         /// use subprocess::Exec;
         ///
         /// let commands = vec![
@@ -818,17 +818,26 @@ mod pipeline {
         /// let pipeline = subprocess::Pipeline::from_iter(commands.into_iter());
         /// let output = pipeline.capture().unwrap().stdout_str();
         /// assert_eq!(output, "TEST\n");
-        /// Errors:
-        /// Panics when the passed iterator contains less than two (2)
-        /// items.
         /// ```
+        /// ```should_panic
+        /// use subprocess::Exec;
+        ///
+        /// let commands = vec![
+        ///   Exec::shell("echo tset"),
+        /// ];
+        ///
+        /// // This will panic as there are not enough elements in the iterator.
+        /// let pipeline = subprocess::Pipeline::from_iter(commands.into_iter());
+        /// ```
+        /// Errors:
+        ///   - Panics when the passed iterator contains less than two (2) items.
         pub fn from_iter<I>(iterator: I) -> Pipeline
         where
             I: Iterator<Item = Exec>,
         {
             let cmds: Vec<_> = iterator.collect();
 
-            if cmds.len() >= 2 {
+            if cmds.len() < 2 {
                 panic!("iterator needs to contain at least two (2) elements")
             }
 
