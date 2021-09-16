@@ -831,11 +831,11 @@ mod pipeline {
         /// ```
         /// Errors:
         ///   - Panics when the passed iterator contains less than two (2) items.
-        pub fn from_exec_iter<I>(iterator: I) -> Pipeline
+        pub fn from_exec_iter<I>(iterable: I) -> Pipeline
         where
             I: IntoIterator<Item = Exec>,
         {
-            let cmds: Vec<_> = iterator.into_iter().collect();
+            let cmds: Vec<_> = iterable.into_iter().collect();
 
             if cmds.len() < 2 {
                 panic!("iterator needs to contain at least two (2) elements")
