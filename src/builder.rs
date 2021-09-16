@@ -815,7 +815,7 @@ mod pipeline {
         ///   Exec::shell("rev")
         /// ];
         ///
-        /// let pipeline = subprocess::Pipeline::from_iter(commands.into_iter());
+        /// let pipeline = subprocess::Pipeline::from_exec_iter(commands);
         /// let output = pipeline.capture().unwrap().stdout_str();
         /// assert_eq!(output, "TEST\n");
         /// ```
@@ -826,16 +826,16 @@ mod pipeline {
         ///   Exec::shell("echo tset"),
         /// ];
         ///
-        /// // This will panic as there are not enough elements in the iterator.
-        /// let pipeline = subprocess::Pipeline::from_iter(commands.into_iter());
+        /// // This will panic as the iterator contains less than two (2) items.
+        /// let pipeline = subprocess::Pipeline::from_exec_iter(commands);
         /// ```
         /// Errors:
         ///   - Panics when the passed iterator contains less than two (2) items.
-        pub fn from_iter<I>(iterator: I) -> Pipeline
+        pub fn from_exec_iter<I>(iterator: I) -> Pipeline
         where
-            I: Iterator<Item = Exec>,
+            I: IntoIterator<Item = Exec>,
         {
-            let cmds: Vec<_> = iterator.collect();
+            let cmds: Vec<_> = iterator.into_iter().collect();
 
             if cmds.len() < 2 {
                 panic!("iterator needs to contain at least two (2) elements")
