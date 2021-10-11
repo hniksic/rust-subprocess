@@ -20,8 +20,8 @@ pub use exec::unix;
 mod exec {
     use std::borrow::Cow;
     use std::collections::HashMap;
-    use std::ffi::{OsStr, OsString};
     use std::env;
+    use std::ffi::{OsStr, OsString};
     use std::fmt;
     use std::fs::{File, OpenOptions};
     use std::io::{self, Read, Write};

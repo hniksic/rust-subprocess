@@ -356,11 +356,14 @@ pub struct PollFd<'a>(libc::pollfd, PhantomData<&'a ()>);
 
 impl PollFd<'_> {
     pub fn new<'a>(file: Option<&'a File>, events: i16) -> PollFd<'a> {
-        PollFd(libc::pollfd {
-            fd: file.map(File::as_raw_fd).unwrap_or(-1),
-            events,
-            revents: 0,
-        }, PhantomData)
+        PollFd(
+            libc::pollfd {
+                fd: file.map(File::as_raw_fd).unwrap_or(-1),
+                events,
+                revents: 0,
+            },
+            PhantomData,
+        )
     }
 
     pub fn test(&self, mask: i16) -> bool {

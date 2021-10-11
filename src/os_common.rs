@@ -42,7 +42,7 @@ impl ExitStatus {
     pub fn is_killed_by<T: Eq + From<u8>>(self, signum: T) -> bool {
         if let ExitStatus::Signaled(n) = self {
             let n: T = n.into();
-            return n == signum
+            return n == signum;
         }
         false
     }
