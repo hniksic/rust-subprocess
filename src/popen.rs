@@ -71,7 +71,11 @@ pub struct Popen {
 #[derive(Debug)]
 enum ChildState {
     Preparing, // only during construction
-    Running { pid: u32, ext: os::ExtChildState },
+    Running {
+        pid: u32,
+        #[allow(dead_code)]
+        ext: os::ExtChildState,
+    },
     Finished(ExitStatus),
 }
 

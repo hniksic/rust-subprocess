@@ -65,6 +65,7 @@ fn os_to_cstring(s: &OsStr) -> Result<CString> {
 struct CVec {
     // Individual C strings.  Each element self.ptrs[i] points to the
     // data of self.strings[i].as_bytes_with_nul().as_ptr().
+    #[allow(dead_code)]
     strings: Vec<CString>,
 
     // nullptr-terminated vector of pointers to data inside
