@@ -1,6 +1,6 @@
 [package]
 name = "subprocess"
-version = "0.2.9"
+version = "0.2.10"
 authors = ["Hrvoje Nikšić <hniksic@gmail.com>"]
 readme = "README.md"
 keywords = ["execute", "process", "command", "redirect", "pipe"]
