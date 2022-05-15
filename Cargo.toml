@@ -20,7 +20,7 @@ libc = "0.2.78"
 winapi = { version = "0.3.8", features = ["std", "handleapi", "namedpipeapi", "processenv", "synchapi", "winerror", "processthreadsapi", "winbase"] }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = "3.3.0"
 lazy_static = "1.4.0"
 
 [lib]
