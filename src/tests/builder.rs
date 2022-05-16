@@ -317,10 +317,12 @@ struct TmpEnvVar<'a> {
 }
 
 impl<'a> TmpEnvVar<'a> {
-    fn new(varname: &'static str) -> TmpEnvVar<'a> {
+    fn new(varname: &'static str, tmp_value: &'static str) -> TmpEnvVar<'a> {
+        let mutate_guard = MUTATE_ENV.lock().unwrap();
+        env::set_var(varname, tmp_value);
         TmpEnvVar {
             varname,
-            mutate_guard: MUTATE_ENV.lock().unwrap(),
+            mutate_guard,
         }
     }
 }
@@ -331,16 +333,11 @@ impl Drop for TmpEnvVar<'_> {
     }
 }
 
-fn tmp_env_var<'a>(varname: &'static str, tmp_value: &'static str) -> TmpEnvVar<'a> {
-    env::set_var(varname, tmp_value);
-    TmpEnvVar::new(varname)
-}
-
 #[test]
 fn env_inherit() {
     // use a unique name to avoid interference with other tests
     let varname = "TEST_ENV_INHERIT_VARNAME";
-    let _guard = tmp_env_var(varname, "inherited");
+    let _guard = TmpEnvVar::new(varname, "inherited");
     assert!(Exec::cmd("sh")
         .args(&["-c", &format!(r#"test "${}" = "inherited""#, varname)])
         .join()
@@ -352,7 +349,7 @@ fn env_inherit() {
 fn env_inherit_set() {
     // use a unique name to avoid interference with other tests
     let varname = "TEST_ENV_INHERIT_SET_VARNAME";
-    let _guard = tmp_env_var(varname, "inherited");
+    let _guard = TmpEnvVar::new(varname, "inherited");
     assert!(Exec::cmd("sh")
         .args(&["-c", &format!(r#"test "${}" = "new""#, varname)])
         .env(varname, "new")
