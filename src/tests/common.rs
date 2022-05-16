@@ -441,7 +441,9 @@ fn wait_timeout() {
     let mut p = Popen::create(&["sleep", "0.5"], PopenConfig::default()).unwrap();
     let ret = p.wait_timeout(Duration::from_millis(100)).unwrap();
     assert!(ret.is_none());
-    let ret = p.wait_timeout(Duration::from_millis(450)).unwrap();
+    // We sleep for a very long time to avoid flaky failures when we get a slow
+    // machine that takes too long to start sleep(1).
+    let ret = p.wait_timeout(Duration::from_millis(900)).unwrap();
     assert_eq!(ret, Some(ExitStatus::Exited(0)));
 }
 
