@@ -728,7 +728,9 @@ mod exec {
     pub mod linux {
         use super::Exec;
 
+        /// Trait for Linux subprocess builder extensions
         pub trait LinuxExt {
+            /// Enable configuration for the pdeathsig
             fn pdeathsig(self, signal: i32) -> Self;
         }
 
