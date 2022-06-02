@@ -162,7 +162,8 @@ pub struct PopenConfig {
     pub setpgid: bool,
 
     /// Make the process die with the parent in case the invoking parent
-    /// process thread dies first.
+    /// process thread dies first. The provided integer is the signal to
+    /// be sent to the process.
     #[cfg(target_os = "linux")]
     pub pdeathsig: Option<u32>,
 

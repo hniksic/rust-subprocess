@@ -721,6 +721,22 @@ mod exec {
             }
         }
     }
+
+    #[cfg(target_os = "linux")]
+    pub mod linux {
+        use super::Exec;
+
+        pub trait LinuxExt {
+            fn pdeathsig(self, signal: u32) -> Self;
+        }
+
+        impl LinuxExt for Exec {
+            fn pdeathsig(mut self, signal: u32) -> Self {
+                self.config.pdeathsig = Some(signal);
+                self
+            }
+        }
+    }
 }
 
 mod pipeline {
