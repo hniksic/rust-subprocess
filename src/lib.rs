@@ -97,6 +97,12 @@ pub mod unix {
     pub use super::popen::os_ext::*;
 }
 
+/// Subprocess extensions for Linux platforms.
+pub mod linux {
+    #[cfg(target_os = "linux")]
+    pub use crate::builder::linux::*;
+}
+
 #[cfg(test)]
 mod tests {
     mod builder;
