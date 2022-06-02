@@ -161,6 +161,11 @@ pub struct PopenConfig {
     #[cfg(unix)]
     pub setpgid: bool,
 
+    /// Make the process die with the parent in case the invoking parent
+    /// process thread dies first.
+    #[cfg(target_os = "linux")]
+    pub pdeathsig: Option<u32>,
+
     // Add this field to force construction using ..Default::default() for
     // backward compatibility.  Unfortunately we can't mark this non-public
     // because then ..Default::default() wouldn't work either.
@@ -193,6 +198,8 @@ impl PopenConfig {
             setgid: self.setgid,
             #[cfg(unix)]
             setpgid: self.setpgid,
+            #[cfg(target_os = "linux")]
+            pdeathsig: None,
             _use_default_to_construct: (),
         })
     }
@@ -222,6 +229,8 @@ impl Default for PopenConfig {
             setgid: None,
             #[cfg(unix)]
             setpgid: false,
+            #[cfg(target_os = "linux")]
+            pdeathsig: None,
             _use_default_to_construct: (),
         }
     }
@@ -729,6 +738,7 @@ mod os {
                                 config.setuid,
                                 config.setgid,
                                 config.setpgid,
+                                config.pdeathsig,
                             );
                             // If we are here, it means that exec has failed.  Notify
                             // the parent and exit.
@@ -837,6 +847,7 @@ mod os {
             setuid: Option<u32>,
             setgid: Option<u32>,
             setpgid: bool,
+            pdeathsig: Option<u32>,
         ) -> io::Result<()>;
         fn waitpid(&mut self, block: bool) -> io::Result<()>;
     }
@@ -849,6 +860,7 @@ mod os {
             setuid: Option<u32>,
             setgid: Option<u32>,
             setpgid: bool,
+            pdeathsig: Option<u32>,
         ) -> io::Result<()> {
             if let Some(cwd) = cwd {
                 env::set_current_dir(cwd)?;
@@ -880,6 +892,9 @@ mod os {
             }
             if setpgid {
                 posix::setpgid(0, 0)?;
+            }
+            if let Some(sig) = pdeathsig {
+                posix::prctl_deathsig(sig)?;
             }
             just_exec()?;
             unreachable!();
