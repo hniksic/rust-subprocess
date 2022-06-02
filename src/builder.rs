@@ -16,6 +16,8 @@ pub use self::pipeline::Pipeline;
 
 #[cfg(unix)]
 pub use exec::unix;
+#[cfg(target_os = "linux")]
+pub use exec::linux;
 
 mod exec {
     use std::borrow::Cow;
