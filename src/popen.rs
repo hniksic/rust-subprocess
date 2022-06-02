@@ -165,7 +165,7 @@ pub struct PopenConfig {
     /// process thread dies first. The provided integer is the signal to
     /// be sent to the process.
     #[cfg(target_os = "linux")]
-    pub pdeathsig: Option<u32>,
+    pub pdeathsig: Option<i32>,
 
     // Add this field to force construction using ..Default::default() for
     // backward compatibility.  Unfortunately we can't mark this non-public
@@ -848,7 +848,7 @@ mod os {
             setuid: Option<u32>,
             setgid: Option<u32>,
             setpgid: bool,
-            pdeathsig: Option<u32>,
+            pdeathsig: Option<i32>,
         ) -> io::Result<()>;
         fn waitpid(&mut self, block: bool) -> io::Result<()>;
     }
@@ -861,7 +861,7 @@ mod os {
             setuid: Option<u32>,
             setgid: Option<u32>,
             setpgid: bool,
-            pdeathsig: Option<u32>,
+            pdeathsig: Option<i32>,
         ) -> io::Result<()> {
             if let Some(cwd) = cwd {
                 env::set_current_dir(cwd)?;

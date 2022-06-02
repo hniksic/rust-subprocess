@@ -729,11 +729,11 @@ mod exec {
         use super::Exec;
 
         pub trait LinuxExt {
-            fn pdeathsig(self, signal: u32) -> Self;
+            fn pdeathsig(self, signal: i32) -> Self;
         }
 
         impl LinuxExt for Exec {
-            fn pdeathsig(mut self, signal: u32) -> Self {
+            fn pdeathsig(mut self, signal: i32) -> Self {
                 self.config.pdeathsig = Some(signal);
                 self
             }

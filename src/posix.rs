@@ -55,7 +55,7 @@ pub fn setpgid(pid: u32, pgid: u32) -> Result<()> {
     Ok(())
 }
 
-pub fn prctl_deathsig(sig: u32) -> Result<()> {
+pub fn prctl_deathsig(sig: i32) -> Result<()> {
     check_err(unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, sig); })?;
     Ok(())
 }
