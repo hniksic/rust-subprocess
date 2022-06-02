@@ -16,6 +16,8 @@ pub use self::pipeline::Pipeline;
 
 #[cfg(unix)]
 pub use exec::unix;
+#[cfg(target_os = "linux")]
+pub use exec::linux;
 
 mod exec {
     use std::borrow::Cow;
@@ -717,6 +719,24 @@ mod exec {
 
             fn setgid(mut self, gid: u32) -> Exec {
                 self.config.setgid = Some(gid);
+                self
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub mod linux {
+        use super::Exec;
+
+        /// Trait for Linux subprocess builder extensions
+        pub trait LinuxExt {
+            /// Enable configuration for the pdeathsig
+            fn pdeathsig(self, signal: i32) -> Self;
+        }
+
+        impl LinuxExt for Exec {
+            fn pdeathsig(mut self, signal: i32) -> Self {
+                self.config.pdeathsig = Some(signal);
                 self
             }
         }
