@@ -111,6 +111,7 @@ pub struct PopenConfig {
     /// Whether the `Popen` instance is initially detached.
     pub detached: bool,
     /// Process Creation Flags
+    #[cfg(windows)]
     pub creation_flags: u32,
 
     /// Executable to run.
@@ -171,6 +172,7 @@ impl PopenConfig {
             stdout: self.stdout.try_clone()?,
             stderr: self.stderr.try_clone()?,
             detached: self.detached,
+            #[cfg(windows)]
             creation_flags: self.creation_flags,
             executable: self.executable.as_ref().cloned(),
             env: self.env.clone(),
@@ -199,6 +201,7 @@ impl Default for PopenConfig {
             stdout: Redirection::None,
             stderr: Redirection::None,
             detached: false,
+            #[cfg(windows)]
             creation_flags: 0,
             executable: None,
             env: None,
