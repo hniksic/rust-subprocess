@@ -1,9 +1,9 @@
-use std::borrow::Cow;
 use std::env;
 use std::fs::File;
 use std::sync::Mutex;
+use std::{borrow::Cow, time::Duration};
 
-use std::io::prelude::*;
+use std::io::{prelude::*, ErrorKind};
 use std::sync::MutexGuard;
 
 use crate::{Exec, ExitStatus, NullFile, Redirection};
@@ -434,4 +434,22 @@ fn pipeline_to_string() {
         format!("{:?}", pipeline),
         "Pipeline { 'command with space' arg | wc -l }"
     )
+}
+
+#[test]
+fn capture_timeout() {
+    use crate::popen::PopenError::IoError;
+
+    match Exec::cmd("sleep")
+        .args(&["0.5"])
+        .time_limit(Duration::from_millis(100))
+        .capture()
+    {
+        Ok(_) => panic!("expected timeout return"),
+        Err(IoError(e)) => match e.kind() {
+            ErrorKind::TimedOut => assert!(true),
+            _ => panic!("expected timeout return"),
+        },
+        Err(_) => panic!("expected timeout return"),
+    }
 }
