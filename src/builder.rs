@@ -24,13 +24,16 @@ mod exec {
     use std::ffi::{OsStr, OsString};
     use std::fmt;
     use std::fs::{File, OpenOptions};
+    use std::io::ErrorKind;
     use std::io::{self, Read, Write};
     use std::ops::BitOr;
     use std::path::Path;
+    use std::time::Duration;
 
     use crate::communicate::Communicator;
     use crate::os_common::ExitStatus;
     use crate::popen::{Popen, PopenConfig, Redirection, Result as PopenResult};
+    use crate::PopenError;
 
     use super::os::*;
     use super::Pipeline;
@@ -126,6 +129,7 @@ mod exec {
     pub struct Exec {
         command: OsString,
         args: Vec<OsString>,
+        time_limit: Option<Duration>,
         config: PopenConfig,
         stdin_data: Option<Vec<u8>>,
     }
@@ -145,6 +149,7 @@ mod exec {
             Exec {
                 command: command.as_ref().to_owned(),
                 args: vec![],
+                time_limit: None,
                 config: PopenConfig::default(),
                 stdin_data: None,
             }
@@ -191,6 +196,13 @@ mod exec {
         /// scope.
         pub fn detached(mut self) -> Exec {
             self.config.detached = true;
+            self
+        }
+
+        /// Limit the amount of time the next `read()` will spend reading from the
+        /// subprocess.
+        pub fn time_limit(mut self, time: Duration) -> Exec {
+            self.time_limit = Some(time);
             self
         }
 
@@ -451,12 +463,22 @@ mod exec {
         /// its standard streams to close.  If this is undesirable,
         /// use `detached()`.
         pub fn capture(self) -> PopenResult<CaptureData> {
+            let timeout = self.time_limit;
             let (mut comm, mut p) = self.setup_communicate()?;
+            if let Some(t) = timeout {
+                comm = comm.limit_time(t);
+            }
+
             let (maybe_out, maybe_err) = comm.read()?;
             Ok(CaptureData {
                 stdout: maybe_out.unwrap_or_else(Vec::new),
                 stderr: maybe_err.unwrap_or_else(Vec::new),
-                exit_status: p.wait()?,
+                exit_status: match timeout {
+                    Some(t) => p
+                        .wait_timeout(t)?
+                        .ok_or(PopenError::IoError(ErrorKind::TimedOut.into()))?,
+                    None => p.wait()?,
+                },
             })
         }
 
@@ -522,6 +544,7 @@ mod exec {
             Exec {
                 command: self.command.clone(),
                 args: self.args.clone(),
+                time_limit: self.time_limit.clone(),
                 config: self.config.try_clone().unwrap(),
                 stdin_data: self.stdin_data.as_ref().cloned(),
             }
