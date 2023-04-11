@@ -283,6 +283,9 @@ mod exec {
         ///
         /// [`Redirection`]: enum.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
+        ///
+        /// If the resulting [`Exec`] is meant to begin a [`Pipeline`], use
+        /// [`Pipeline.stdin`] instead.
         pub fn stdin(mut self, stdin: impl Into<InputRedirection>) -> Exec {
             match (&self.config.stdin, stdin.into()) {
                 (&Redirection::None, InputRedirection::AsRedirection(new)) => {
@@ -309,6 +312,9 @@ mod exec {
         ///
         /// [`Redirection`]: enum.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
+        ///
+        /// If the resulting [`Exec`] is meant to end a [`Pipeline`], use
+        /// [`Pipeline.stdout`] instead.
         pub fn stdout(mut self, stdout: impl Into<OutputRedirection>) -> Exec {
             match (&self.config.stdout, stdout.into().into_redirection()) {
                 (&Redirection::None, new) => self.config.stdout = new,
@@ -329,6 +335,9 @@ mod exec {
         ///
         /// [`Redirection`]: enum.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
+        ///
+        /// If the resulting [`Exec`] is meant to end a [`Pipeline`], use
+        /// [`Pipeline.stderr`] instead.
         pub fn stderr(mut self, stderr: impl Into<OutputRedirection>) -> Exec {
             match (&self.config.stderr, stderr.into().into_redirection()) {
                 (&Redirection::None, new) => self.config.stderr = new,
@@ -864,6 +873,11 @@ mod pipeline {
         ///    /dev/null.
         ///
         /// [`Redirection`]: enum.Redirection.html
+        ///
+        /// # Panics
+        ///
+        /// This function will panic if the pipeline's first command has been
+        /// modified with [`Exec::stdin`].
         pub fn stdin(mut self, stdin: impl Into<InputRedirection>) -> Pipeline {
             match stdin.into() {
                 InputRedirection::AsRedirection(r) => self.stdin = r,
@@ -886,6 +900,11 @@ mod pipeline {
         ///    /dev/null.
         ///
         /// [`Redirection`]: enum.Redirection.html
+        ///
+        /// # Panics
+        ///
+        /// This function will panic if the pipeline's last command has been
+        /// modified with [`Exec::stdout`].
         pub fn stdout(mut self, stdout: impl Into<OutputRedirection>) -> Pipeline {
             self.stdout = stdout.into().into_redirection();
             self
@@ -962,6 +981,45 @@ mod pipeline {
 
         /// Starts the pipeline, waits for it to finish, and returns
         /// the exit status of the last command.
+        ///
+        /// # Panics
+        ///
+        /// This function will panic if one or more of the three standard
+        /// streams i.e. `stdin, stdout, stderr` have been set for both
+        /// the first (or last, or both) [`Exec`].
+        ///
+        /// An example:
+        ///
+        /// ```should_panic
+        /// # use std::fs::File;
+        /// # use subprocess::{Exec, Pipeline};
+        ///
+        /// let output = File::create("test.txt").unwrap();
+        /// let ls = Exec::cmd("ls").args(&[&".", &"-l"]);
+        /// let sort = Exec::cmd("sort");
+        /// let mut head = Exec::cmd("head").args(&[&"-n", &"3"]);
+        /// head = head.stdout(output);
+        ///
+        /// Pipeline::from_exec_iter(vec![ls, sort, head]).join().unwrap();
+        /// ```
+        ///
+        /// Note that the panic will happen when the [`Pipeline`]'s stream is
+        /// not explicitly set, like in the above example, and when it is:
+        ///
+        /// ```should_panic
+        /// # use std::fs::File;
+        /// # use subprocess::{Exec, Pipeline};
+        ///
+        /// let output = File::create("test.txt").unwrap();
+        /// let ls = Exec::cmd("ls").args(&[&".", &"-l"]);
+        /// let mut head = Exec::cmd("head").args(&[&"-n", &"3"]);
+        /// head = head.stdout(output.try_clone().unwrap());
+        ///  
+        /// let mut pipeline = Pipeline::new(ls, head);
+        /// pipeline = pipeline.stderr_to(output);
+        ///  
+        /// pipeline.join().unwrap();
+        /// ```
         pub fn join(self) -> PopenResult<ExitStatus> {
             self.check_no_stdin_data("join");
             let mut v = self.popen()?;
