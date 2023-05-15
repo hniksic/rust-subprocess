@@ -9,7 +9,7 @@ use std::sync::MutexGuard;
 use crate::{Exec, ExitStatus, NullFile, Redirection};
 
 use lazy_static::lazy_static;
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 use crate::tests::common::read_whole_file;
 
@@ -47,7 +47,7 @@ fn stream_stderr() {
 
 #[test]
 fn stream_stdin() {
-    let tmpdir = TempDir::new("test").unwrap();
+    let tmpdir = TempDir::new().unwrap();
     let tmpname = tmpdir.path().join("output");
     {
         let mut stream = Exec::cmd("cat")
@@ -126,7 +126,7 @@ fn pipeline_stream_out() {
 
 #[test]
 fn pipeline_stream_in() {
-    let tmpdir = TempDir::new("test").unwrap();
+    let tmpdir = TempDir::new().unwrap();
     let tmpname = tmpdir.path().join("output");
     {
         let mut stream = { Exec::cmd("cat") | Exec::cmd("wc").arg("-l") }

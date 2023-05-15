@@ -50,6 +50,11 @@ pub fn setgid(gid: u32) -> Result<()> {
     Ok(())
 }
 
+pub fn setpgid(pid: u32, pgid: u32) -> Result<()> {
+    check_err(unsafe { libc::setpgid(pid as _, pgid as _) })?;
+    Ok(())
+}
+
 fn os_to_cstring(s: &OsStr) -> Result<CString> {
     // Like CString::new, but returns an io::Result for consistency with
     // everything else.
@@ -60,6 +65,7 @@ fn os_to_cstring(s: &OsStr) -> Result<CString> {
 struct CVec {
     // Individual C strings.  Each element self.ptrs[i] points to the
     // data of self.strings[i].as_bytes_with_nul().as_ptr().
+    #[allow(dead_code)]
     strings: Vec<CString>,
 
     // nullptr-terminated vector of pointers to data inside
@@ -351,11 +357,14 @@ pub struct PollFd<'a>(libc::pollfd, PhantomData<&'a ()>);
 
 impl PollFd<'_> {
     pub fn new<'a>(file: Option<&'a File>, events: i16) -> PollFd<'a> {
-        PollFd(libc::pollfd {
-            fd: file.map(File::as_raw_fd).unwrap_or(-1),
-            events,
-            revents: 0,
-        }, PhantomData)
+        PollFd(
+            libc::pollfd {
+                fd: file.map(File::as_raw_fd).unwrap_or(-1),
+                events,
+                revents: 0,
+            },
+            PhantomData,
+        )
     }
 
     pub fn test(&self, mask: i16) -> bool {

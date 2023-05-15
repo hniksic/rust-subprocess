@@ -20,8 +20,8 @@ pub use exec::unix;
 mod exec {
     use std::borrow::Cow;
     use std::collections::HashMap;
-    use std::ffi::{OsStr, OsString};
     use std::env;
+    use std::ffi::{OsStr, OsString};
     use std::fmt;
     use std::fs::{File, OpenOptions};
     use std::io::{self, Read, Write};
@@ -795,6 +795,54 @@ mod pipeline {
         pub fn new(cmd1: Exec, cmd2: Exec) -> Pipeline {
             Pipeline {
                 cmds: vec![cmd1, cmd2],
+                stdin: Redirection::None,
+                stdout: Redirection::None,
+                stderr_file: None,
+                stdin_data: None,
+            }
+        }
+
+        /// Creates a new pipeline from a list of commands. Useful if
+        /// a pipeline should be created dynamically.
+        ///
+        /// Example:
+        /// ```
+        /// use subprocess::Exec;
+        ///
+        /// let commands = vec![
+        ///   Exec::shell("echo tset"),
+        ///   Exec::shell("tr '[:lower:]' '[:upper:]'"),
+        ///   Exec::shell("rev")
+        /// ];
+        ///
+        /// let pipeline = subprocess::Pipeline::from_exec_iter(commands);
+        /// let output = pipeline.capture().unwrap().stdout_str();
+        /// assert_eq!(output, "TEST\n");
+        /// ```
+        /// ```should_panic
+        /// use subprocess::Exec;
+        ///
+        /// let commands = vec![
+        ///   Exec::shell("echo tset"),
+        /// ];
+        ///
+        /// // This will panic as the iterator contains less than two (2) items.
+        /// let pipeline = subprocess::Pipeline::from_exec_iter(commands);
+        /// ```
+        /// Errors:
+        ///   - Panics when the passed iterator contains less than two (2) items.
+        pub fn from_exec_iter<I>(iterable: I) -> Pipeline
+        where
+            I: IntoIterator<Item = Exec>,
+        {
+            let cmds: Vec<_> = iterable.into_iter().collect();
+
+            if cmds.len() < 2 {
+                panic!("iterator needs to contain at least two (2) elements")
+            }
+
+            Pipeline {
+                cmds,
                 stdin: Redirection::None,
                 stdout: Redirection::None,
                 stderr_file: None,

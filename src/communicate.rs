@@ -305,11 +305,10 @@ mod raw {
 
         fn recv_until(&self, deadline: Option<Instant>) -> Result<Message, Timeout> {
             if let Some(deadline) = deadline {
-                let now = Instant::now();
-                if now >= deadline {
-                    return Err(Timeout);
-                }
-                match self.rx.recv_timeout(deadline - now) {
+                match self
+                    .rx
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                {
                     Ok(message) => Ok(message),
                     Err(RecvTimeoutError::Timeout) => Err(Timeout),
                     // should never be disconnected, the helper threads always
@@ -512,10 +511,7 @@ impl Communicator {
     /// replacement character.
     pub fn read_string(&mut self) -> Result<(Option<String>, Option<String>), CommunicateError> {
         let (o, e) = self.read()?;
-        Ok((
-            o.map(|v| String::from_utf8_lossy(&v).into()),
-            e.map(|v| String::from_utf8_lossy(&v).into()),
-        ))
+        Ok((o.map(from_utf8_lossy), e.map(from_utf8_lossy)))
     }
 
     /// Limit the amount of data the next `read()` will read from the
@@ -530,6 +526,15 @@ impl Communicator {
     pub fn limit_time(mut self, time: Duration) -> Communicator {
         self.time_limit = Some(time);
         self
+    }
+}
+
+/// Like String::from_utf8_lossy(), but takes `Vec<u8>` and reuses its storage if
+/// possible.
+fn from_utf8_lossy(v: Vec<u8>) -> String {
+    match String::from_utf8(v) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
     }
 }
 

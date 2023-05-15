@@ -39,6 +39,7 @@ pub use communicate::Communicator;
 /// [`Exec`].
 ///
 /// [`Exec`]: struct.Exec.html
+/// [`popen`]: struct.Exec.html#method.popen
 /// [`stdin`]: struct.Popen.html#structfield.stdin
 /// [`stdout`]: struct.Popen.html#structfield.stdout
 /// [`stderr`]: struct.Popen.html#structfield.stderr
@@ -70,7 +71,11 @@ pub struct Popen {
 #[derive(Debug)]
 enum ChildState {
     Preparing, // only during construction
-    Running { pid: u32, ext: os::ExtChildState },
+    Running {
+        pid: u32,
+        #[allow(dead_code)]
+        ext: os::ExtChildState,
+    },
     Finished(ExitStatus),
 }
 
@@ -146,8 +151,18 @@ pub struct PopenConfig {
     /// Set group ID for the subprocess.
     ///
     /// If specified, calls `setgid()` before execing the child process.
+    ///
+    /// Not to be confused with similarly named `setpgid`.
     #[cfg(unix)]
     pub setgid: Option<u32>,
+
+    /// Make the subprocess belong to a new process group.
+    ///
+    /// If specified, calls `setpgid(0, 0)` before execing the child process.
+    ///
+    /// Not to be confused with similarly named `setgid`.
+    #[cfg(unix)]
+    pub setpgid: bool,
 
     // Add this field to force construction using ..Default::default() for
     // backward compatibility.  Unfortunately we can't mark this non-public
@@ -181,6 +196,8 @@ impl PopenConfig {
             setuid: self.setuid,
             #[cfg(unix)]
             setgid: self.setgid,
+            #[cfg(unix)]
+            setpgid: self.setpgid,
             _use_default_to_construct: (),
         })
     }
@@ -210,6 +227,8 @@ impl Default for PopenConfig {
             setuid: None,
             #[cfg(unix)]
             setgid: None,
+            #[cfg(unix)]
+            setpgid: false,
             _use_default_to_construct: (),
         }
     }
@@ -716,6 +735,7 @@ mod os {
                                 config.cwd.as_deref(),
                                 config.setuid,
                                 config.setgid,
+                                config.setpgid,
                             );
                             // If we are here, it means that exec has failed.  Notify
                             // the parent and exit.
@@ -823,6 +843,7 @@ mod os {
             cwd: Option<&OsStr>,
             setuid: Option<u32>,
             setgid: Option<u32>,
+            setpgid: bool,
         ) -> io::Result<()>;
         fn waitpid(&mut self, block: bool) -> io::Result<()>;
     }
@@ -834,6 +855,7 @@ mod os {
             cwd: Option<&OsStr>,
             setuid: Option<u32>,
             setgid: Option<u32>,
+            setpgid: bool,
         ) -> io::Result<()> {
             if let Some(cwd) = cwd {
                 env::set_current_dir(cwd)?;
@@ -862,6 +884,9 @@ mod os {
             }
             if let Some(gid) = setgid {
                 posix::setgid(gid)?;
+            }
+            if setpgid {
+                posix::setpgid(0, 0)?;
             }
             just_exec()?;
             unreachable!();

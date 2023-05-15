@@ -1,6 +1,6 @@
 [package]
 name = "subprocess"
-version = "0.2.7"
+version = "0.2.10"
 authors = ["Hrvoje Nikšić <hniksic@gmail.com>"]
 readme = "README.md"
 keywords = ["execute", "process", "command", "redirect", "pipe"]
@@ -14,13 +14,13 @@ module, with Rust-specific extensions.
 edition = "2018"
 
 [dependencies]
-libc = "0.2.66"
+libc = "0.2.78"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.8", features = ["std", "handleapi", "namedpipeapi", "processenv", "synchapi", "winerror", "processthreadsapi", "winbase"] }
 
 [dev-dependencies]
-tempdir = "0.3.7"
+tempfile = "3.3.0"
 lazy_static = "1.4.0"
 
 [lib]

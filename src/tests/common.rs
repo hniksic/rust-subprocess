@@ -1,4 +1,4 @@
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
@@ -75,7 +75,7 @@ fn read_from_stdout() {
 
 #[test]
 fn input_from_file() {
-    let tmpdir = TempDir::new("test").unwrap();
+    let tmpdir = TempDir::new().unwrap();
     let tmpname = tmpdir.path().join("input");
     {
         let mut outfile = File::create(&tmpname).unwrap();
@@ -96,7 +96,7 @@ fn input_from_file() {
 
 #[test]
 fn output_to_file() {
-    let tmpdir = TempDir::new("test").unwrap();
+    let tmpdir = TempDir::new().unwrap();
     let tmpname = tmpdir.path().join("output");
     let outfile = File::create(&tmpname).unwrap();
     let mut p = Popen::create(
@@ -113,7 +113,7 @@ fn output_to_file() {
 
 #[test]
 fn input_output_from_file() {
-    let tmpdir = TempDir::new("test").unwrap();
+    let tmpdir = TempDir::new().unwrap();
     let tmpname_in = tmpdir.path().join("input");
     let tmpname_out = tmpdir.path().join("output");
     {
@@ -135,7 +135,7 @@ fn input_output_from_file() {
 
 #[test]
 fn write_to_subprocess() {
-    let tmpdir = TempDir::new("test").unwrap();
+    let tmpdir = TempDir::new().unwrap();
     let tmpname = tmpdir.path().join("output");
     let mut p = Popen::create(
         &[r"uniq", "-", tmpname.to_str().unwrap()],
@@ -156,7 +156,7 @@ fn write_to_subprocess() {
 
 #[test]
 fn communicate_input() {
-    let tmpdir = TempDir::new("test").unwrap();
+    let tmpdir = TempDir::new().unwrap();
     let tmpname = tmpdir.path().join("input");
     let mut p = Popen::create(
         &["cat"],
@@ -398,7 +398,7 @@ fn merge_out_to_err_pipe() {
 
 #[test]
 fn merge_err_to_out_file() {
-    let tmpdir = TempDir::new("test").unwrap();
+    let tmpdir = TempDir::new().unwrap();
     let tmpname = tmpdir.path().join("output");
     let mut p = Popen::create(
         &["sh", "-c", "printf foo; printf bar >&2"],
@@ -441,7 +441,9 @@ fn wait_timeout() {
     let mut p = Popen::create(&["sleep", "0.5"], PopenConfig::default()).unwrap();
     let ret = p.wait_timeout(Duration::from_millis(100)).unwrap();
     assert!(ret.is_none());
-    let ret = p.wait_timeout(Duration::from_millis(450)).unwrap();
+    // We sleep for a very long time to avoid flaky failures when we get a slow
+    // machine that takes too long to start sleep(1).
+    let ret = p.wait_timeout(Duration::from_millis(900)).unwrap();
     assert_eq!(ret, Some(ExitStatus::Exited(0)));
 }
 
@@ -494,7 +496,7 @@ fn env_dup() {
 
 #[test]
 fn cwd() {
-    let tmpdir = TempDir::new("test").unwrap();
+    let tmpdir = TempDir::new().unwrap();
     let tmpdir_name = tmpdir.path().as_os_str().to_owned();
 
     // Test that CWD works by cwd-ing into an empty temporary

@@ -32,11 +32,19 @@ pub enum ExitStatus {
 impl ExitStatus {
     /// True if the exit status of the process is 0.
     pub fn success(self) -> bool {
-        if let ExitStatus::Exited(0) = self {
-            true
-        } else {
-            false
+        matches!(self, ExitStatus::Exited(0))
+    }
+
+    /// True if the subprocess was killed by a signal with the specified number.
+    ///
+    /// You can pass the concrete `libc` signal numbers to this function, such as
+    /// `status.is_killed_by(libc::SIGABRT)`.
+    pub fn is_killed_by<T: Eq + From<u8>>(self, signum: T) -> bool {
+        if let ExitStatus::Signaled(n) = self {
+            let n: T = n.into();
+            return n == signum;
         }
+        false
     }
 }
 
