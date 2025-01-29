@@ -3,8 +3,6 @@ use std::ffi::OsString;
 use crate::unix::PopenExt;
 use crate::{ExitStatus, Popen, PopenConfig, Redirection};
 
-use libc;
-
 #[test]
 fn err_terminate() {
     let mut p = Popen::create(&["sleep", "5"], PopenConfig::default()).unwrap();

@@ -15,7 +15,7 @@ use libc::{c_char, c_int};
 
 use crate::os_common::{ExitStatus, StandardStream};
 
-pub use libc::{ECHILD, ENOSPC};
+pub use libc::ECHILD;
 
 fn check_err<T: Ord + Default>(num: T) -> Result<T> {
     if num < T::default() {
@@ -113,35 +113,6 @@ fn split_path(mut path: &OsStr) -> impl Iterator<Item = &OsStr> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::split_path;
-    use std;
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt;
-
-    fn s(s: &str) -> Vec<&str> {
-        split_path(OsStr::new(s))
-            .map(|osstr| std::str::from_utf8(osstr.as_bytes()).unwrap())
-            .collect()
-    }
-
-    #[test]
-    fn test_split_path() {
-        let empty = Vec::<&OsStr>::new();
-
-        assert_eq!(s("a:b"), vec!["a", "b"]);
-        assert_eq!(s("one:twothree"), vec!["one", "twothree"]);
-        assert_eq!(s("a:"), vec!["a"]);
-        assert_eq!(s(""), empty);
-        assert_eq!(s(":"), empty);
-        assert_eq!(s("::"), empty);
-        assert_eq!(s(":::"), empty);
-        assert_eq!(s("a::b"), vec!["a", "b"]);
-        assert_eq!(s(":a::::b:"), vec!["a", "b"]);
-    }
-}
-
 struct PrepExec {
     cmd: OsString,
     argvec: CVec,
@@ -233,7 +204,6 @@ impl PrepExec {
 /// Since code executed in the child after a `fork()` is not allowed to
 /// allocate (because the lock might be held), this allocates everything
 /// beforehand.
-
 pub fn prep_exec(
     cmd: impl AsRef<OsStr>,
     args: &[impl AsRef<OsStr>],
@@ -356,7 +326,7 @@ pub fn reset_sigpipe() -> Result<()> {
 pub struct PollFd<'a>(libc::pollfd, PhantomData<&'a ()>);
 
 impl PollFd<'_> {
-    pub fn new<'a>(file: Option<&'a File>, events: i16) -> PollFd<'a> {
+    pub fn new(file: Option<&File>, events: i16) -> PollFd<'_> {
         PollFd(
             libc::pollfd {
                 fd: file.map(File::as_raw_fd).unwrap_or(-1),
@@ -372,7 +342,7 @@ impl PollFd<'_> {
     }
 }
 
-pub use libc::{POLLERR, POLLHUP, POLLIN, POLLNVAL, POLLOUT, POLLPRI};
+pub use libc::{POLLHUP, POLLIN, POLLOUT};
 
 pub fn poll(fds: &mut [PollFd<'_>], mut timeout: Option<Duration>) -> Result<usize> {
     let deadline = timeout.map(|timeout| Instant::now() + timeout);
@@ -383,10 +353,10 @@ pub fn poll(fds: &mut [PollFd<'_>], mut timeout: Option<Duration>) -> Result<usi
         let (timeout_ms, overflow) = timeout
             .map(|timeout| {
                 let timeout = timeout.as_millis();
-                if timeout <= i32::max_value() as u128 {
+                if timeout <= i32::MAX as u128 {
                     (timeout as i32, false)
                 } else {
-                    (i32::max_value(), true)
+                    (i32::MAX, true)
                 }
             })
             .unwrap_or((-1, false));
@@ -402,5 +372,33 @@ pub fn poll(fds: &mut [PollFd<'_>], mut timeout: Option<Duration>) -> Result<usi
             return Ok(0);
         }
         timeout = Some(deadline - now);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_path;
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    fn s(s: &str) -> Vec<&str> {
+        split_path(OsStr::new(s))
+            .map(|osstr| std::str::from_utf8(osstr.as_bytes()).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn test_split_path() {
+        let empty = Vec::<&OsStr>::new();
+
+        assert_eq!(s("a:b"), vec!["a", "b"]);
+        assert_eq!(s("one:twothree"), vec!["one", "twothree"]);
+        assert_eq!(s("a:"), vec!["a"]);
+        assert_eq!(s(""), empty);
+        assert_eq!(s(":"), empty);
+        assert_eq!(s("::"), empty);
+        assert_eq!(s(":::"), empty);
+        assert_eq!(s("a::b"), vec!["a", "b"]);
+        assert_eq!(s(":a::::b:"), vec!["a", "b"]);
     }
 }

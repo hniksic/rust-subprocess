@@ -10,12 +10,8 @@ mod os {
     pub const SHELL: [&str; 2] = ["cmd.exe", "/c"];
 }
 
-pub use self::exec::{CaptureData, Exec, NullFile};
-pub use self::os::*;
-pub use self::pipeline::Pipeline;
-
-#[cfg(unix)]
-pub use exec::unix;
+pub use exec::{CaptureData, Exec, NullFile};
+pub use pipeline::Pipeline;
 
 mod exec {
     use std::borrow::Cow;
@@ -121,7 +117,6 @@ mod exec {
     ///
     /// [`Popen`]: struct.Popen.html
     /// [`Popen::create`]: struct.Popen.html#method.create
-
     #[must_use]
     pub struct Exec {
         command: OsString,
@@ -257,7 +252,7 @@ mod exec {
                 .env
                 .as_mut()
                 .unwrap()
-                .retain(|&(ref k, ref _v)| k != key.as_ref());
+                .retain(|(k, _v)| k != key.as_ref());
             self
         }
 
@@ -484,7 +479,7 @@ mod exec {
                 let current: Vec<_> = env::vars_os().collect();
                 let current_map: HashMap<_, _> = current.iter().map(|(x, y)| (x, y)).collect();
                 for (k, v) in cmd_env {
-                    if current_map.get(&k) == Some(&&v) {
+                    if current_map.get(&k) == Some(&v) {
                         continue;
                     }
                     out.push_str(&Exec::display_escape(&k.to_string_lossy()));
@@ -700,28 +695,6 @@ mod exec {
             OutputRedirection(Redirection::File(null_file))
         }
     }
-
-    #[cfg(unix)]
-    pub mod unix {
-        use super::Exec;
-
-        pub trait ExecExt {
-            fn setuid(self, uid: u32) -> Self;
-            fn setgid(self, gid: u32) -> Self;
-        }
-
-        impl ExecExt for Exec {
-            fn setuid(mut self, uid: u32) -> Exec {
-                self.config.setuid = Some(uid);
-                self
-            }
-
-            fn setgid(mut self, gid: u32) -> Exec {
-                self.config.setgid = Some(gid);
-                self
-            }
-        }
-    }
 }
 
 mod pipeline {
@@ -779,7 +752,6 @@ mod pipeline {
     /// [`Popen`]: struct.Popen.html
     /// [`Exec`]: struct.Exec.html
     /// [`Pipeline`]: struct.Pipeline.html
-
     #[must_use]
     pub struct Pipeline {
         cmds: Vec<Exec>,
