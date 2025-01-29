@@ -12,11 +12,11 @@ use std::time::Duration;
 use crate::communicate;
 use crate::os_common::{ExitStatus, StandardStream};
 
-use self::ChildState::*;
+use ChildState::*;
 
-pub use self::os::ext as os_ext;
-pub use self::os::make_pipe;
 pub use communicate::Communicator;
+pub use os::ext as os_ext;
+pub use os::make_pipe;
 
 /// Interface to a running subprocess.
 ///
@@ -302,7 +302,7 @@ impl Redirection {
             Redirection::Pipe => Redirection::Pipe,
             Redirection::Merge => Redirection::Merge,
             Redirection::File(ref f) => Redirection::File(f.try_clone()?),
-            Redirection::RcFile(ref f) => Redirection::RcFile(Rc::clone(&f)),
+            Redirection::RcFile(ref f) => Redirection::RcFile(Rc::clone(f)),
         })
     }
 }
@@ -1270,7 +1270,7 @@ use crate::win32::make_standard_stream;
 fn get_standard_stream(which: StandardStream) -> io::Result<Rc<File>> {
     STREAMS.with(|streams| {
         if let Some(ref stream) = streams.borrow()[which as usize] {
-            return Ok(Rc::clone(&stream));
+            return Ok(Rc::clone(stream));
         }
         let stream = make_standard_stream(which)?;
         streams.borrow_mut()[which as usize] = Some(Rc::clone(&stream));

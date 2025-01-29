@@ -12,7 +12,7 @@ mod raw {
     use std::io::{self, Read, Write};
     use std::time::{Duration, Instant};
 
-    fn as_pollfd<'a>(f: Option<&'a File>, for_read: bool) -> posix::PollFd<'a> {
+    fn as_pollfd(f: Option<&File>, for_read: bool) -> posix::PollFd<'_> {
         let events = if for_read {
             posix::POLLIN
         } else {
@@ -79,7 +79,7 @@ mod raw {
             stderr: Option<File>,
             input_data: Option<Vec<u8>>,
         ) -> RawCommunicator {
-            let input_data = input_data.unwrap_or_else(Vec::new);
+            let input_data = input_data.unwrap_or_default();
             RawCommunicator {
                 stdin,
                 stdout,
@@ -489,13 +489,12 @@ impl Communicator {
     /// # Errors
     ///
     /// * `Err(CommunicateError)` if a system call fails.  In case of timeout,
-    /// the underlying error kind will be `ErrorKind::TimedOut`.
+    ///   the underlying error kind will be `ErrorKind::TimedOut`.
     ///
     /// Regardless of the nature of the error, the content prior to the error
     /// can be retrieved using the [`capture`] attribute of the error.
     ///
     /// [`capture`]: struct.CommunicateError.html#structfield.capture
-
     pub fn read(&mut self) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), CommunicateError> {
         let deadline = self.time_limit.map(|timeout| Instant::now() + timeout);
         match self.inner.read(deadline, self.size_limit) {
