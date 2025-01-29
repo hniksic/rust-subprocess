@@ -240,9 +240,10 @@ mod exec {
             self.ensure_env();
             {
                 let envvec = self.config.env.as_mut().unwrap();
-                for &(ref k, ref v) in vars {
-                    envvec.push((k.as_ref().to_owned(), v.as_ref().to_owned()));
-                }
+                envvec.extend(
+                    vars.iter()
+                        .map(|(k, v)| (k.as_ref().to_owned(), v.as_ref().to_owned())),
+                );
             }
             self
         }
