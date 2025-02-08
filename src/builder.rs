@@ -10,6 +10,8 @@ mod os {
     pub const SHELL: [&str; 2] = ["cmd.exe", "/c"];
 }
 
+#[cfg(unix)]
+pub use exec::unix::ExecExt;
 pub use exec::{CaptureData, Exec, NullFile};
 pub use pipeline::Pipeline;
 
@@ -693,6 +695,32 @@ mod exec {
         fn from(_nf: NullFile) -> Self {
             let null_file = OpenOptions::new().write(true).open(NULL_DEVICE).unwrap();
             OutputRedirection(Redirection::File(null_file))
+        }
+    }
+
+    #[cfg(unix)]
+    pub mod unix {
+        use super::Exec;
+
+        /// trait allowing for custom implementations of `setuid` and `setgid` behaviors on unix
+        /// which handle file system permissions (owner or group respectively)
+        pub trait ExecExt {
+            /// sets the access right flag, similar to unix setuid
+            fn setuid(self, uid: u32) -> Self;
+            /// sets the access right flag, similar to unix setgid
+            fn setgid(self, gid: u32) -> Self;
+        }
+
+        impl ExecExt for Exec {
+            fn setuid(mut self, uid: u32) -> Exec {
+                self.config.setuid = Some(uid);
+                self
+            }
+
+            fn setgid(mut self, gid: u32) -> Exec {
+                self.config.setgid = Some(gid);
+                self
+            }
         }
     }
 }
