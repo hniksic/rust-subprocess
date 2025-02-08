@@ -87,6 +87,8 @@ mod win32;
 
 mod os_common;
 
+#[cfg(unix)]
+pub use builder::ExecExt;
 pub use builder::{CaptureData, Exec, NullFile, Pipeline};
 pub use communicate::{CommunicateError, Communicator};
 pub use os_common::ExitStatus;
