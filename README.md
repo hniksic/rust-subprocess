@@ -1,7 +1,7 @@
 # subprocess
 
 [![](http://meritbadge.herokuapp.com/subprocess)](https://crates.io/crates/subprocess)
-[![Build Status](https://travis-ci.org/hniksic/rust-subprocess.svg?branch=master)](https://travis-ci.org/hniksic/rust-subprocess)
+[![CI](https://github.com/hniksic/rust-subprocess/actions/workflows/ci.yml/badge.svg)](https://github.com/hniksic/rust-subprocess/actions/workflows/ci.yml)
 [![docs.rs](https://docs.rs/subprocess/badge.svg)](https://docs.rs/subprocess)
 
 The `subprocess` library provides facilities for execution of and
