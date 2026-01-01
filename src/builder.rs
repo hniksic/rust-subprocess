@@ -36,10 +36,10 @@ mod exec {
     use std::path::Path;
     use std::time::Duration;
 
+    use crate::PopenError;
     use crate::communicate::Communicator;
     use crate::os_common::ExitStatus;
     use crate::popen::{Popen, PopenConfig, Redirection, Result as PopenResult};
-    use crate::PopenError;
 
     use super::Pipeline;
     use super::os::*;
@@ -511,6 +511,14 @@ mod exec {
             }
             out
         }
+
+        pub(super) fn stdin_is_set(&self) -> bool {
+            !matches!(self.config.stdin, Redirection::None)
+        }
+
+        pub(super) fn stdout_is_set(&self) -> bool {
+            !matches!(self.config.stdout, Redirection::None)
+        }
     }
 
     impl Clone for Exec {
@@ -851,7 +859,24 @@ mod pipeline {
         /// Creates a new pipeline by combining two commands.
         ///
         /// Equivalent to `cmd1 | cmd2`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if `cmd1` has stdin redirected or `cmd2` has stdout redirected.
+        /// Use `Pipeline::stdin()` and `Pipeline::stdout()` to redirect the pipeline's streams.
         pub fn new(cmd1: Exec, cmd2: Exec) -> Pipeline {
+            if cmd1.stdin_is_set() {
+                panic!(
+                    "stdin of the first command is already redirected; \
+                     use Pipeline::stdin() to redirect pipeline input"
+                );
+            }
+            if cmd2.stdout_is_set() {
+                panic!(
+                    "stdout of the last command is already redirected; \
+                     use Pipeline::stdout() to redirect pipeline output"
+                );
+            }
             Pipeline {
                 cmds: vec![cmd1, cmd2],
                 stdin: Redirection::None,
@@ -864,7 +889,17 @@ mod pipeline {
         /// Creates a new pipeline from a list of commands.  Useful if a pipeline should be
         /// created dynamically.
         ///
-        /// Example:
+        /// # Panics
+        ///
+        /// Panics if:
+        /// - The iterator contains fewer than two commands.
+        /// - The first command has stdin redirected.
+        /// - The last command has stdout redirected.
+        ///
+        /// Use `Pipeline::stdin()` and `Pipeline::stdout()` to redirect the pipeline's streams.
+        ///
+        /// # Example
+        ///
         /// ```no_run
         /// use subprocess::Exec;
         ///
@@ -878,18 +913,6 @@ mod pipeline {
         /// let output = pipeline.capture().unwrap().stdout_str();
         /// assert_eq!(output, "TEST\n");
         /// ```
-        /// ```should_panic
-        /// use subprocess::Exec;
-        ///
-        /// let commands = vec![
-        ///   Exec::shell("echo tset"),
-        /// ];
-        ///
-        /// // This will panic as the iterator contains less than two (2) items.
-        /// let pipeline = subprocess::Pipeline::from_exec_iter(commands);
-        /// ```
-        /// Errors:
-        ///   - Panics when the passed iterator contains less than two (2) items.
         pub fn from_exec_iter<I>(iterable: I) -> Pipeline
         where
             I: IntoIterator<Item = Exec>,
@@ -897,7 +920,19 @@ mod pipeline {
             let cmds: Vec<_> = iterable.into_iter().collect();
 
             if cmds.len() < 2 {
-                panic!("iterator needs to contain at least two (2) elements")
+                panic!("pipeline requires at least two commands")
+            }
+            if cmds.first().unwrap().stdin_is_set() {
+                panic!(
+                    "stdin of the first command is already redirected; \
+                     use Pipeline::stdin() to redirect pipeline input"
+                );
+            }
+            if cmds.last().unwrap().stdout_is_set() {
+                panic!(
+                    "stdout of the last command is already redirected; \
+                     use Pipeline::stdout() to redirect pipeline output"
+                );
             }
 
             Pipeline {
@@ -1138,7 +1173,17 @@ mod pipeline {
         type Output = Pipeline;
 
         /// Append a command to the pipeline and return a new pipeline.
+        ///
+        /// # Panics
+        ///
+        /// Panics if the new command has stdout redirected.
         fn bitor(mut self, rhs: Exec) -> Pipeline {
+            if rhs.stdout_is_set() {
+                panic!(
+                    "stdout of the last command is already redirected; \
+                     use Pipeline::stdout() to redirect pipeline output"
+                );
+            }
             self.cmds.push(rhs);
             self
         }
@@ -1148,7 +1193,17 @@ mod pipeline {
         type Output = Pipeline;
 
         /// Append a pipeline to the pipeline and return a new pipeline.
+        ///
+        /// # Panics
+        ///
+        /// Panics if the last command of `rhs` has stdout redirected.
         fn bitor(mut self, rhs: Pipeline) -> Pipeline {
+            if rhs.cmds.last().unwrap().stdout_is_set() {
+                panic!(
+                    "stdout of the last command is already redirected; \
+                     use Pipeline::stdout() to redirect pipeline output"
+                );
+            }
             self.cmds.extend(rhs.cmds);
             self.stdout = rhs.stdout;
             self

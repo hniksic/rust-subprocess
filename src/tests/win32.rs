@@ -8,7 +8,11 @@ fn setup_executable() {
     // argv[0] is passed to the process. We run PowerShell with executable override,
     // and have it print its argv[0] which should be "foobar", not "powershell".
     let mut p = Popen::create(
-        &["foobar", "-Command", "[Environment]::GetCommandLineArgs()[0]"],
+        &[
+            "foobar",
+            "-Command",
+            "[Environment]::GetCommandLineArgs()[0]",
+        ],
         PopenConfig {
             executable: Some(OsStr::new("powershell.exe").to_owned()),
             stdout: Redirection::Pipe,

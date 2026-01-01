@@ -3,7 +3,7 @@ use std::fs::File;
 use std::sync::Mutex;
 use std::{borrow::Cow, time::Duration};
 
-use std::io::{prelude::*, ErrorKind};
+use std::io::{ErrorKind, prelude::*};
 use std::sync::MutexGuard;
 
 use crate::{Exec, ExitStatus, NullFile, Redirection};
@@ -254,6 +254,20 @@ fn pipeline_invalid_1() {
 fn pipeline_invalid_2() {
     let p = (Exec::cmd("no-such-command") | Exec::cmd("echo").arg("foo")).join();
     assert!(p.is_err());
+}
+
+#[test]
+#[should_panic(expected = "stdin of the first command is already redirected")]
+fn pipeline_rejects_first_cmd_stdin() {
+    let first = Exec::cmd("cat").stdin(Redirection::Pipe);
+    let _pipeline = first | Exec::cmd("wc");
+}
+
+#[test]
+#[should_panic(expected = "stdout of the last command is already redirected")]
+fn pipeline_rejects_last_cmd_stdout() {
+    let last = Exec::cmd("wc").stdout(NullFile);
+    let _pipeline = Exec::cmd("echo") | last;
 }
 
 #[test]
