@@ -337,9 +337,11 @@ impl Drop for TmpEnvVar<'_> {
 }
 
 fn tmp_env_var<'a>(varname: &'static str, tmp_value: &'static str) -> TmpEnvVar<'a> {
+    // Acquire the lock first to avoid race with other tests that modify env vars
+    let guard = TmpEnvVar::new(varname);
     // SAFETY: We hold a mutex guard that serializes all env var modifications in tests
     unsafe { env::set_var(varname, tmp_value) };
-    TmpEnvVar::new(varname)
+    guard
 }
 
 #[test]
