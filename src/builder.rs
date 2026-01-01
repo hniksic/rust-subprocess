@@ -277,7 +277,7 @@ mod exec {
         ///   for stdin, making sure that `capture` feeds that data into the
         ///   standard input of the subprocess;
         /// * [`NullFile`], which will redirect the standard input to read from
-        ///    `/dev/null`.
+        ///   `/dev/null`.
         ///
         /// [`Redirection`]: enum.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
@@ -303,7 +303,7 @@ mod exec {
         /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
         /// * [`NullFile`], which will redirect the standard output to go to
-        ///    `/dev/null`.
+        ///   `/dev/null`.
         ///
         /// [`Redirection`]: enum.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
@@ -323,7 +323,7 @@ mod exec {
         /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
         /// * [`NullFile`], which will redirect the standard error to go to
-        ///    `/dev/null`.
+        ///   `/dev/null`.
         ///
         /// [`Redirection`]: enum.Redirection.html
         /// [`NullFile`]: struct.NullFile.html
@@ -862,7 +862,7 @@ mod pipeline {
         ///   for stdin, making sure that `capture` feeds that data into the
         ///   standard input of the subprocess.
         /// * `NullFile`, which will redirect the standard input to read from
-        ///    /dev/null.
+        ///   /dev/null.
         ///
         /// [`Redirection`]: enum.Redirection.html
         pub fn stdin(mut self, stdin: impl Into<InputRedirection>) -> Pipeline {
@@ -884,7 +884,7 @@ mod pipeline {
         /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
         /// * `NullFile`, which will redirect the standard output to write to
-        ///    /dev/null.
+        ///   /dev/null.
         ///
         /// [`Redirection`]: enum.Redirection.html
         pub fn stdout(mut self, stdout: impl Into<OutputRedirection>) -> Pipeline {

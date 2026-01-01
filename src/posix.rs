@@ -217,10 +217,10 @@ pub fn prep_exec(
         None
     };
 
-    let search_path = if !cmd.as_bytes().iter().any(|&b| b == b'/') {
+    let search_path = if !cmd.as_bytes().contains(&b'/') {
         env::var_os("PATH")
             // treat empty path as non-existent
-            .and_then(|p| if p.len() == 0 { None } else { Some(p) })
+            .and_then(|p| if p.is_empty() { None } else { Some(p) })
     } else {
         None
     };
