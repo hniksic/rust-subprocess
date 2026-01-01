@@ -714,10 +714,18 @@ mod os {
             }
             drop(exec_fail_pipe.1);
             let mut error_buf = [0u8; 4];
-            let read_cnt = exec_fail_pipe.0.read(&mut error_buf)?;
-            if read_cnt == 0 {
+            // Loop to handle short reads - POSIX allows read() to return fewer bytes
+            let mut total_read = 0;
+            while total_read < 4 {
+                let read_cnt = exec_fail_pipe.0.read(&mut error_buf[total_read..])?;
+                if read_cnt == 0 {
+                    break; // EOF
+                }
+                total_read += read_cnt;
+            }
+            if total_read == 0 {
                 Ok(())
-            } else if read_cnt == 4 {
+            } else if total_read == 4 {
                 let error_code: u32 = error_buf[0] as u32
                     | (error_buf[1] as u32) << 8
                     | (error_buf[2] as u32) << 16
@@ -726,7 +734,7 @@ mod os {
                     error_code as i32,
                 )))
             } else {
-                Err(PopenError::LogicError("invalid read_count from exec pipe"))
+                Err(PopenError::LogicError("incomplete error code from exec pipe"))
             }
         }
 
