@@ -198,7 +198,7 @@ pub fn WaitForSingleObject(handle: &Handle, mut timeout: Option<Duration>) -> Re
     } else if result == WAIT_FAILED {
         Err(Error::last_os_error())
     } else {
-        panic!(format!("WaitForSingleObject returned {}", result));
+        panic!("WaitForSingleObject returned {}", result);
     }
 }
 
