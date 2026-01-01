@@ -834,11 +834,13 @@ mod os {
             }
             posix::reset_sigpipe()?;
 
-            if let Some(uid) = setuid {
-                posix::setuid(uid)?;
-            }
+            // setgid must come before setuid: once we drop privileges with setuid,
+            // we may no longer have permission to call setgid
             if let Some(gid) = setgid {
                 posix::setgid(gid)?;
+            }
+            if let Some(uid) = setuid {
+                posix::setuid(uid)?;
             }
             if setpgid {
                 posix::setpgid(0, 0)?;
