@@ -817,20 +817,20 @@ mod os {
             }
 
             let (stdin, stdout, stderr) = child_ends;
-            if let Some(stdin) = stdin {
-                if stdin.as_raw_fd() != 0 {
-                    posix::dup2(stdin.as_raw_fd(), 0)?;
-                }
+            if let Some(stdin) = stdin
+                && stdin.as_raw_fd() != 0
+            {
+                posix::dup2(stdin.as_raw_fd(), 0)?;
             }
-            if let Some(stdout) = stdout {
-                if stdout.as_raw_fd() != 1 {
-                    posix::dup2(stdout.as_raw_fd(), 1)?;
-                }
+            if let Some(stdout) = stdout
+                && stdout.as_raw_fd() != 1
+            {
+                posix::dup2(stdout.as_raw_fd(), 1)?;
             }
-            if let Some(stderr) = stderr {
-                if stderr.as_raw_fd() != 2 {
-                    posix::dup2(stderr.as_raw_fd(), 2)?;
-                }
+            if let Some(stderr) = stderr
+                && stderr.as_raw_fd() != 2
+            {
+                posix::dup2(stderr.as_raw_fd(), 2)?;
             }
             posix::reset_sigpipe()?;
 
@@ -853,15 +853,15 @@ mod os {
                 Running { pid, .. } => {
                     match posix::waitpid(pid, if block { 0 } else { posix::WNOHANG }) {
                         Err(e) => {
-                            if let Some(errno) = e.raw_os_error() {
-                                if errno == posix::ECHILD {
-                                    // Someone else has waited for the child
-                                    // (another thread, a signal handler...).
-                                    // The PID no longer exists and we cannot
-                                    // find its exit status.
-                                    self.child_state = Finished(ExitStatus::Undetermined);
-                                    return Ok(());
-                                }
+                            if let Some(errno) = e.raw_os_error()
+                                && errno == posix::ECHILD
+                            {
+                                // Someone else has waited for the child
+                                // (another thread, a signal handler...).
+                                // The PID no longer exists and we cannot
+                                // find its exit status.
+                                self.child_state = Finished(ExitStatus::Undetermined);
+                                return Ok(());
                             }
                             return Err(e);
                         }

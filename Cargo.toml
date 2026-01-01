@@ -11,7 +11,7 @@ description = """
 Execution of child processes and pipelines, inspired by Python's subprocess
 module, with Rust-specific extensions.
 """
-edition = "2018"
+edition = "2024"
 
 [dependencies]
 libc = "0.2.78"

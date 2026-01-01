@@ -32,7 +32,7 @@ pub fn pipe() -> Result<(File, File)> {
 
 // marked unsafe because the child must not allocate before exec-ing
 pub unsafe fn fork() -> Result<Option<u32>> {
-    let pid = check_err(libc::fork())?;
+    let pid = check_err(unsafe { libc::fork() })?;
     if pid == 0 {
         Ok(None) // child
     } else {

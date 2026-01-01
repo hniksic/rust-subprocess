@@ -288,22 +288,26 @@ fn reject_input_data_stream_stdin() {
 
 #[test]
 fn env_set() {
-    assert!(Exec::cmd("sh")
-        .args(&["-c", r#"test "$SOMEVAR" = "foo""#])
-        .env("SOMEVAR", "foo")
-        .join()
-        .unwrap()
-        .success());
+    assert!(
+        Exec::cmd("sh")
+            .args(&["-c", r#"test "$SOMEVAR" = "foo""#])
+            .env("SOMEVAR", "foo")
+            .join()
+            .unwrap()
+            .success()
+    );
 }
 
 #[test]
 fn env_extend() {
-    assert!(Exec::cmd("sh")
-        .args(&["-c", r#"test "$VAR1" = "foo" && test "$VAR2" = "bar""#])
-        .env_extend(&[("VAR1", "foo"), ("VAR2", "bar")])
-        .join()
-        .unwrap()
-        .success());
+    assert!(
+        Exec::cmd("sh")
+            .args(&["-c", r#"test "$VAR1" = "foo" && test "$VAR2" = "bar""#])
+            .env_extend(&[("VAR1", "foo"), ("VAR2", "bar")])
+            .join()
+            .unwrap()
+            .success()
+    );
 }
 
 lazy_static! {
@@ -327,12 +331,14 @@ impl<'a> TmpEnvVar<'a> {
 
 impl Drop for TmpEnvVar<'_> {
     fn drop(&mut self) {
-        env::remove_var(self.varname);
+        // SAFETY: We hold a mutex guard that serializes all env var modifications in tests
+        unsafe { env::remove_var(self.varname) };
     }
 }
 
 fn tmp_env_var<'a>(varname: &'static str, tmp_value: &'static str) -> TmpEnvVar<'a> {
-    env::set_var(varname, tmp_value);
+    // SAFETY: We hold a mutex guard that serializes all env var modifications in tests
+    unsafe { env::set_var(varname, tmp_value) };
     TmpEnvVar::new(varname)
 }
 
@@ -341,11 +347,13 @@ fn env_inherit() {
     // use a unique name to avoid interference with other tests
     let varname = "TEST_ENV_INHERIT_VARNAME";
     let _guard = tmp_env_var(varname, "inherited");
-    assert!(Exec::cmd("sh")
-        .args(&["-c", &format!(r#"test "${}" = "inherited""#, varname)])
-        .join()
-        .unwrap()
-        .success());
+    assert!(
+        Exec::cmd("sh")
+            .args(&["-c", &format!(r#"test "${}" = "inherited""#, varname)])
+            .join()
+            .unwrap()
+            .success()
+    );
 }
 
 #[test]
@@ -353,12 +361,14 @@ fn env_inherit_set() {
     // use a unique name to avoid interference with other tests
     let varname = "TEST_ENV_INHERIT_SET_VARNAME";
     let _guard = tmp_env_var(varname, "inherited");
-    assert!(Exec::cmd("sh")
-        .args(&["-c", &format!(r#"test "${}" = "new""#, varname)])
-        .env(varname, "new")
-        .join()
-        .unwrap()
-        .success());
+    assert!(
+        Exec::cmd("sh")
+            .args(&["-c", &format!(r#"test "${}" = "new""#, varname)])
+            .env(varname, "new")
+            .join()
+            .unwrap()
+            .success()
+    );
 }
 
 // XXX move tests under the builder module so we can call

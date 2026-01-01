@@ -128,10 +128,10 @@ mod raw {
             let mut stderr_ref = self.stderr.as_ref();
 
             loop {
-                if let Some(size_limit) = size_limit {
-                    if outvec.len() + errvec.len() >= size_limit {
-                        break;
-                    }
+                if let Some(size_limit) = size_limit
+                    && outvec.len() + errvec.len() >= size_limit
+                {
+                    break;
                 }
 
                 if let (None, None, None) = (self.stdin.as_ref(), stdout_ref, stderr_ref) {

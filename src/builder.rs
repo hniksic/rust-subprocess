@@ -30,8 +30,8 @@ mod exec {
     use crate::os_common::ExitStatus;
     use crate::popen::{Popen, PopenConfig, Redirection, Result as PopenResult};
 
-    use super::os::*;
     use super::Pipeline;
+    use super::os::*;
 
     /// A builder for [`Popen`] instances, providing control and convenience methods.
     ///

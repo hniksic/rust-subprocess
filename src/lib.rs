@@ -87,7 +87,7 @@ pub use builder::ExecExt;
 pub use builder::{CaptureData, Exec, NullFile, Pipeline};
 pub use communicate::{CommunicateError, Communicator};
 pub use os_common::ExitStatus;
-pub use popen::{make_pipe, Popen, PopenConfig, PopenError, Redirection, Result};
+pub use popen::{Popen, PopenConfig, PopenError, Redirection, Result, make_pipe};
 
 /// Subprocess extensions for Unix platforms.
 pub mod unix {
