@@ -1,7 +1,25 @@
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 use crate::unix::PopenExt;
 use crate::{ExitStatus, Popen, PopenConfig, Redirection};
+
+#[test]
+fn setup_executable() {
+    // Test that PopenConfig::executable overrides the actual executable while
+    // argv[0] is passed to the process. We run sh with executable override,
+    // and have it print $0 which should be "foobar", not "sh".
+    let mut p = Popen::create(
+        &["foobar", "-c", r#"printf %s "$0""#],
+        PopenConfig {
+            executable: Some(OsStr::new("sh").to_owned()),
+            stdout: Redirection::Pipe,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (out, _err) = p.communicate(None).unwrap();
+    assert_eq!(out.unwrap(), "foobar");
+}
 
 #[test]
 fn err_terminate() {

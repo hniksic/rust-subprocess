@@ -1,6 +1,6 @@
 use tempfile::TempDir;
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::Write;
 use std::io::{self, Read};
@@ -455,20 +455,6 @@ fn wait_timeout() {
     // machine that takes too long to start sleep(1).
     let ret = p.wait_timeout(Duration::from_millis(900)).unwrap();
     assert_eq!(ret, Some(ExitStatus::Exited(0)));
-}
-
-#[test]
-fn setup_executable() {
-    let mut p = Popen::create(
-        &["foobar", "-c", r#"printf %s "$0""#],
-        PopenConfig {
-            executable: Some(OsStr::new("sh").to_owned()),
-            stdout: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    assert_eq!(read_whole_file(p.stdout.take().unwrap()), "foobar");
 }
 
 #[test]
