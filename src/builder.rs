@@ -779,7 +779,7 @@ mod pipeline {
         /// created dynamically.
         ///
         /// Example:
-        /// ```
+        /// ```no_run
         /// use subprocess::Exec;
         ///
         /// let commands = vec![
