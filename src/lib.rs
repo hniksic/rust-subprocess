@@ -94,6 +94,12 @@ pub mod unix {
     pub use super::popen::os_ext::*;
 }
 
+/// Subprocess extensions for Windows platforms.
+#[cfg(windows)]
+pub mod windows {
+    pub use super::builder::windows::*;
+}
+
 #[cfg(test)]
 mod tests {
     mod builder;
