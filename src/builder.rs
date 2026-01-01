@@ -496,7 +496,7 @@ mod exec {
                 command: self.command.clone(),
                 args: self.args.clone(),
                 config: self.config.try_clone().unwrap(),
-                stdin_data: self.stdin_data.as_ref().cloned(),
+                stdin_data: self.stdin_data.clone(),
             }
         }
     }
