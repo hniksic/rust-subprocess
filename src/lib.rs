@@ -1,27 +1,23 @@
 //! Execution of and interaction with external processes and pipelines.
 //!
-//! The entry points to the crate are the [`Popen`] struct and the [`Exec`]
-//! builder.  `Popen` is the interface to a running child process, inspired by
-//! Python's [`subprocess.Popen`].  `Exec` provides a builder-pattern API with
-//! convenient methods for streaming and capturing of output, as well as
-//! combining `Popen` instances into pipelines.
+//! The entry points to the crate are the [`Popen`] struct and the [`Exec`] builder.  `Popen`
+//! is the interface to a running child process, inspired by Python's [`subprocess.Popen`].
+//! `Exec` provides a builder-pattern API with convenient methods for streaming and capturing
+//! of output, as well as combining `Popen` instances into pipelines.
 //!
-//! Compared to `std::process`, the module follows the following
-//! additional features:
+//! Compared to `std::process`, the module follows the following additional features:
 //!
-//! * The *communicate* [family of methods] for deadlock-free capturing of
-//!   subprocess output/error, while simultaneously feeding data to its
-//!   standard input.  Capturing supports optional timeout and read size
-//!   limit.
+//! * The *communicate* [family of methods] for deadlock-free capturing of subprocess
+//!   output/error, while simultaneously feeding data to its standard input.  Capturing
+//!   supports optional timeout and read size limit.
 //!
 //! * Connecting multiple commands into OS-level [pipelines].
 //!
-//! * Flexible [redirection options], such as connecting standard
-//!   streams to arbitary [open files], or [merging] output streams
-//!   like shell's `2>&1` and `1>&2` operators.
+//! * Flexible [redirection options], such as connecting standard streams to arbitary [open
+//!   files], or [merging] output streams like shell's `2>&1` and `1>&2` operators.
 //!
-//! * Non-blocking and timeout methods to wait on the process:
-//!   [`poll`], [`wait`], and [`wait_timeout`].
+//! * Non-blocking and timeout methods to wait on the process: [`poll`], [`wait`], and
+//!   [`wait_timeout`].
 //!
 //! # Examples
 //!
@@ -47,8 +43,7 @@
 //! # }
 //! ```
 //!
-//! Use the [`Exec`] builder to execute a pipeline of commands and
-//! capture the output:
+//! Use the [`Exec`] builder to execute a pipeline of commands and capture the output:
 //!
 //! ```no_run
 //! # use subprocess::*;

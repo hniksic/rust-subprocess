@@ -20,23 +20,20 @@ pub use os::make_pipe;
 
 /// Interface to a running subprocess.
 ///
-/// `Popen` is the parent's interface to a created subprocess.  The
-/// child process is started in the constructor, so owning a `Popen`
-/// value indicates that the specified program has been successfully
-/// launched.  To prevent accumulation of zombie processes, the child
-/// is waited upon when a `Popen` goes out of scope, which can be
-/// prevented using the [`detach`] method.
+/// `Popen` is the parent's interface to a created subprocess.  The child process is started
+/// in the constructor, so owning a `Popen` value indicates that the specified program has
+/// been successfully launched.  To prevent accumulation of zombie processes, the child is
+/// waited upon when a `Popen` goes out of scope, which can be prevented using the [`detach`]
+/// method.
 ///
-/// Depending on how the subprocess was configured, its input, output, and
-/// error streams can be connected to the parent and available as [`stdin`],
-/// [`stdout`], and [`stderr`] public fields.  If you need to read the output
-/// and errors into memory (or provide input as a memory slice), use the
-/// [`communicate`] family of methods.
+/// Depending on how the subprocess was configured, its input, output, and error streams can
+/// be connected to the parent and available as [`stdin`], [`stdout`], and [`stderr`] public
+/// fields.  If you need to read the output and errors into memory (or provide input as a
+/// memory slice), use the [`communicate`] family of methods.
 ///
-/// `Popen` instances can be obtained with the [`create`] method, or
-/// using the [`popen`] method of the [`Exec`] type.  Subprocesses
-/// can be connected into pipes, most easily achieved using using
-/// [`Exec`].
+/// `Popen` instances can be obtained with the [`create`] method, or using the [`popen`]
+/// method of the [`Exec`] type.  Subprocesses can be connected into pipes, most easily
+/// achieved using using [`Exec`].
 ///
 /// [`Exec`]: struct.Exec.html
 /// [`popen`]: struct.Exec.html#method.popen
@@ -49,19 +46,16 @@ pub use os::make_pipe;
 
 #[derive(Debug)]
 pub struct Popen {
-    /// If `stdin` was specified as `Redirection::Pipe`, this will
-    /// contain a writeble `File` connected to the standard input of
-    /// the child process.
+    /// If `stdin` was specified as `Redirection::Pipe`, this will contain a writable `File`
+    /// connected to the standard input of the child process.
     pub stdin: Option<File>,
 
-    /// If `stdout` was specified as `Redirection::Pipe`, this will
-    /// contain a readable `File` connected to the standard output of
-    /// the child process.
+    /// If `stdout` was specified as `Redirection::Pipe`, this will contain a readable `File`
+    /// connected to the standard output of the child process.
     pub stdout: Option<File>,
 
-    /// If `stderr` was specified as `Redirection::Pipe`, this will
-    /// contain a readable `File` connected to the standard error of
-    /// the child process.
+    /// If `stderr` was specified as `Redirection::Pipe`, this will contain a readable `File`
+    /// connected to the standard error of the child process.
     pub stderr: Option<File>,
 
     child_state: ChildState,
@@ -81,8 +75,7 @@ enum ChildState {
 
 /// Options for [`Popen::create`].
 ///
-/// When constructing `PopenConfig`, always use the [`Default`] trait,
-/// such as:
+/// When constructing `PopenConfig`, always use the [`Default`] trait, such as:
 ///
 /// ```
 /// # use subprocess::*;
@@ -98,8 +91,8 @@ enum ChildState {
 ///
 /// This ensures that fields added later do not break existing code.
 ///
-/// An alternative to using `PopenConfig` directly is creating
-/// processes using [`Exec`], a builder for `Popen`.
+/// An alternative to using `PopenConfig` directly is creating processes using [`Exec`], a
+/// builder for `Popen`.
 ///
 /// [`Popen::create`]: struct.Popen.html#method.create
 /// [`Exec`]: struct.Exec.html
@@ -118,20 +111,19 @@ pub struct PopenConfig {
 
     /// Executable to run.
     ///
-    /// If provided, this executable will be used to run the program
-    /// instead of `argv[0]`.  However, `argv[0]` will still be passed
-    /// to the subprocess, which will see that as `argv[0]`.  On some
-    /// Unix systems, `ps` will show the string passed as `argv[0]`,
-    /// even though `executable` is actually running.
+    /// If provided, this executable will be used to run the program instead of `argv[0]`.
+    /// However, `argv[0]` will still be passed to the subprocess, which will see that as
+    /// `argv[0]`.  On some Unix systems, `ps` will show the string passed as `argv[0]`, even
+    /// though `executable` is actually running.
     pub executable: Option<OsString>,
 
     /// Environment variables to pass to the subprocess.
     ///
-    /// If this is None, environment variables are inherited from the calling
-    /// process. Otherwise, the specified variables are used instead.
+    /// If this is None, environment variables are inherited from the calling process.
+    /// Otherwise, the specified variables are used instead.
     ///
-    /// Duplicates are eliminated, with the value taken from the
-    /// variable appearing later in the vector.
+    /// Duplicates are eliminated, with the value taken from the variable appearing later in
+    /// the vector.
     pub env: Option<Vec<(OsString, OsString)>>,
 
     /// Initial current working directory of the subprocess.
@@ -171,10 +163,9 @@ pub struct PopenConfig {
 impl PopenConfig {
     /// Clone the underlying [`PopenConfig`], or return an error.
     ///
-    /// This is guaranteed not to fail as long as no
-    /// [`Redirection::File`] variant is used for one of the standard
-    /// streams.  Otherwise, it fails if `File::try_clone` fails on
-    /// one of the `Redirection`s.
+    /// This is guaranteed not to fail as long as no [`Redirection::File`] variant is used for
+    /// one of the standard streams.  Otherwise, it fails if `File::try_clone` fails on one of
+    /// the `Redirection`s.
     ///
     /// [`PopenConfig`]: struct.PopenConfig.html
     /// [`Redirection::File`]: enum.Redirection.html#variant.File
@@ -229,61 +220,52 @@ impl Default for PopenConfig {
 
 /// Instruction what to do with a stream in the child process.
 ///
-/// `Redirection` values are used for the `stdin`, `stdout`, and
-/// `stderr` field of the `PopenConfig` struct.  They tell
-/// `Popen::create` how to set up the standard streams in the child
-/// process and the corresponding fields of the `Popen` struct in the
-/// parent.
+/// `Redirection` values are used for the `stdin`, `stdout`, and `stderr` field of the
+/// `PopenConfig` struct.  They tell `Popen::create` how to set up the standard streams in the
+/// child process and the corresponding fields of the `Popen` struct in the parent.
 
 #[derive(Debug)]
 pub enum Redirection {
     /// Do nothing with the stream.
     ///
-    /// The stream is typically inherited from the parent.  The field
-    /// in `Popen` corresponding to the stream will be `None`.
+    /// The stream is typically inherited from the parent.  The field in `Popen` corresponding
+    /// to the stream will be `None`.
     None,
 
     /// Redirect the stream to a pipe.
     ///
-    /// This variant requests that a stream be redirected to a
-    /// unidirectional pipe.  One end of the pipe is passed to the
-    /// child process and configured as one of its standard streams,
-    /// and the other end is available to the parent for communicating
-    /// with the child.
+    /// This variant requests that a stream be redirected to a unidirectional pipe.  One end
+    /// of the pipe is passed to the child process and configured as one of its standard
+    /// streams, and the other end is available to the parent for communicating with the
+    /// child.
     ///
-    /// The field with `Popen` corresponding to the stream will be
-    /// `Some(file)`, `File` being the parent's end of the pipe.
+    /// The field with `Popen` corresponding to the stream will be `Some(file)`, `File` being
+    /// the parent's end of the pipe.
     Pipe,
 
     /// Merge the stream to the other output stream.
     ///
-    /// This variant is only valid when configuring redirection of
-    /// standard output and standard error.  Using
-    /// `Redirection::Merge` for `PopenConfig::stderr` requests the
-    /// child's stderr to refer to the same underlying file as the
-    /// child's stdout (which may or may not itself be redirected),
-    /// equivalent to the `2>&1` operator of the Bourne shell.
-    /// Analogously, using `Redirection::Merge` for
-    /// `PopenConfig::stdout` is equivalent to `1>&2` in the shell.
+    /// This variant is only valid when configuring redirection of standard output and
+    /// standard error.  Using `Redirection::Merge` for `PopenConfig::stderr` requests the
+    /// child's stderr to refer to the same underlying file as the child's stdout (which may
+    /// or may not itself be redirected), equivalent to the `2>&1` operator of the Bourne
+    /// shell.  Analogously, using `Redirection::Merge` for `PopenConfig::stdout` is
+    /// equivalent to `1>&2` in the shell.
     ///
-    /// Specifying `Redirection::Merge` for `PopenConfig::stdin` or
-    /// specifying it for both `stdout` and `stderr` is invalid and
-    /// will cause `Popen::create` to return
+    /// Specifying `Redirection::Merge` for `PopenConfig::stdin` or specifying it for both
+    /// `stdout` and `stderr` is invalid and will cause `Popen::create` to return
     /// `Err(PopenError::LogicError)`.
     ///
-    /// The field in `Popen` corresponding to the stream will be
-    /// `None`.
+    /// The field in `Popen` corresponding to the stream will be `None`.
     Merge,
 
     /// Redirect the stream to the specified open `File`.
     ///
-    /// This does not create a pipe, it simply spawns the child so
-    /// that the specified stream sees that file.  The child can read
-    /// from or write to the provided file on its own, without any
-    /// intervention by the parent.
+    /// This does not create a pipe, it simply spawns the child so that the specified stream
+    /// sees that file.  The child can read from or write to the provided file on its own,
+    /// without any intervention by the parent.
     ///
-    /// The field in `Popen` corresponding to the stream will be
-    /// `None`.
+    /// The field in `Popen` corresponding to the stream will be `None`.
     File(File),
 
     /// Like `File`, but the file is specified as `Rc`.
@@ -310,9 +292,8 @@ impl Redirection {
 impl Popen {
     /// Execute an external program in a new process.
     ///
-    /// `argv` is a slice containing the program followed by its
-    /// arguments, such as `&["ps", "x"]`. `config` specifies details
-    /// how to create and interface to the process.
+    /// `argv` is a slice containing the program followed by its arguments, such as
+    /// `&["ps", "x"]`. `config` specifies details how to create and interface to the process.
     ///
     /// For example, this launches the `cargo update` command:
     ///
@@ -326,13 +307,11 @@ impl Popen {
     ///
     /// # Errors
     ///
-    /// If the external program cannot be executed for any reason, an
-    /// error is returned.  The most typical reason for execution to
-    /// fail is that the program is missing on the `PATH`, but other
-    /// errors are also possible.  Note that this is distinct from the
-    /// program running and then exiting with a failure code - this
-    /// can be detected by calling the `wait` method to obtain its
-    /// exit status.
+    /// If the external program cannot be executed for any reason, an error is returned.  The
+    /// most typical reason for execution to fail is that the program is missing on the
+    /// `PATH`, but other errors are also possible.  Note that this is distinct from the
+    /// program running and then exiting with a failure code - this can be detected by calling
+    /// the `wait` method to obtain its exit status.
     pub fn create(argv: &[impl AsRef<OsStr>], config: PopenConfig) -> Result<Popen> {
         if argv.is_empty() {
             return Err(PopenError::LogicError("argv must not be empty"));
@@ -467,21 +446,19 @@ impl Popen {
 
     /// Mark the process as detached.
     ///
-    /// This method has no effect on the OS level, it simply tells
-    /// `Popen` not to wait for the subprocess to finish when going
-    /// out of scope.  If the child process has already finished, or
-    /// if it is guaranteed to finish before `Popen` goes out of
-    /// scope, calling `detach` has no effect.
+    /// This method has no effect on the OS level, it simply tells `Popen` not to wait for the
+    /// subprocess to finish when going out of scope.  If the child process has already
+    /// finished, or if it is guaranteed to finish before `Popen` goes out of scope, calling
+    /// `detach` has no effect.
     pub fn detach(&mut self) {
         self.detached = true;
     }
 
     /// Return the PID of the subprocess, if it is known to be still running.
     ///
-    /// Note that this method won't actually *check* whether the child
-    /// process is still running, it will only return the information
-    /// last set using one of `create`, `wait`, `wait_timeout`, or
-    /// `poll`.  For a newly created `Popen`, `pid()` always returns
+    /// Note that this method won't actually *check* whether the child process is still
+    /// running, it will only return the information last set using one of `create`, `wait`,
+    /// `wait_timeout`, or `poll`.  For a newly created `Popen`, `pid()` always returns
     /// `Some`.
     pub fn pid(&self) -> Option<u32> {
         match self.child_state {
@@ -492,10 +469,9 @@ impl Popen {
 
     /// Return the exit status of the subprocess, if it is known to have finished.
     ///
-    /// Note that this method won't actually *check* whether the child
-    /// process has finished, it only returns the previously available
-    /// information.  To check or wait for the process to finish, call
-    /// `wait`, `wait_timeout`, or `poll`.
+    /// Note that this method won't actually *check* whether the child process has finished,
+    /// it only returns the previously available information.  To check or wait for the
+    /// process to finish, call `wait`, `wait_timeout`, or `poll`.
     pub fn exit_status(&self) -> Option<ExitStatus> {
         match self.child_state {
             Finished(exit_status) => Some(exit_status),
@@ -505,32 +481,27 @@ impl Popen {
 
     /// Prepare to communicate with the subprocess.
     ///
-    /// Communicating refers to unattended data exchange with the subprocess.
-    /// During communication the given `input_data` is written to the
-    /// subprocess's standard input which is then closed, while simultaneously
-    /// its standard output and error streams are read until end-of-file is
-    /// reached.
+    /// Communicating refers to unattended data exchange with the subprocess.  During
+    /// communication the given `input_data` is written to the subprocess's standard input
+    /// which is then closed, while simultaneously its standard output and error streams are
+    /// read until end-of-file is reached.
     ///
-    /// The difference between this and simply writing input data to
-    /// `self.stdin` and then reading output from `self.stdout` and
-    /// `self.stderr` is that the reading and the writing are performed
-    /// simultaneously.  A naive implementation that writes and then reads has
-    /// an issue when the subprocess responds to part of the input by
-    /// providing output.  The output must be read for the subprocess to
-    /// accept further input, but the parent process is still blocked on
-    /// writing the rest of the input daata.  Since neither process can
-    /// proceed, a deadlock occurs.  This is why a correct implementation must
+    /// The difference between this and simply writing input data to `self.stdin` and then
+    /// reading output from `self.stdout` and `self.stderr` is that the reading and the
+    /// writing are performed simultaneously.  A naive implementation that writes and then
+    /// reads has an issue when the subprocess responds to part of the input by providing
+    /// output.  The output must be read for the subprocess to accept further input, but the
+    /// parent process is still blocked on writing the rest of the input data.  Since neither
+    /// process can proceed, a deadlock occurs.  This is why a correct implementation must
     /// write and read at the same time.
     ///
-    /// This method does not perform the actual communication, it just sets it
-    /// up and returns a [`Communicator`].  Call the [`read`] or
-    /// [`read_string`] method on the `Communicator` to exchange data with the
-    /// subprocess.
+    /// This method does not perform the actual communication, it just sets it up and returns
+    /// a [`Communicator`].  Call the [`read`] or [`read_string`] method on the `Communicator`
+    /// to exchange data with the subprocess.
     ///
-    /// Compared to `communicate()` and `communicate_bytes()`, the
-    /// `Communicator` provides more control, such as timeout, read size
-    /// limit, and the ability to retrieve captured output in case of read
-    /// error.
+    /// Compared to `communicate()` and `communicate_bytes()`, the `Communicator` provides
+    /// more control, such as timeout, read size limit, and the ability to retrieve captured
+    /// output in case of read error.
     ///
     /// [`Communicator`]: struct.Communicator.html
     /// [`read`]: struct.Communicator.html#method.read
@@ -546,32 +517,29 @@ impl Popen {
 
     /// Feed the subprocess with input data and capture its output.
     ///
-    /// This will write the provided `input_data` to the subprocess's standard
-    /// input, and simultaneously read its standard output and error.  The
-    /// output and error contents are returned as a pair of `Option<Vec<u8>>`.
-    /// The `None` options correspond to streams not specified as
-    /// `Redirection::Pipe` when creating the subprocess.
+    /// This will write the provided `input_data` to the subprocess's standard input, and
+    /// simultaneously read its standard output and error.  The output and error contents are
+    /// returned as a pair of `Option<Vec<u8>>`.  The `None` options correspond to streams not
+    /// specified as `Redirection::Pipe` when creating the subprocess.
     ///
-    /// This implementation reads and writes simultaneously, avoiding deadlock
-    /// in case the subprocess starts writing output before reading the whole
-    /// input - see [`communicate_start()`] for details.
+    /// This implementation reads and writes simultaneously, avoiding deadlock in case the
+    /// subprocess starts writing output before reading the whole input - see
+    /// [`communicate_start()`] for details.
     ///
-    /// Note that this method does not wait for the subprocess to finish, only
-    /// to close its output/error streams.  It is rare but possible for the
-    /// program to continue running after having closed the streams, in which
-    /// case `Popen::Drop` will wait for it to finish.  If such a wait is
-    /// undesirable, it can be prevented by waiting explicitly using `wait()`,
-    /// by detaching the process using `detach()`, or by terminating it with
+    /// Note that this method does not wait for the subprocess to finish, only to close its
+    /// output/error streams.  It is rare but possible for the program to continue running
+    /// after having closed the streams, in which case `Popen::Drop` will wait for it to
+    /// finish.  If such a wait is undesirable, it can be prevented by waiting explicitly
+    /// using `wait()`, by detaching the process using `detach()`, or by terminating it with
     /// `terminate()`.
     ///
-    /// For additional control over communication, such as timeout and size
-    /// limit, call [`communicate_start()`].
+    /// For additional control over communication, such as timeout and size limit, call
+    /// [`communicate_start()`].
     ///
     /// # Panics
     ///
-    /// If `input_data` is provided and `stdin` was not redirected to a pipe.
-    /// Also, if `input_data` is not provided and `stdin` was redirected to a
-    /// pipe.
+    /// If `input_data` is provided and `stdin` was not redirected to a pipe.  Also, if
+    /// `input_data` is not provided and `stdin` was redirected to a pipe.
     ///
     /// # Errors
     ///
@@ -589,10 +557,9 @@ impl Popen {
 
     /// Feed the subprocess with data and capture its output as string.
     ///
-    /// This is a convenience method equivalent to [`communicate_bytes`], but
-    /// with input as `&str` and output as `String`.  Invalid UTF-8 sequences,
-    /// if found, are replaced with the the `U+FFFD` Unicode replacement
-    /// character.
+    /// This is a convenience method equivalent to [`communicate_bytes`], but with input as
+    /// `&str` and output as `String`.  Invalid UTF-8 sequences, if found, are replaced with
+    /// the `U+FFFD` Unicode replacement character.
     ///
     /// # Panics
     ///
@@ -614,21 +581,18 @@ impl Popen {
 
     /// Check whether the process is still running, without blocking or errors.
     ///
-    /// This checks whether the process is still running and if it
-    /// is still running, `None` is returned, otherwise
-    /// `Some(exit_status)`.  This method is guaranteed not to block
-    /// and is exactly equivalent to
-    /// `wait_timeout(Duration::from_secs(0)).unwrap_or(None)`.
+    /// This checks whether the process is still running and if it is still running, `None` is
+    /// returned, otherwise `Some(exit_status)`.  This method is guaranteed not to block and
+    /// is exactly equivalent to `wait_timeout(Duration::from_secs(0)).unwrap_or(None)`.
     pub fn poll(&mut self) -> Option<ExitStatus> {
         self.wait_timeout(Duration::from_secs(0)).unwrap_or(None)
     }
 
     /// Wait for the process to finish, and return its exit status.
     ///
-    /// If the process has already finished, it will exit immediately,
-    /// returning the exit status.  Calling `wait` after that will
-    /// return the cached exit status without executing any system
-    /// calls.
+    /// If the process has already finished, it will exit immediately, returning the exit
+    /// status.  Calling `wait` after that will return the cached exit status without
+    /// executing any system calls.
     ///
     /// # Errors
     ///
@@ -640,34 +604,32 @@ impl Popen {
 
     /// Wait for the process to finish, timing out after the specified duration.
     ///
-    /// This function behaves like `wait()`, except that the caller
-    /// will be blocked for roughly no longer than `dur`.  It returns
-    /// `Ok(None)` if the timeout is known to have elapsed.
+    /// This function behaves like `wait()`, except that the caller will be blocked for
+    /// roughly no longer than `dur`.  It returns `Ok(None)` if the timeout is known to have
+    /// elapsed.
     ///
-    /// On Unix-like systems, timeout is implemented by calling
-    /// `waitpid(..., WNOHANG)` in a loop with adaptive sleep
-    /// intervals between iterations.
+    /// On Unix-like systems, timeout is implemented by calling `waitpid(..., WNOHANG)` in a
+    /// loop with adaptive sleep intervals between iterations.
     pub fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
         self.os_wait_timeout(dur)
     }
 
     /// Terminate the subprocess.
     ///
-    /// On Unix-like systems, this sends the `SIGTERM` signal to the
-    /// child process, which can be caught by the child in order to
-    /// perform cleanup before exiting.  On Windows, it is equivalent
-    /// to `kill()`.
+    /// On Unix-like systems, this sends the `SIGTERM` signal to the child process, which can
+    /// be caught by the child in order to perform cleanup before exiting.  On Windows, it is
+    /// equivalent to `kill()`.
     pub fn terminate(&mut self) -> io::Result<()> {
         self.os_terminate()
     }
 
     /// Kill the subprocess.
     ///
-    /// On Unix-like systems, this sends the `SIGKILL` signal to the
-    /// child process, which cannot be caught.
+    /// On Unix-like systems, this sends the `SIGKILL` signal to the child process, which
+    /// cannot be caught.
     ///
-    /// On Windows, it invokes [`TerminateProcess`] on the process
-    /// handle with equivalent semantics.
+    /// On Windows, it invokes [`TerminateProcess`] on the process handle with equivalent
+    /// semantics.
     ///
     /// [`TerminateProcess`]: https://msdn.microsoft.com/en-us/library/windows/desktop/ms686714(v=vs.85).aspx
     pub fn kill(&mut self) -> io::Result<()> {
@@ -929,9 +891,8 @@ mod os {
 
     /// Create a pipe.
     ///
-    /// This is a safe wrapper over `libc::pipe` or
-    /// `winapi::um::namedpipeapi::CreatePipe`, depending on the operating
-    /// system.
+    /// This is a safe wrapper over `libc::pipe` or `winapi::um::namedpipeapi::CreatePipe`,
+    /// depending on the operating system.
     pub fn make_pipe() -> io::Result<(File, File)> {
         posix::pipe()
     }
@@ -946,12 +907,10 @@ mod os {
         pub trait PopenExt {
             /// Send the specified signal to the child process.
             ///
-            /// The signal numbers are best obtained from the [`libc`]
-            /// crate.
+            /// The signal numbers are best obtained from the [`libc`] crate.
             ///
-            /// If the child process is known to have finished (due to e.g.
-            /// a previous call to [`wait`] or [`poll`]), this will do
-            /// nothing and return `Ok`.
+            /// If the child process is known to have finished (due to e.g. a previous call to
+            /// [`wait`] or [`poll`]), this will do nothing and return `Ok`.
             ///
             /// [`poll`]: ../struct.Popen.html#method.poll
             /// [`wait`]: ../struct.Popen.html#method.wait
@@ -1158,9 +1117,8 @@ mod os {
 
     /// Create a pipe.
     ///
-    /// This is a safe wrapper over `libc::pipe` or
-    /// `winapi::um::namedpipeapi::CreatePipe`, depending on the operating
-    /// system.
+    /// This is a safe wrapper over `libc::pipe` or `winapi::um::namedpipeapi::CreatePipe`,
+    /// depending on the operating system.
     pub fn make_pipe() -> io::Result<(File, File)> {
         win32::CreatePipe(true)
     }

@@ -418,14 +418,13 @@ use raw::RawCommunicator;
 
 /// Unattended data exchange with the subprocess.
 ///
-/// When a subprocess both expects input and provides output, care must be
-/// taken to avoid deadlock.  The issue arises when the subprocess responds to
-/// part of the input data by providing some output which must be read for the
-/// subprocess to accept further input.  If the parent process is blocked on
-/// writing the input, it cannot read the output and a deadlock occurs.  This
-/// implementation avoids this issue by by reading from and writing to the
-/// subprocess in parallel.  On Unix-like systems this is achieved using
-/// `poll()`, and on Windows using threads.
+/// When a subprocess both expects input and provides output, care must be taken to avoid
+/// deadlock.  The issue arises when the subprocess responds to part of the input data by
+/// providing some output which must be read for the subprocess to accept further input.  If
+/// the parent process is blocked on writing the input, it cannot read the output and a
+/// deadlock occurs.  This implementation avoids this issue by reading from and writing to the
+/// subprocess in parallel.  On Unix-like systems this is achieved using `poll()`, and on
+/// Windows using threads.
 #[must_use]
 #[derive(Debug)]
 pub struct Communicator {
@@ -448,51 +447,45 @@ impl Communicator {
         }
     }
 
-    /// Communicate with the subprocess, return the contents of its standard
-    /// output and error.
+    /// Communicate with the subprocess, return the contents of its standard output and error.
     ///
-    /// This will write input data to the subprocess's standard input and
-    /// simultaneously read its standard output and error.  The output and
-    /// error contents are returned as a pair of `Option<Vec>`.  The `None`
-    /// options correspond to streams not specified as `Redirection::Pipe`
-    /// when creating the subprocess.
+    /// This will write input data to the subprocess's standard input and simultaneously read
+    /// its standard output and error.  The output and error contents are returned as a pair
+    /// of `Option<Vec>`.  The `None` options correspond to streams not specified as
+    /// `Redirection::Pipe` when creating the subprocess.
     ///
     /// By default `read()` will read all data until end-of-file.
     ///
-    /// If `limit_time` has been called, the method will read for no more than
-    /// the specified duration.  In case of timeout, an error of kind
-    /// `io::ErrorKind::TimedOut` is returned.  Communication may be resumed
-    /// after the timeout by calling `read()` again.
+    /// If `limit_time` has been called, the method will read for no more than the specified
+    /// duration.  In case of timeout, an error of kind `io::ErrorKind::TimedOut` is returned.
+    /// Communication may be resumed after the timeout by calling `read()` again.
     ///
-    /// If `limit_size` has been called, it will limit the allocation done by
-    /// this method.  If the subprocess provides more data than the limit
-    /// specifies, `read()` will successfully return as much data as specified
-    /// by the limit.  (It might internally read a bit more from the
-    /// subprocess, but the data will remain available for future reads.)
-    /// Subsequent data can be retrieved by calling `read()` again, which can
-    /// be repeated until `read()` returns all-empty data, which marks EOF.
+    /// If `limit_size` has been called, it will limit the allocation done by this method.  If
+    /// the subprocess provides more data than the limit specifies, `read()` will successfully
+    /// return as much data as specified by the limit.  (It might internally read a bit more
+    /// from the subprocess, but the data will remain available for future reads.)  Subsequent
+    /// data can be retrieved by calling `read()` again, which can be repeated until `read()`
+    /// returns all-empty data, which marks EOF.
     ///
-    /// Note that this method does not wait for the subprocess to finish, only
-    /// to close its output/error streams.  It is rare but possible for the
-    /// program to continue running after having closed the streams, in which
-    /// case `Popen::Drop` will wait for it to finish.  If such a wait is
-    /// undesirable, it can be prevented by waiting explicitly using `wait()`,
-    /// by detaching the process using `detach()`, or by terminating it with
+    /// Note that this method does not wait for the subprocess to finish, only to close its
+    /// output/error streams.  It is rare but possible for the program to continue running
+    /// after having closed the streams, in which case `Popen::Drop` will wait for it to
+    /// finish.  If such a wait is undesirable, it can be prevented by waiting explicitly
+    /// using `wait()`, by detaching the process using `detach()`, or by terminating it with
     /// `terminate()`.
     ///
     /// # Panics
     ///
-    /// If `input_data` is provided and `stdin` was not redirected to a pipe.
-    /// Also, if `input_data` is not provided and `stdin` was redirected to a
-    /// pipe.
+    /// If `input_data` is provided and `stdin` was not redirected to a pipe.  Also, if
+    /// `input_data` is not provided and `stdin` was redirected to a pipe.
     ///
     /// # Errors
     ///
-    /// * `Err(CommunicateError)` if a system call fails.  In case of timeout,
-    ///   the underlying error kind will be `ErrorKind::TimedOut`.
+    /// * `Err(CommunicateError)` if a system call fails.  In case of timeout, the underlying
+    ///   error kind will be `ErrorKind::TimedOut`.
     ///
-    /// Regardless of the nature of the error, the content prior to the error
-    /// can be retrieved using the [`capture`] attribute of the error.
+    /// Regardless of the nature of the error, the content prior to the error can be retrieved
+    /// using the [`capture`] attribute of the error.
     ///
     /// [`capture`]: struct.CommunicateError.html#structfield.capture
     pub fn read(&mut self) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), CommunicateError> {
@@ -505,31 +498,27 @@ impl Communicator {
 
     /// Return the subprocess's output and error contents as strings.
     ///
-    /// Like `read()`, but returns strings instead of byte vectors.  Invalid
-    /// UTF-8 sequences, if found, are replaced with the the `U+FFFD` Unicode
-    /// replacement character.
+    /// Like `read()`, but returns strings instead of byte vectors.  Invalid UTF-8 sequences,
+    /// if found, are replaced with the `U+FFFD` Unicode replacement character.
     pub fn read_string(&mut self) -> Result<(Option<String>, Option<String>), CommunicateError> {
         let (o, e) = self.read()?;
         Ok((o.map(from_utf8_lossy), e.map(from_utf8_lossy)))
     }
 
-    /// Limit the amount of data the next `read()` will read from the
-    /// subprocess.
+    /// Limit the amount of data the next `read()` will read from the subprocess.
     pub fn limit_size(mut self, size: usize) -> Communicator {
         self.size_limit = Some(size);
         self
     }
 
-    /// Limit the amount of time the next `read()` will spend reading from the
-    /// subprocess.
+    /// Limit the amount of time the next `read()` will spend reading from the subprocess.
     pub fn limit_time(mut self, time: Duration) -> Communicator {
         self.time_limit = Some(time);
         self
     }
 }
 
-/// Like String::from_utf8_lossy(), but takes `Vec<u8>` and reuses its storage if
-/// possible.
+/// Like String::from_utf8_lossy(), but takes `Vec<u8>` and reuses its storage if possible.
 fn from_utf8_lossy(v: Vec<u8>) -> String {
     match String::from_utf8(v) {
         Ok(s) => s,
@@ -558,9 +547,8 @@ pub fn communicate(
 
 /// Error during communication.
 ///
-/// It holds the underlying `io::Error` in the `error` field, and also
-/// provides the data captured before the error was encountered in the
-/// `capture` field.
+/// It holds the underlying `io::Error` in the `error` field, and also provides the data
+/// captured before the error was encountered in the `capture` field.
 ///
 /// The error description and cause are taken from the underlying IO error.
 #[derive(Debug)]

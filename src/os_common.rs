@@ -4,28 +4,23 @@
 pub enum ExitStatus {
     /// The process exited with the specified exit code.
     ///
-    /// Note that the exit code is limited to a much smaller range on
-    /// most platforms.
+    /// Note that the exit code is limited to a much smaller range on most platforms.
     Exited(u32),
 
     /// The process exited due to a signal with the specified number.
     ///
-    /// This variant is never created on Windows, where signals of
-    /// Unix kind do not exist.
+    /// This variant is never created on Windows, where signals of Unix kind do not exist.
     Signaled(u8),
 
-    /// The process exit status cannot be described by the preceding
-    /// two variants.
+    /// The process exit status cannot be described by the preceding two variants.
     ///
     /// This should not occur in normal operation.
     Other(i32),
 
-    /// It is known that the process has completed, but its exit
-    /// status is unavailable.
+    /// It is known that the process has completed, but its exit status is unavailable.
     ///
-    /// This should not occur in normal operation, but is possible if
-    /// for example some foreign code calls `waitpid()` on the PID of
-    /// the child process.
+    /// This should not occur in normal operation, but is possible if for example some foreign
+    /// code calls `waitpid()` on the PID of the child process.
     Undetermined,
 }
 

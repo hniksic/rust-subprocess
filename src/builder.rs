@@ -33,12 +33,10 @@ mod exec {
     use super::os::*;
     use super::Pipeline;
 
-    /// A builder for [`Popen`] instances, providing control and
-    /// convenience methods.
+    /// A builder for [`Popen`] instances, providing control and convenience methods.
     ///
-    /// `Exec` provides a builder API for [`Popen::create`], and
-    /// includes convenience methods for capturing the output, and for
-    /// connecting subprocesses into pipelines.
+    /// `Exec` provides a builder API for [`Popen::create`], and includes convenience methods
+    /// for capturing the output, and for connecting subprocesses into pipelines.
     ///
     /// # Examples
     ///
@@ -63,8 +61,7 @@ mod exec {
     /// # }
     /// ```
     ///
-    /// Start a subprocess and obtain its output as a `Read` trait object,
-    /// like C's `popen`:
+    /// Start a subprocess and obtain its output as a `Read` trait object, like C's `popen`:
     ///
     /// ```
     /// # use subprocess::*;
@@ -88,7 +85,7 @@ mod exec {
     /// # }
     /// ```
     ///
-    /// Redirect errors to standard output, and capture both in a single stream:
+    /// Redirect standard error to standard output, and capture both in a single stream:
     ///
     /// ```
     /// # use subprocess::*;
@@ -130,12 +127,11 @@ mod exec {
     impl Exec {
         /// Constructs a new `Exec`, configured to run `command`.
         ///
-        /// The command will be run directly in the OS, without an
-        /// intervening shell.  To run it through a shell, use
-        /// [`Exec::shell`] instead.
+        /// The command will be run directly in the OS, without an intervening shell.  To run
+        /// it through a shell, use [`Exec::shell`] instead.
         ///
-        /// By default, the command will be run without arguments, and
-        /// none of the standard streams will be modified.
+        /// By default, the command will be run without arguments, and none of the standard
+        /// streams will be modified.
         ///
         /// [`Exec::shell`]: struct.Exec.html#method.shell
         pub fn cmd(command: impl AsRef<OsStr>) -> Exec {
@@ -147,24 +143,20 @@ mod exec {
             }
         }
 
-        /// Constructs a new `Exec`, configured to run `cmdstr` with
-        /// the system shell.
+        /// Constructs a new `Exec`, configured to run `cmdstr` with the system shell.
         ///
-        /// `subprocess` never spawns shells without an explicit
-        /// request.  This command requests the shell to be used; on
-        /// Unix-like systems, this is equivalent to
-        /// `Exec::cmd("sh").arg("-c").arg(cmdstr)`.  On Windows, it
-        /// runs `Exec::cmd("cmd.exe").arg("/c")`.
+        /// `subprocess` never spawns shells without an explicit request.  This command
+        /// requests the shell to be used; on Unix-like systems, this is equivalent to
+        /// `Exec::cmd("sh").arg("-c").arg(cmdstr)`.  On Windows, it runs
+        /// `Exec::cmd("cmd.exe").arg("/c")`.
         ///
-        /// `shell` is useful for porting code that uses the C
-        /// `system` function, which also spawns a shell.
+        /// `shell` is useful for porting code that uses the C `system` function, which also
+        /// spawns a shell.
         ///
-        /// When invoking this function, be careful not to interpolate
-        /// arguments into the string run by the shell, such as
-        /// `Exec::shell(format!("sort {}", filename))`.  Such code is
-        /// prone to errors and, if `filename` comes from an untrusted
-        /// source, to shell injection attacks.  Instead, use
-        /// `Exec::cmd("sort").arg(filename)`.
+        /// When invoking this function, be careful not to interpolate arguments into the
+        /// string run by the shell, such as `Exec::shell(format!("sort {}", filename))`.
+        /// Such code is prone to errors and, if `filename` comes from an untrusted source, to
+        /// shell injection attacks.  Instead, use `Exec::cmd("sort").arg(filename)`.
         pub fn shell(cmdstr: impl AsRef<OsStr>) -> Exec {
             Exec::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
         }
@@ -183,9 +175,8 @@ mod exec {
 
         /// Specifies that the process is initially detached.
         ///
-        /// A detached process means that we will not wait for the
-        /// process to finish when the object that owns it goes out of
-        /// scope.
+        /// A detached process means that we will not wait for the process to finish when the
+        /// object that owns it goes out of scope.
         pub fn detached(mut self) -> Exec {
             self.config.detached = true;
             self
@@ -199,8 +190,8 @@ mod exec {
 
         /// Clears the environment of the subprocess.
         ///
-        /// When this is invoked, the subprocess will not inherit the
-        /// environment of this process.
+        /// When this is invoked, the subprocess will not inherit the environment of this
+        /// process.
         pub fn env_clear(mut self) -> Exec {
             self.config.env = Some(vec![]);
             self
@@ -208,12 +199,10 @@ mod exec {
 
         /// Sets an environment variable in the child process.
         ///
-        /// If the same variable is set more than once, the last value
-        /// is used.
+        /// If the same variable is set more than once, the last value is used.
         ///
-        /// Other environment variables are by default inherited from
-        /// the current process.  If this is undesirable, call
-        /// `env_clear` first.
+        /// Other environment variables are by default inherited from the current process.  If
+        /// this is undesirable, call `env_clear` first.
         pub fn env(mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Exec {
             self.ensure_env();
             self.config
@@ -226,13 +215,11 @@ mod exec {
 
         /// Sets multiple environment variables in the child process.
         ///
-        /// The keys and values of the variables are specified by the
-        /// slice.  If the same variable is set more than once, the
-        /// last value is used.
+        /// The keys and values of the variables are specified by the slice.  If the same
+        /// variable is set more than once, the last value is used.
         ///
-        /// Other environment variables are by default inherited from
-        /// the current process.  If this is undesirable, call
-        /// `env_clear` first.
+        /// Other environment variables are by default inherited from the current process.  If
+        /// this is undesirable, call `env_clear` first.
         pub fn env_extend(mut self, vars: &[(impl AsRef<OsStr>, impl AsRef<OsStr>)]) -> Exec {
             self.ensure_env();
             {
@@ -260,8 +247,7 @@ mod exec {
 
         /// Specifies the current working directory of the child process.
         ///
-        /// If unspecified, the current working directory is inherited
-        /// from the parent.
+        /// If unspecified, the current working directory is inherited from the parent.
         pub fn cwd(mut self, dir: impl AsRef<Path>) -> Exec {
             self.config.cwd = Some(dir.as_ref().as_os_str().to_owned());
             self
@@ -352,58 +338,51 @@ mod exec {
             Ok(p)
         }
 
-        /// Starts the process, waits for it to finish, and returns
-        /// the exit status.
+        /// Starts the process, waits for it to finish, and returns the exit status.
         ///
-        /// This method will wait for as long as necessary for the process to
-        /// finish.  If a timeout is needed, use
-        /// `<...>.detached().popen()?.wait_timeout(...)` instead.
+        /// This method will wait for as long as necessary for the process to finish.  If a
+        /// timeout is needed, use `<...>.detached().popen()?.wait_timeout(...)` instead.
         pub fn join(self) -> PopenResult<ExitStatus> {
             self.check_no_stdin_data("join");
             self.popen()?.wait()
         }
 
-        /// Starts the process and returns a value implementing the `Read`
-        /// trait that reads from the standard output of the child process.
+        /// Starts the process and returns a value implementing the `Read` trait that reads from
+        /// the standard output of the child process.
         ///
-        /// This will automatically set up
-        /// `stdout(Redirection::Pipe)`, so it is not necessary to do
-        /// that beforehand.
+        /// This will automatically set up `stdout(Redirection::Pipe)`, so it is not necessary
+        /// to do that beforehand.
         ///
-        /// When the trait object is dropped, it will wait for the
-        /// process to finish.  If this is undesirable, use
-        /// `detached()`.
+        /// When the trait object is dropped, it will wait for the process to finish.  If this
+        /// is undesirable, use `detached()`.
         pub fn stream_stdout(self) -> PopenResult<impl Read> {
             self.check_no_stdin_data("stream_stdout");
             let p = self.stdout(Redirection::Pipe).popen()?;
             Ok(ReadOutAdapter(p))
         }
 
-        /// Starts the process and returns a value implementing the `Read`
-        /// trait that reads from the standard error of the child process.
+        /// Starts the process and returns a value implementing the `Read` trait that reads from
+        /// the standard error of the child process.
         ///
-        /// This will automatically set up
-        /// `stderr(Redirection::Pipe)`, so it is not necessary to do
-        /// that beforehand.
+        /// This will automatically set up `stderr(Redirection::Pipe)`, so it is not necessary
+        /// to do that beforehand.
         ///
-        /// When the trait object is dropped, it will wait for the
-        /// process to finish.  If this is undesirable, use
-        /// `detached()`.
+        /// When the trait object is dropped, it will wait for the process to finish.  If this
+        /// is undesirable, use `detached()`.
         pub fn stream_stderr(self) -> PopenResult<impl Read> {
             self.check_no_stdin_data("stream_stderr");
             let p = self.stderr(Redirection::Pipe).popen()?;
             Ok(ReadErrAdapter(p))
         }
 
-        /// Starts the process and returns a value implementing the `Write`
-        /// trait that writes to the standard input of the child process.
+        /// Starts the process and returns a value implementing the `Write` trait that writes to
+        /// the standard input of the child process.
         ///
-        /// This will automatically set up `stdin(Redirection::Pipe)`,
-        /// so it is not necessary to do that beforehand.
+        /// This will automatically set up `stdin(Redirection::Pipe)`, so it is not necessary
+        /// to do that beforehand.
         ///
-        /// When the trait object is dropped, it will wait for the
-        /// process to finish.  If this is undesirable, use
-        /// `detached()`.
+        /// When the trait object is dropped, it will wait for the process to finish.  If this
+        /// is undesirable, use `detached()`.
         pub fn stream_stdin(self) -> PopenResult<impl Write> {
             self.check_no_stdin_data("stream_stdin");
             let p = self.stdin(Redirection::Pipe).popen()?;
@@ -424,12 +403,12 @@ mod exec {
 
         /// Starts the process and returns a `Communicator` handle.
         ///
-        /// This is a lower-level API that offers more choice in how
-        /// communication is performed, such as read size limit and timeout,
-        /// equivalent to [`Popen::communicate`].
+        /// This is a lower-level API that offers more choice in how communication is
+        /// performed, such as read size limit and timeout, equivalent to
+        /// [`Popen::communicate`].
         ///
-        /// Unlike `capture()`, this method doesn't wait for the process to
-        /// finish, effectively detaching it.
+        /// Unlike `capture()`, this method doesn't wait for the process to finish, effectively
+        /// detaching it.
         ///
         /// [`Popen::communicate`]: struct.Popen.html#method.communicate
         pub fn communicate(self) -> PopenResult<Communicator> {
@@ -437,17 +416,14 @@ mod exec {
             Ok(comm)
         }
 
-        /// Starts the process, collects its output, and waits for it
-        /// to finish.
+        /// Starts the process, collects its output, and waits for it to finish.
         ///
-        /// The return value provides the standard output and standard
-        /// error as bytes or optionally strings, as well as the exit
-        /// status.
+        /// The return value provides the standard output and standard error as bytes or
+        /// optionally strings, as well as the exit status.
         ///
-        /// Unlike `Popen::communicate`, this method actually waits
-        /// for the process to finish, rather than simply waiting for
-        /// its standard streams to close.  If this is undesirable,
-        /// use `detached()`.
+        /// Unlike `Popen::communicate`, this method actually waits for the process to finish,
+        /// rather than simply waiting for its standard streams to close.  If this is
+        /// undesirable, use `detached()`.
         pub fn capture(self) -> PopenResult<CaptureData> {
             let (mut comm, mut p) = self.setup_communicate()?;
             let (maybe_out, maybe_err) = comm.read()?;
@@ -510,12 +486,11 @@ mod exec {
     impl Clone for Exec {
         /// Returns a copy of the value.
         ///
-        /// This method is guaranteed not to fail as long as none of
-        /// the `Redirection` values contain a `Redirection::File`
-        /// variant.  If a redirection to `File` is present, cloning
-        /// that field will use `File::try_clone` method, which
-        /// duplicates a file descriptor and can (but is not likely
-        /// to) fail.  In that scenario, `Exec::clone` panics.
+        /// This method is guaranteed not to fail as long as none of the `Redirection` values
+        /// contain a `Redirection::File` variant.  If a redirection to `File` is present,
+        /// cloning that field will use `File::try_clone` method, which duplicates a file
+        /// descriptor and can (but is not likely to) fail.  In that scenario, `Exec::clone`
+        /// panics.
         fn clone(&self) -> Exec {
             Exec {
                 command: self.command.clone(),
@@ -637,11 +612,11 @@ mod exec {
         }
     }
 
-    /// Marker value for [`stdin`], [`stdout`], and [`stderr`] methods
-    /// of [`Exec`] and [`Pipeline`].
+    /// Marker value for [`stdin`], [`stdout`], and [`stderr`] methods of [`Exec`] and
+    /// [`Pipeline`].
     ///
-    /// Use of this value means that the corresponding stream should
-    /// be redirected to the devnull device.
+    /// Use of this value means that the corresponding stream should be redirected to the
+    /// devnull device.
     ///
     /// [`stdin`]: struct.Exec.html#method.stdin
     /// [`stdout`]: struct.Exec.html#method.stdout
@@ -702,8 +677,8 @@ mod exec {
     pub mod unix {
         use super::Exec;
 
-        /// trait allowing for custom implementations of `setuid` and `setgid` behaviors on unix
-        /// which handle file system permissions (owner or group respectively)
+        /// Trait allowing for custom implementations of `setuid` and `setgid` behaviors on Unix
+        /// which handle file system permissions (owner or group respectively).
         pub trait ExecExt {
             /// sets the access right flag, similar to unix setuid
             fn setuid(self, uid: u32) -> Self;
@@ -738,19 +713,16 @@ mod pipeline {
 
     use super::exec::{CaptureData, Exec, InputRedirection, OutputRedirection};
 
-    /// A builder for multiple [`Popen`] instances connected via
-    /// pipes.
+    /// A builder for multiple [`Popen`] instances connected via pipes.
     ///
-    /// A pipeline is a sequence of two or more [`Exec`] commands
-    /// connected via pipes.  Just like in a Unix shell pipeline, each
-    /// command receives standard input from the previous command, and
-    /// passes standard output to the next command.  Optionally, the
-    /// standard input of the first command can be provided from the
-    /// outside, and the output of the last command can be captured.
+    /// A pipeline is a sequence of two or more [`Exec`] commands connected via pipes.  Just
+    /// like in a Unix shell pipeline, each command receives standard input from the previous
+    /// command, and passes standard output to the next command.  Optionally, the standard
+    /// input of the first command can be provided from the outside, and the output of the
+    /// last command can be captured.
     ///
-    /// In most cases you do not need to create [`Pipeline`] instances
-    /// directly; instead, combine [`Exec`] instances using the `|`
-    /// operator which produces `Pipeline`.
+    /// In most cases you do not need to create [`Pipeline`] instances directly; instead,
+    /// combine [`Exec`] instances using the `|` operator which produces `Pipeline`.
     ///
     /// # Examples
     ///
@@ -803,8 +775,8 @@ mod pipeline {
             }
         }
 
-        /// Creates a new pipeline from a list of commands. Useful if
-        /// a pipeline should be created dynamically.
+        /// Creates a new pipeline from a list of commands.  Useful if a pipeline should be
+        /// created dynamically.
         ///
         /// Example:
         /// ```
@@ -851,8 +823,7 @@ mod pipeline {
             }
         }
 
-        /// Specifies how to set up the standard input of the first
-        /// command in the pipeline.
+        /// Specifies how to set up the standard input of the first command in the pipeline.
         ///
         /// Argument can be:
         ///
@@ -876,8 +847,7 @@ mod pipeline {
             self
         }
 
-        /// Specifies how to set up the standard output of the last
-        /// command in the pipeline.
+        /// Specifies how to set up the standard output of the last command in the pipeline.
         ///
         /// Argument can be:
         ///
@@ -892,17 +862,16 @@ mod pipeline {
             self
         }
 
-        /// Specifies a file to which to redirect the standard error of all
-        /// the commands in the pipeline.
+        /// Specifies a file to which to redirect the standard error of all the commands in the
+        /// pipeline.
         ///
-        /// It is useful for capturing the standard error of the pipeline as a
-        /// whole.  Unlike `stdout()`, which only affects the last command in
-        /// the pipeline, this affects all commands.  The difference is
-        /// because standard output is piped from one command to the next, so
-        /// only the output of the last command is "free".  In contrast, the
-        /// standard errors are not connected in any way.  This is also the
-        /// reason only a `File` is supported - it allows for efficient
-        /// sharing of the same file by all commands.
+        /// It is useful for capturing the standard error of the pipeline as a whole.  Unlike
+        /// `stdout()`, which only affects the last command in the pipeline, this affects all
+        /// commands.  The difference is because standard output is piped from one command to
+        /// the next, so only the output of the last command is "free".  In contrast, the
+        /// standard errors are not connected in any way.  This is also the reason only a
+        /// `File` is supported - it allows for efficient sharing of the same file by all
+        /// commands.
         pub fn stderr_to(mut self, to: File) -> Pipeline {
             self.stderr_file = Some(to);
             self
@@ -916,16 +885,14 @@ mod pipeline {
 
         // Terminators:
 
-        /// Starts all commands in the pipeline, and returns a
-        /// `Vec<Popen>` whose members correspond to running commands.
+        /// Starts all commands in the pipeline, and returns a `Vec<Popen>` whose members
+        /// correspond to running commands.
         ///
-        /// If some command fails to start, the remaining commands
-        /// will not be started, and the appropriate error will be
-        /// returned.  The commands that have already started will be
-        /// waited to finish (but will probably exit immediately due
-        /// to missing output), except for the ones for which
-        /// `detached()` was called.  This is equivalent to what the
-        /// shell does.
+        /// If some command fails to start, the remaining commands will not be started, and
+        /// the appropriate error will be returned.  The commands that have already started
+        /// will be waited to finish (but will probably exit immediately due to missing
+        /// output), except for the ones for which `detached()` was called.  This is
+        /// equivalent to what the shell does.
         pub fn popen(mut self) -> PopenResult<Vec<Popen>> {
             self.check_no_stdin_data("popen");
             assert!(self.cmds.len() >= 2);
@@ -961,8 +928,8 @@ mod pipeline {
             Ok(ret)
         }
 
-        /// Starts the pipeline, waits for it to finish, and returns
-        /// the exit status of the last command.
+        /// Starts the pipeline, waits for it to finish, and returns the exit status of the
+        /// last command.
         pub fn join(self) -> PopenResult<ExitStatus> {
             self.check_no_stdin_data("join");
             let mut v = self.popen()?;
@@ -973,31 +940,28 @@ mod pipeline {
             v.last_mut().unwrap().wait()
         }
 
-        /// Starts the pipeline and returns a value implementing the `Read`
-        /// trait that reads from the standard output of the last command.
+        /// Starts the pipeline and returns a value implementing the `Read` trait that reads
+        /// from the standard output of the last command.
         ///
-        /// This will automatically set up
-        /// `stdout(Redirection::Pipe)`, so it is not necessary to do
-        /// that beforehand.
+        /// This will automatically set up `stdout(Redirection::Pipe)`, so it is not necessary
+        /// to do that beforehand.
         ///
-        /// When the trait object is dropped, it will wait for the
-        /// pipeline to finish.  If this is undesirable, use
-        /// `detached()`.
+        /// When the trait object is dropped, it will wait for the pipeline to finish.  If
+        /// this is undesirable, use `detached()`.
         pub fn stream_stdout(self) -> PopenResult<impl Read> {
             self.check_no_stdin_data("stream_stdout");
             let v = self.stdout(Redirection::Pipe).popen()?;
             Ok(ReadPipelineAdapter(v))
         }
 
-        /// Starts the pipeline and returns a value implementing the `Write`
-        /// trait that writes to the standard input of the last command.
+        /// Starts the pipeline and returns a value implementing the `Write` trait that writes
+        /// to the standard input of the first command.
         ///
-        /// This will automatically set up `stdin(Redirection::Pipe)`,
-        /// so it is not necessary to do that beforehand.
+        /// This will automatically set up `stdin(Redirection::Pipe)`, so it is not necessary
+        /// to do that beforehand.
         ///
-        /// When the trait object is dropped, it will wait for the
-        /// process to finish.  If this is undesirable, use
-        /// `detached()`.
+        /// When the trait object is dropped, it will wait for the process to finish.  If this
+        /// is undesirable, use `detached()`.
         pub fn stream_stdin(self) -> PopenResult<impl Write> {
             self.check_no_stdin_data("stream_stdin");
             let v = self.stdin(Redirection::Pipe).popen()?;
@@ -1025,12 +989,12 @@ mod pipeline {
 
         /// Starts the pipeline and returns a `Communicator` handle.
         ///
-        /// This is a lower-level API that offers more choice in how
-        /// communication is performed, such as read size limit and timeout,
-        /// equivalent to [`Popen::communicate`].
+        /// This is a lower-level API that offers more choice in how communication is
+        /// performed, such as read size limit and timeout, equivalent to
+        /// [`Popen::communicate`].
         ///
-        /// Unlike `capture()`, this method doesn't wait for the pipeline to
-        /// finish, effectively detaching it.
+        /// Unlike `capture()`, this method doesn't wait for the pipeline to finish,
+        /// effectively detaching it.
         ///
         /// [`Popen::communicate`]: struct.Popen.html#method.communicate
         pub fn communicate(mut self) -> PopenResult<Communicator> {
@@ -1039,17 +1003,15 @@ mod pipeline {
             Ok(comm)
         }
 
-        /// Starts the pipeline, collects its output, and waits for all
-        /// commands to finish.
+        /// Starts the pipeline, collects its output, and waits for all commands to finish.
         ///
-        /// The return value provides the standard output of the last command,
-        /// the combined standard error of all commands, and the exit status
-        /// of the last command.  The captured outputs can be accessed as
-        /// bytes or strings.
+        /// The return value provides the standard output of the last command, the combined
+        /// standard error of all commands, and the exit status of the last command.  The
+        /// captured outputs can be accessed as bytes or strings.
         ///
-        /// Unlike `Popen::communicate`, this method actually waits for the
-        /// processes to finish, rather than simply waiting for the output to
-        /// close.  If this is undesirable, use `detached()`.
+        /// Unlike `Popen::communicate`, this method actually waits for the processes to
+        /// finish, rather than simply waiting for the output to close.  If this is
+        /// undesirable, use `detached()`.
         pub fn capture(self) -> PopenResult<CaptureData> {
             let (mut comm, mut v) = self.setup_communicate()?;
             let (out, err) = comm.read()?;
@@ -1070,12 +1032,11 @@ mod pipeline {
     impl Clone for Pipeline {
         /// Returns a copy of the value.
         ///
-        /// This method is guaranteed not to fail as long as none of
-        /// the `Redirection` values contain a `Redirection::File`
-        /// variant.  If a redirection to `File` is present, cloning
-        /// that field will use `File::try_clone` method, which
-        /// duplicates a file descriptor and can (but is not likely
-        /// to) fail.  In that scenario, `Exec::clone` panics.
+        /// This method is guaranteed not to fail as long as none of the `Redirection` values
+        /// contain a `Redirection::File` variant.  If a redirection to `File` is present,
+        /// cloning that field will use `File::try_clone` method, which duplicates a file
+        /// descriptor and can (but is not likely to) fail.  In that scenario, `Pipeline::clone`
+        /// panics.
         fn clone(&self) -> Pipeline {
             Pipeline {
                 cmds: self.cmds.clone(),
