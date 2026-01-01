@@ -17,6 +17,12 @@ pub use exec::windows::ExecExt;
 pub use exec::{CaptureData, Exec, NullFile};
 pub use pipeline::Pipeline;
 
+/// Windows-specific process creation constants and extensions.
+#[cfg(windows)]
+pub mod windows {
+    pub use super::exec::windows::*;
+}
+
 mod exec {
     use std::borrow::Cow;
     use std::collections::HashMap;
@@ -705,6 +711,29 @@ mod exec {
     pub mod windows {
         use super::Exec;
 
+        /// Process creation flag: The process does not have a console window.
+        ///
+        /// Use this flag when launching GUI applications or background processes to prevent
+        /// a console window from briefly appearing.
+        pub const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        /// Process creation flag: The new process has a new console.
+        ///
+        /// This flag cannot be used with `DETACHED_PROCESS`.
+        pub const CREATE_NEW_CONSOLE: u32 = 0x00000010;
+
+        /// Process creation flag: The new process is the root of a new process group.
+        ///
+        /// The process group includes all descendant processes. Useful for sending signals
+        /// to a group of related processes.
+        pub const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+
+        /// Process creation flag: The process does not inherit its parent's console.
+        ///
+        /// The new process can call `AllocConsole` later to create a console.
+        /// This flag cannot be used with `CREATE_NEW_CONSOLE`.
+        pub const DETACHED_PROCESS: u32 = 0x00000008;
+
         /// Extension trait for Windows-specific process creation options.
         pub trait ExecExt {
             /// Set process creation flags for Windows.
@@ -716,9 +745,8 @@ mod exec {
             /// # Example
             ///
             /// ```ignore
-            /// use subprocess::{Exec, ExecExt};
+            /// use subprocess::{Exec, ExecExt, windows::CREATE_NO_WINDOW};
             ///
-            /// const CREATE_NO_WINDOW: u32 = 0x08000000;
             /// let popen = Exec::cmd("my_app")
             ///     .creation_flags(CREATE_NO_WINDOW)
             ///     .popen()?;

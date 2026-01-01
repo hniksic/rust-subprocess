@@ -119,15 +119,17 @@ pub struct PopenConfig {
     /// or background process:
     ///
     /// ```ignore
-    /// const CREATE_NO_WINDOW: u32 = 0x08000000;
+    /// use subprocess::{Popen, PopenConfig, windows::CREATE_NO_WINDOW};
+    ///
     /// let popen = Popen::create(&["my_app"], PopenConfig {
     ///     creation_flags: CREATE_NO_WINDOW,
     ///     ..Default::default()
     /// })?;
     /// ```
     ///
-    /// Common flags include `CREATE_NO_WINDOW` (0x08000000), `CREATE_NEW_CONSOLE` (0x00000010),
-    /// and `CREATE_NEW_PROCESS_GROUP` (0x00000200).  See Windows documentation for the full list.
+    /// Available flags are in the [`windows`](crate::windows) module: `CREATE_NO_WINDOW`,
+    /// `CREATE_NEW_CONSOLE`, `CREATE_NEW_PROCESS_GROUP`, `DETACHED_PROCESS`.
+    /// See Windows documentation for the full list.
     #[cfg(windows)]
     pub creation_flags: u32,
 
