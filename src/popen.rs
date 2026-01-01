@@ -389,6 +389,7 @@ impl Popen {
             Ok(())
         }
 
+        #[derive(PartialEq, Eq, Copy, Clone)]
         enum MergeKind {
             ErrToOut, // 2>&1
             OutToErr, // 1>&2
@@ -420,7 +421,14 @@ impl Popen {
             Redirection::Pipe => prepare_pipe(false, &mut self.stderr, &mut child_stderr)?,
             Redirection::File(file) => prepare_file(file, &mut child_stderr)?,
             Redirection::RcFile(file) => prepare_rc_file(file, &mut child_stderr)?,
-            Redirection::Merge => merge = MergeKind::ErrToOut,
+            Redirection::Merge => {
+                if merge != MergeKind::None {
+                    return Err(PopenError::LogicError(
+                        "Redirection::Merge not valid for both stdout and stderr",
+                    ));
+                }
+                merge = MergeKind::ErrToOut;
+            }
             Redirection::None => (),
         };
 
