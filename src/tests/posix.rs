@@ -76,3 +76,34 @@ fn env_set_all_2() {
     let (out, _err) = p.communicate(None).unwrap();
     assert_eq!(out.unwrap().trim_end(), "FOO=bar");
 }
+
+#[test]
+fn send_signal_group() {
+    // Spawn a shell in a new process group that spawns a background child.
+    // Signaling the group should terminate both the shell and its child.
+    let mut p = Popen::create(
+        &["sh", "-c", "sleep 100 & wait"],
+        PopenConfig {
+            setpgid: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    p.send_signal_group(libc::SIGTERM).unwrap();
+    assert_eq!(p.wait().unwrap(), ExitStatus::Signaled(libc::SIGTERM as u8));
+}
+
+#[test]
+fn send_signal_group_after_finish() {
+    // Signaling a finished process group should succeed (no-op).
+    let mut p = Popen::create(
+        &["true"],
+        PopenConfig {
+            setpgid: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    p.wait().unwrap();
+    p.send_signal_group(libc::SIGTERM).unwrap();
+}

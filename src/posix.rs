@@ -265,6 +265,11 @@ pub fn kill(pid: u32, signal: i32) -> Result<()> {
     Ok(())
 }
 
+pub fn killpg(pgid: u32, signal: i32) -> Result<()> {
+    check_err(unsafe { libc::killpg(pgid as c_int, signal) })?;
+    Ok(())
+}
+
 pub const F_GETFD: i32 = libc::F_GETFD;
 pub const F_SETFD: i32 = libc::F_SETFD;
 pub const FD_CLOEXEC: i32 = libc::FD_CLOEXEC;

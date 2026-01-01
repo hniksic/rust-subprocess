@@ -533,7 +533,7 @@ mod exec {
             Exec {
                 command: self.command.clone(),
                 args: self.args.clone(),
-                time_limit: self.time_limit.clone(),
+                time_limit: self.time_limit,
                 config: self.config.try_clone().unwrap(),
                 stdin_data: self.stdin_data.clone(),
             }

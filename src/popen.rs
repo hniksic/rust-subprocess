@@ -964,12 +964,31 @@ mod os {
             /// [`wait`]: ../struct.Popen.html#method.wait
             /// [`libc`]: https://docs.rs/libc/
             fn send_signal(&self, signal: i32) -> io::Result<()>;
+
+            /// Send the specified signal to the child's process group.
+            ///
+            /// This is useful for terminating a tree of processes spawned by the child.
+            /// For this to work correctly, the child should be started with
+            /// [`setpgid`](PopenConfig::setpgid) set to `true`, which places the child
+            /// in a new process group with PGID equal to its PID.
+            ///
+            /// If the child process is known to have finished, this will do nothing
+            /// and return `Ok`.
+            fn send_signal_group(&self, signal: i32) -> io::Result<()>;
         }
         impl PopenExt for Popen {
             fn send_signal(&self, signal: i32) -> io::Result<()> {
                 match self.child_state {
                     Preparing => panic!("child_state == Preparing"),
                     Running { pid, .. } => posix::kill(pid, signal),
+                    Finished(..) => Ok(()),
+                }
+            }
+
+            fn send_signal_group(&self, signal: i32) -> io::Result<()> {
+                match self.child_state {
+                    Preparing => panic!("child_state == Preparing"),
+                    Running { pid, .. } => posix::killpg(pid, signal),
                     Finished(..) => Ok(()),
                 }
             }
