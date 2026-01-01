@@ -12,6 +12,8 @@ mod os {
 
 #[cfg(unix)]
 pub use exec::unix::ExecExt;
+#[cfg(windows)]
+pub use exec::windows::ExecExt;
 pub use exec::{CaptureData, Exec, NullFile};
 pub use pipeline::Pipeline;
 
@@ -694,6 +696,39 @@ mod exec {
 
             fn setgid(mut self, gid: u32) -> Exec {
                 self.config.setgid = Some(gid);
+                self
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    pub mod windows {
+        use super::Exec;
+
+        /// Extension trait for Windows-specific process creation options.
+        pub trait ExecExt {
+            /// Set process creation flags for Windows.
+            ///
+            /// This value is passed to the `dwCreationFlags` parameter of `CreateProcessW`.
+            /// Use this to control process creation behavior such as creating the process
+            /// without a console window.
+            ///
+            /// # Example
+            ///
+            /// ```ignore
+            /// use subprocess::{Exec, ExecExt};
+            ///
+            /// const CREATE_NO_WINDOW: u32 = 0x08000000;
+            /// let popen = Exec::cmd("my_app")
+            ///     .creation_flags(CREATE_NO_WINDOW)
+            ///     .popen()?;
+            /// ```
+            fn creation_flags(self, flags: u32) -> Self;
+        }
+
+        impl ExecExt for Exec {
+            fn creation_flags(mut self, flags: u32) -> Exec {
+                self.config.creation_flags = flags;
                 self
             }
         }

@@ -108,7 +108,26 @@ pub struct PopenConfig {
     pub stderr: Redirection,
     /// Whether the `Popen` instance is initially detached.
     pub detached: bool,
-    /// Process Creation Flags
+    /// Process creation flags for Windows.
+    ///
+    /// This value is passed to the `dwCreationFlags` parameter of
+    /// [`CreateProcessW`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw).
+    /// Use this to control process creation behavior such as creating the process without a
+    /// console window.
+    ///
+    /// For example, to prevent a console window from appearing when spawning a GUI application
+    /// or background process:
+    ///
+    /// ```ignore
+    /// const CREATE_NO_WINDOW: u32 = 0x08000000;
+    /// let popen = Popen::create(&["my_app"], PopenConfig {
+    ///     creation_flags: CREATE_NO_WINDOW,
+    ///     ..Default::default()
+    /// })?;
+    /// ```
+    ///
+    /// Common flags include `CREATE_NO_WINDOW` (0x08000000), `CREATE_NEW_CONSOLE` (0x00000010),
+    /// and `CREATE_NEW_PROCESS_GROUP` (0x00000200).  See Windows documentation for the full list.
     #[cfg(windows)]
     pub creation_flags: u32,
 
@@ -749,7 +768,9 @@ mod os {
                     error_code as i32,
                 )))
             } else {
-                Err(PopenError::LogicError("incomplete error code from exec pipe"))
+                Err(PopenError::LogicError(
+                    "incomplete error code from exec pipe",
+                ))
             }
         }
 
