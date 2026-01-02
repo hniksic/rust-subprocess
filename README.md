@@ -1,90 +1,95 @@
 # subprocess
 
-[![](http://meritbadge.herokuapp.com/subprocess)](https://crates.io/crates/subprocess)
+[![crates.io](https://img.shields.io/crates/v/subprocess.svg)](https://crates.io/crates/subprocess)
 [![CI](https://github.com/hniksic/rust-subprocess/actions/workflows/ci.yml/badge.svg)](https://github.com/hniksic/rust-subprocess/actions/workflows/ci.yml)
 [![docs.rs](https://docs.rs/subprocess/badge.svg)](https://docs.rs/subprocess)
 
-The `subprocess` library provides facilities for execution of and
-interaction with external processes and pipelines, inspired by
-Python's `subprocess` module.  `subprocess` is [hosted on
-crates.io](https://crates.io/crates/subprocess), with [API
-Documentation on docs.rs](https://docs.rs/subprocess/).
+The `subprocess` crate provides facilities for execution of and interaction with external
+processes and pipelines.  It is [hosted on crates.io](https://crates.io/crates/subprocess),
+with [API documentation on docs.rs](https://docs.rs/subprocess/).
 
-## Features
+The crate has minimal dependencies (only `libc` on Unix and `winapi` on Windows), and is
+tested on Linux, macOS, and Windows.
 
-This library is about launching external processes with optional redirection
-of standard input, output, and error.  It covers similar ground as the
-[`std::process`](https://doc.rust-lang.org/std/process/index.html) standard
-library module, but with additional functionality:
+## Why subprocess?
 
-* The *communicate* [family of
-  methods](https://docs.rs/subprocess/latest/subprocess/struct.Popen.html#method.communicate_start)
-  for deadlock-free capturing of subprocess output/error to memory, while
-  simultaneously feeding data to its standard input.  Capturing supports
-  optional timeout and read size limit.
+The [`std::process`](https://doc.rust-lang.org/std/process/index.html) module in the standard
+library is fine for simple use cases, but it doesn't cover common scenarios such as:
 
-* Connecting multiple commands into OS-level pipelines.
+* **Avoiding deadlock** when communicating with a subprocess - if you need to write to a
+  subprocess's stdin while also reading its stdout and stderr, naive sequential operation can
+  block forever.  `subprocess` handles this correctly using
+  [poll-based](https://docs.rs/subprocess/latest/subprocess/struct.Communicator.html) I/O
+  multiplexing.
 
-* Flexible redirection options, such as connecting standard streams to
-  arbitrary files, or merging output streams like shell's `2>&1` and `1>&2`
-  operators.
+* **Shell-style pipelines** - `subprocess` lets you create pipelines using the `|` operator:
+  `Exec::cmd("find") | Exec::cmd("grep") | Exec::cmd("wc")`.
 
-* Non-blocking and timeout methods to wait on the process: `poll`, `wait`, and
-  `wait_timeout`.
+* **Merging stdout and stderr** - shell-style `2>&1` redirection is directly supported with
+  [`Redirection::Merge`](https://docs.rs/subprocess/latest/subprocess/enum.Redirection.html#variant.Merge),
+  which has no equivalent in `std::process::Stdio`.
 
-The crate has minimal dependencies to third-party crates, only requiring
-`libc` on Unix and `winapi` on Windows.  It is intended to work on Unix-like
-platforms as well as on reasonably recent Windows.  It is regularly tested on
-Linux, MacOS and Windows.
+* **Waiting with a timeout** - `std::process::Child` offers either blocking `wait()` or
+  non-blocking `try_wait()`, but nothing in-between.  `subprocess` provides
+  [`wait_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Popen.html#method.wait_timeout).
+
+* **Sending signals** (Unix) - `std::process::Child::kill()` only sends `SIGKILL`.
+  `subprocess` lets you [send any
+  signal](https://docs.rs/subprocess/latest/subprocess/unix/trait.PopenExt.html#tymethod.send_signal)
+  including `SIGTERM`, and can [signal process
+  groups](https://docs.rs/subprocess/latest/subprocess/unix/trait.PopenExt.html#tymethod.send_signal_group)
+  to terminate an entire process tree.
+
+* **Preventing zombies** - `subprocess` automatically waits on child processes when they go
+  out of scope (with
+  [`detach()`](https://docs.rs/subprocess/latest/subprocess/struct.Popen.html#method.detach)
+  to opt out), whereas `std::process::Child` does not, risking zombie process accumulation.
+
+## Comparison with std::process
+
+| Need | std::process | subprocess |
+|------|-------------|------------|
+| Wait with timeout | Loop with `try_wait()` + sleep | `wait_timeout(duration)` |
+| Write stdin while reading stdout | Manual threading or async | `communicate()` handles it |
+| Pipelines | Manual pipe setup | `cmd1 \| cmd2 \| cmd3` |
+| Merge stderr into stdout | Not supported | `Redirection::Merge` |
+| Send SIGTERM (Unix) | Only `kill()` (SIGKILL) | `send_signal(SIGTERM)` |
+| Signal process group (Unix) | Not supported | `send_signal_group()` |
+| Auto-cleanup on drop | No (zombies possible) | Yes (waits by default) |
 
 ## API Overview
 
-The API is separated in two parts: the low-level `Popen` API similar to
-Python's
-[`subprocess.Popen`](https://docs.python.org/3/library/subprocess.html#subprocess.Popen),
-and the higher-level API for convenient creation of commands and pipelines.
-The two can be mixed, so it is possible to use builder to create `Popen`
-instances, and then to continue working with them directly.
+The API has two levels:
 
-While `Popen` loosely follows Python's [`subprocess`
-module](https://docs.python.org/3/library/subprocess.html#popen-constructor),
-it is not a literal translation.  Some of the changes accommodate the
-differences between the languages, such as the lack of default and keyword
-arguments in Rust, and others take advantage of Rust's more advanced type
-system, or of additional capabilities such as the ownership system and the
-`Drop` trait.  Python's utility functions such as `subprocess.run` are not
-included because they can be better expressed using the builder pattern.
+* **High-level:** The
+  [`Exec`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html) builder provides a
+  convenient interface for spawning processes and pipelines, with methods like `join()`,
+  `capture()`, `stream_stdout()`, etc.
 
-The high-level API offers an elegant process and pipeline creation interface,
-along with convenience methods for capturing their output and exit status.
+* **Low-level:** The
+  [`Popen`](https://docs.rs/subprocess/latest/subprocess/struct.Popen.html) struct offers
+  direct control over the process lifecycle.  `Exec` creates `Popen` instances which can then
+  be manipulated directly.
 
 ## Examples
 
-### Spawning and redirecting
+### Basic execution
 
-Execute an command and wait for it to complete:
+Execute a command and wait for it to complete:
 
 ```rust
 let exit_status = Exec::cmd("umount").arg(dirname).join()?;
 assert!(exit_status.success());
 ```
 
-To prevent quoting issues and injection attacks, subprocess will not
-spawn a shell unless explicitly requested.  To execute a command using
-the OS shell, like C's `system`, use `Exec::shell`:
+To prevent quoting issues and shell injection attacks, `subprocess` does not spawn a shell
+unless explicitly requested.  To execute a command through the OS shell, use `Exec::shell`:
 
 ```rust
 Exec::shell("shutdown -h now").join()?;
 ```
 
-Start a subprocess and obtain its output as a `Read` trait object,
-like C's `popen`:
-
-```rust
-let stream = Exec::cmd("find /").stream_stdout()?;
-// Call stream.read_to_string, construct io::BufReader(stream) and iterate it
-// by lines, etc...
-```
+### Capturing output
 
 Capture the output of a command:
 
@@ -95,17 +100,19 @@ let out = Exec::cmd("ls")
   .stdout_str();
 ```
 
-Redirect standard error to standard output, and capture them in a string:
+Capture both stdout and stderr merged together:
 
 ```rust
 let out_and_err = Exec::cmd("ls")
   .stdout(Redirection::Pipe)
-  .stderr(Redirection::Merge)
+  .stderr(Redirection::Merge)  // 2>&1
   .capture()?
   .stdout_str();
 ```
 
-Provide some input to the command and read its output:
+### Feeding input
+
+Provide input data and capture output:
 
 ```rust
 let out = Exec::cmd("sort")
@@ -116,23 +123,25 @@ let out = Exec::cmd("sort")
 assert_eq!(out, "a\nb\nc\n");
 ```
 
-Connecting `stdin` to an open file would have worked as well.
+### Streaming
+
+Get stdout as a `Read` trait object (like C's `popen`):
+
+```rust
+let stream = Exec::cmd("find").arg("/").stream_stdout()?;
+// Use stream.read_to_string(), BufReader::new(stream).lines(), etc.
+```
 
 ### Pipelines
 
-`Popen` objects support connecting input and output to arbitrary open
-files, including other `Popen` objects.  This can be used to form
-pipelines of processes.  The builder API will do it automatically with
-the `|` operator on `Exec` objects.
-
-Execute a pipeline and return the exit status of the last command:
+Create pipelines using the `|` operator:
 
 ```rust
 let exit_status =
   (Exec::shell("ls *.bak") | Exec::cmd("xargs").arg("rm")).join()?;
 ```
 
-Capture the pipeline's output:
+Capture the output of a pipeline:
 
 ```rust
 let dir_checksum = {
@@ -140,58 +149,107 @@ let dir_checksum = {
 }.capture()?.stdout_str();
 ```
 
-### The low-level Popen type
+### Waiting with timeout
+
+Give the process some time to run, then terminate if needed:
+
+```rust
+let mut p = Exec::cmd("sleep").arg("10").popen()?;
+if let Some(status) = p.wait_timeout(Duration::from_secs(1))? {
+    println!("finished: {:?}", status);
+} else {
+    println!("timed out, terminating");
+    p.terminate()?;
+    p.wait()?;
+}
+```
+
+### Communicating with deadlock prevention
+
+When you need to write to stdin and read from stdout/stderr simultaneously:
+
+```rust
+let mut p = Popen::create(&["cat"], PopenConfig {
+    stdin: Redirection::Pipe,
+    stdout: Redirection::Pipe,
+    ..Default::default()
+})?;
+
+// communicate() handles the write/read interleaving to avoid deadlock
+let (out, _err) = p.communicate(Some("hello world"))?;
+assert_eq!(out.unwrap(), "hello world");
+```
+
+With a timeout:
+
+```rust
+let mut comm = Exec::cmd("slow-program")
+    .stdin("input")
+    .stdout(Redirection::Pipe)
+    .communicate()?
+    .limit_time(Duration::from_secs(5));
+
+match comm.read_string() {
+    Ok((stdout, stderr)) => println!("got: {:?}", stdout),
+    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+        println!("timed out, partial: {:?}", e.capture);
+    }
+    Err(e) => return Err(e.into()),
+}
+```
+
+### Sending signals (Unix)
+
+Send a signal other than SIGKILL:
+
+```rust
+use subprocess::unix::PopenExt;
+
+let mut p = Exec::cmd("sleep").arg("100").popen()?;
+p.send_signal(libc::SIGTERM)?;  // graceful termination
+p.wait()?;
+```
+
+Terminate an entire process tree using process groups:
+
+```rust
+use subprocess::unix::PopenExt;
+
+// Start child in its own process group
+let mut p = Popen::create(&["sh", "-c", "sleep 100 & sleep 100"], PopenConfig {
+    setpgid: true,
+    ..Default::default()
+})?;
+
+// Signal the entire process group
+p.send_signal_group(libc::SIGTERM)?;
+p.wait()?;
+```
+
+### Low-level Popen interface
+
+For full control over the process lifecycle:
 
 ```rust
 let mut p = Popen::create(&["command", "arg1", "arg2"], PopenConfig {
-    stdout: Redirection::Pipe, ..Default::default()
+    stdout: Redirection::Pipe,
+    ..Default::default()
 })?;
 
-// Since we requested stdout to be redirected to a pipe, the parent's
-// end of the pipe is available as p.stdout.  It can either be read
-// directly, or processed using the communicate() method:
+// Read stdout directly
 let (out, err) = p.communicate(None)?;
 
-// check if the process is still alive
+// Check if still running
 if let Some(exit_status) = p.poll() {
-  // the process has finished
+    println!("finished: {:?}", exit_status);
 } else {
-  // it is still running, terminate it
-  p.terminate()?;
-}
-```
-
-### Querying and terminating
-
-Check whether a previously launched process is still running:
-
-```rust
-let mut p = Exec::cmd("sleep").arg("2").popen()?;
-thread::sleep(Duration::new(1, 0));
-if p.poll().is_none() {
-    // poll() returns Some(exit_status) if the process has completed
-    println!("process is still running");
-}
-```
-
-Give the process 1 second to run, and kill it if it didn't complete by
-then.
-
-```rust
-let mut p = Exec::cmd("sleep").arg("2").popen()?;
-if let Some(status) = p.wait_timeout(Duration::new(1, 0))? {
-    println!("process finished as {:?}", status);
-} else {
-    p.kill()?;
-    p.wait()?;
-    println!("process killed");
+    println!("still running, terminating");
+    p.terminate()?;
 }
 ```
 
 ## License
 
-`subprocess` is distributed under the terms of both the MIT license
-and the Apache License (Version 2.0).  See
-[LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT) for
-details.  Contributing changes is assumed to signal agreement with
-these licensing terms.
+`subprocess` is distributed under the terms of both the MIT license and the Apache License
+(Version 2.0).  See [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT) for
+details.  Contributing changes is assumed to signal agreement with these licensing terms.
