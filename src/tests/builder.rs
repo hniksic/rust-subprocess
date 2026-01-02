@@ -1,14 +1,12 @@
 use std::env;
 use std::fs::File;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::{borrow::Cow, time::Duration};
 
 use std::io::{ErrorKind, prelude::*};
-use std::sync::MutexGuard;
 
 use crate::{Exec, ExitStatus, NullFile, Redirection};
 
-use lazy_static::lazy_static;
 use tempfile::TempDir;
 
 use crate::tests::common::read_whole_file;
@@ -324,9 +322,7 @@ fn env_extend() {
     );
 }
 
-lazy_static! {
-    static ref MUTATE_ENV: Mutex<()> = Mutex::new(());
-}
+static MUTATE_ENV: Mutex<()> = Mutex::new(());
 
 struct TmpEnvVar<'a> {
     varname: &'static str,
