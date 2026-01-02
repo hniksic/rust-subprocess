@@ -15,6 +15,7 @@ use crate::os_common::{ExitStatus, StandardStream};
 use ChildState::*;
 
 pub use communicate::Communicator;
+#[cfg(unix)] // only consumed by lib.rs's `unix` module, which only exists on Unix
 pub use os::ext as os_ext;
 pub use os::make_pipe;
 
@@ -377,8 +378,9 @@ impl Popen {
             parent_ref: &mut Option<File>,
             child_ref: &mut Option<Rc<File>>,
         ) -> Result<()> {
-            // Store the parent's end of the pipe into the given
-            // reference, and store the child end.
+            // Store the parent's end of the pipe into the given reference, and
+            // store the child end. On Windows, this creates pipes where both
+            // ends support overlapped I/O (see make_pipe() for details).
             let (read, write) = os::make_pipe()?;
             let (parent_end, child_end) = if parent_writes {
                 (write, read)
@@ -939,8 +941,7 @@ mod os {
 
     /// Create a pipe.
     ///
-    /// This is a safe wrapper over `libc::pipe` or `winapi::um::namedpipeapi::CreatePipe`,
-    /// depending on the operating system.
+    /// This is a safe wrapper over `libc::pipe`.
     pub fn make_pipe() -> io::Result<(File, File)> {
         posix::pipe()
     }
@@ -1182,12 +1183,39 @@ mod os {
         Ok(())
     }
 
-    /// Create a pipe.
+    /// Create a pipe where both ends support overlapped I/O.
     ///
-    /// This is a safe wrapper over `libc::pipe` or `winapi::um::namedpipeapi::CreatePipe`,
-    /// depending on the operating system.
+    /// Returns (read_end, write_end), both with FILE_FLAG_OVERLAPPED.
+    /// Both handles are created inheritable; callers should use `set_inheritable`
+    /// to make the parent's end non-inheritable before spawning children.
+    ///
+    /// # Why overlapped pipes?
+    ///
+    /// On Windows, `communicate()` requires overlapped (async) I/O to simultaneously
+    /// read from stdout/stderr and write to stdin without deadlocking. This is
+    /// analogous to how Unix uses `poll()` for the same purpose.
+    ///
+    /// # Why this is safe for synchronous I/O too
+    ///
+    /// Although MSDN warns that passing NULL for lpOverlapped on an overlapped
+    /// handle "can incorrectly report that the read operation is complete", in
+    /// practice synchronous I/O works correctly on overlapped pipe handles:
+    ///
+    /// - Raymond Chen explains that for pipes and mailslots, the I/O subsystem
+    ///   accepts synchronous I/O on overlapped handles ("Sure, whatever.")
+    ///   https://devblogs.microsoft.com/oldnewthing/20120411-00/?p=7883
+    ///
+    /// - Rust's std library relies on this: it creates overlapped pipes for the
+    ///   parent's end (to enable simultaneous stdout/stderr reading) but reads
+    ///   from them using normal synchronous File::read() calls.
+    ///   https://github.com/rust-lang/rust/issues/95759
+    ///   https://github.com/rust-lang/rust/pull/95841
+    ///
+    /// This means both `communicate()` (which uses overlapped I/O) and the
+    /// `stream_*` methods (which use synchronous File::read/write) work correctly
+    /// with these pipes.
     pub fn make_pipe() -> io::Result<(File, File)> {
-        win32::CreatePipe(true)
+        win32::CreateOverlappedPipe()
     }
 
     fn locate_in_path(executable: OsString) -> OsString {

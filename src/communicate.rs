@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 mod raw {
     use crate::posix;
     use std::cmp::min;
+    use std::collections::VecDeque;
     use std::fs::File;
     use std::io::{self, Read, Write};
     use std::time::{Duration, Instant};
@@ -68,8 +69,7 @@ mod raw {
         stdin: Option<File>,
         stdout: Option<File>,
         stderr: Option<File>,
-        input_data: Vec<u8>,
-        input_pos: usize,
+        input_data: VecDeque<u8>,
     }
 
     impl RawCommunicator {
@@ -78,15 +78,13 @@ mod raw {
             stdout: Option<File>,
             stderr: Option<File>,
             input_data: Option<Vec<u8>>,
-        ) -> RawCommunicator {
-            let input_data = input_data.unwrap_or_default();
-            RawCommunicator {
+        ) -> io::Result<RawCommunicator> {
+            Ok(RawCommunicator {
                 stdin,
                 stdout,
                 stderr,
-                input_data,
-                input_pos: 0,
-            }
+                input_data: VecDeque::from(input_data.unwrap_or_default()),
+            })
         }
 
         fn do_read(
@@ -145,15 +143,15 @@ mod raw {
                     return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout"));
                 }
                 if in_ready {
-                    let input = &self.input_data[self.input_pos..];
+                    // make_contiguous() is a no-op here: we start from a Vec and only
+                    // drain from the front, so the data never wraps around.
+                    let input = self.input_data.make_contiguous();
                     let chunk = &input[..min(WRITE_SIZE, input.len())];
                     let n = self.stdin.as_ref().unwrap().write(chunk)?;
-                    self.input_pos += n;
-                    if self.input_pos == self.input_data.len() {
+                    self.input_data.drain(..n);
+                    if self.input_data.is_empty() {
                         // close stdin when done writing, so the child receives EOF
                         self.stdin.take();
-                        // deallocate the input data, we don't need it any more
-                        self.input_data = Vec::new();
                     }
                 }
                 if out_ready {
@@ -199,66 +197,108 @@ mod raw {
 
 #[cfg(windows)]
 mod raw {
+    use crate::win32::{
+        PendingRead, PendingWrite, ReadFileOverlapped, WaitForMultipleObjects, WaitResult,
+        WriteFileOverlapped,
+    };
+    use std::cmp::min;
+    use std::collections::VecDeque;
     use std::fs::File;
-    use std::io::{self, Read, Write};
-    use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
-    use std::thread;
-    use std::time::Instant;
+    use std::io;
+    use std::os::windows::io::AsRawHandle;
+    use std::time::{Duration, Instant};
 
-    #[derive(Debug, Copy, Clone)]
-    enum StreamIdent {
-        In = 1 << 0,
-        Out = 1 << 1,
-        Err = 1 << 2,
+    const BUFFER_SIZE: usize = 4096;
+
+    /// Identifies which stream became ready after waiting.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ReadyStream {
+        Stdin,
+        Stdout,
+        Stderr,
     }
 
-    enum Payload {
-        Data(Vec<u8>),
-        EOF,
-        Err(io::Error),
-    }
+    /// Wait for I/O completion on pending operations. Analogous to Unix maybe_poll().
+    ///
+    /// Takes references to pending operations and waits for any to complete.
+    /// Returns `Ok(Some(stream))` indicating which completed, `Ok(None)` on timeout,
+    /// or `Err` if the syscall fails.
+    fn wait_for_io(
+        stdin_pending: Option<&PendingWrite>,
+        stdout_pending: Option<&PendingRead>,
+        stderr_pending: Option<&PendingRead>,
+        deadline: Option<Instant>,
+    ) -> io::Result<Option<ReadyStream>> {
+        let mut handles = Vec::with_capacity(3);
+        let mut streams = Vec::with_capacity(3);
 
-    // Messages exchanged between RawCommunicator's helper threads.
-    type Message = (StreamIdent, Payload);
+        if let Some(p) = stdin_pending {
+            handles.push(p.event().as_raw_handle());
+            streams.push(ReadyStream::Stdin);
+        }
+        if let Some(p) = stdout_pending {
+            handles.push(p.event().as_raw_handle());
+            streams.push(ReadyStream::Stdout);
+        }
+        if let Some(p) = stderr_pending {
+            handles.push(p.event().as_raw_handle());
+            streams.push(ReadyStream::Stderr);
+        }
 
-    fn read_and_transmit(mut outfile: File, ident: StreamIdent, sink: SyncSender<Message>) {
-        let mut chunk = [0u8; 4096];
-        // Note: failing to send to the sink means we're done.  Sending will
-        // fail if the main thread drops the RawCommunicator (and with it the
-        // receiver) prematurely e.g. because a limit was reached or another
-        // helper encountered an IO error.
-        loop {
-            match outfile.read(&mut chunk) {
-                Ok(0) => {
-                    let _ = sink.send((ident, Payload::EOF));
-                    break;
-                }
-                Ok(nread) => {
-                    if let Err(_) = sink.send((ident, Payload::Data(chunk[..nread].to_vec()))) {
-                        break;
-                    }
-                }
-                Err(e) => {
-                    let _ = sink.send((ident, Payload::Err(e)));
-                    break;
-                }
+        if handles.is_empty() {
+            return Ok(None);
+        }
+
+        let timeout = deadline.map(|d| {
+            let now = Instant::now();
+            if now >= d {
+                Duration::from_secs(0)
+            } else {
+                d - now
             }
+        });
+
+        match WaitForMultipleObjects(&handles, timeout)? {
+            WaitResult::Timeout => Ok(None),
+            WaitResult::Object(idx) => Ok(Some(streams[idx])),
         }
     }
 
-    fn spawn_with_arg<T: Send + 'static>(f: impl FnOnce(T) + Send + 'static, arg: T) {
-        thread::spawn(move || f(arg));
+    /// Start a read operation if not already pending.
+    /// Returns Ok(true) if completed immediately, Ok(false) if pending.
+    fn start_read(
+        file: &File,
+        pending: &mut Option<PendingRead>,
+        read_size: usize,
+    ) -> io::Result<bool> {
+        debug_assert!(pending.is_none());
+        let p = ReadFileOverlapped(file.as_raw_handle(), read_size)?;
+        let ready = !p.is_pending();
+        *pending = Some(p);
+        Ok(ready)
+    }
+
+    /// Complete a read operation and append data to dest.
+    /// Returns Ok(true) if EOF was reached, Ok(false) otherwise.
+    fn complete_read(mut pending: PendingRead, dest: &mut Vec<u8>) -> io::Result<bool> {
+        if pending.complete()? == 0 {
+            Ok(true)
+        } else {
+            dest.extend_from_slice(pending.data());
+            Ok(false)
+        }
     }
 
     #[derive(Debug)]
     pub struct RawCommunicator {
-        rx: mpsc::Receiver<Message>,
-        helper_set: u8,
-        requested_streams: u8,
-        leftover: Option<(StreamIdent, Vec<u8>)>,
+        stdin: Option<File>,
+        stdout: Option<File>,
+        stderr: Option<File>,
+        stdin_pending: Option<PendingWrite>,
+        stdout_pending: Option<PendingRead>,
+        stderr_pending: Option<PendingRead>,
+        input_data: VecDeque<u8>,
     }
-
-    struct Timeout;
 
     impl RawCommunicator {
         pub fn new(
@@ -266,58 +306,16 @@ mod raw {
             stdout: Option<File>,
             stderr: Option<File>,
             input_data: Option<Vec<u8>>,
-        ) -> RawCommunicator {
-            let mut helper_set = 0u8;
-            let mut requested_streams = 0u8;
-
-            let read_stdout = stdout.map(|stdout| {
-                helper_set |= StreamIdent::Out as u8;
-                requested_streams |= StreamIdent::Out as u8;
-                |tx| read_and_transmit(stdout, StreamIdent::Out, tx)
-            });
-            let read_stderr = stderr.map(|stderr| {
-                helper_set |= StreamIdent::Err as u8;
-                requested_streams |= StreamIdent::Err as u8;
-                |tx| read_and_transmit(stderr, StreamIdent::Err, tx)
-            });
-            let write_stdin = stdin.map(|mut stdin| {
-                let input_data = input_data.expect("must provide input to redirected stdin");
-                helper_set |= StreamIdent::In as u8;
-                move |tx: SyncSender<_>| match stdin.write_all(&input_data) {
-                    Ok(()) => drop(tx.send((StreamIdent::In, Payload::EOF))),
-                    Err(e) => drop(tx.send((StreamIdent::In, Payload::Err(e)))),
-                }
-            });
-
-            let (tx, rx) = mpsc::sync_channel(0);
-
-            read_stdout.map(|f| spawn_with_arg(f, tx.clone()));
-            read_stderr.map(|f| spawn_with_arg(f, tx.clone()));
-            write_stdin.map(|f| spawn_with_arg(f, tx.clone()));
-
-            RawCommunicator {
-                rx,
-                helper_set,
-                requested_streams,
-                leftover: None,
-            }
-        }
-
-        fn recv_until(&self, deadline: Option<Instant>) -> Result<Message, Timeout> {
-            if let Some(deadline) = deadline {
-                match self
-                    .rx
-                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                {
-                    Ok(message) => Ok(message),
-                    Err(RecvTimeoutError::Timeout) => Err(Timeout),
-                    // should never be disconnected, the helper threads always
-                    // announce their exit beforehand
-                    Err(RecvTimeoutError::Disconnected) => unreachable!(),
-                }
-            } else {
-                Ok(self.rx.recv().unwrap())
-            }
+        ) -> io::Result<RawCommunicator> {
+            Ok(RawCommunicator {
+                stdin,
+                stdout,
+                stderr,
+                stdin_pending: None,
+                stdout_pending: None,
+                stderr_pending: None,
+                input_data: VecDeque::from(input_data.unwrap_or_default()),
+            })
         }
 
         fn read_into(
@@ -327,58 +325,90 @@ mod raw {
             outvec: &mut Vec<u8>,
             errvec: &mut Vec<u8>,
         ) -> io::Result<()> {
-            let mut grow_result =
-                |ident, mut data: &[u8], leftover: &mut Option<(StreamIdent, Vec<u8>)>| {
-                    if let Some(size_limit) = size_limit {
-                        let total_read = outvec.len() + errvec.len();
-                        if total_read >= size_limit {
-                            return false;
-                        }
-                        let remaining = size_limit - total_read;
-                        if data.len() > remaining {
-                            *leftover = Some((ident, data[remaining..].to_vec()));
-                            data = &data[..remaining];
-                        }
-                    }
-                    match ident {
-                        StreamIdent::Out => outvec.extend_from_slice(data),
-                        StreamIdent::Err => errvec.extend_from_slice(data),
-                        StreamIdent::In => unreachable!(),
-                    }
-                    if let Some(size_limit) = size_limit {
-                        if outvec.len() + errvec.len() >= size_limit {
-                            return false;
-                        }
-                    }
-                    return true;
-                };
+            // Track whether streams have reached EOF (separate from self.stdout/stderr
+            // which we keep for the return value)
+            let mut stdout_eof = self.stdout.is_none();
+            let mut stderr_eof = self.stderr.is_none();
 
-            if let Some((ident, data)) = self.leftover.take() {
-                if !grow_result(ident, &data, &mut self.leftover) {
-                    return Ok(());
+            loop {
+                if let Some(size_limit) = size_limit
+                    && outvec.len() + errvec.len() >= size_limit
+                {
+                    break;
+                }
+
+                if self.stdin.is_none() && stdout_eof && stderr_eof {
+                    // When no stream remains, we are done.
+                    break;
+                }
+
+                // Start I/O operations and track which completed immediately
+                let mut in_ready = false;
+                let mut out_ready = false;
+                let mut err_ready = false;
+
+                if let Some(ref stdin) = self.stdin
+                    && self.stdin_pending.is_none()
+                {
+                    // make_contiguous() is a no-op here: we start from a Vec and only
+                    // drain from the front, so the data never wraps around.
+                    let data = self.input_data.make_contiguous();
+                    let chunk_size = min(BUFFER_SIZE, data.len());
+                    let pending = WriteFileOverlapped(stdin.as_raw_handle(), &data[..chunk_size])?;
+                    in_ready = !pending.is_pending();
+                    self.stdin_pending = Some(pending);
+                }
+                let read_size = size_limit
+                    .map(|l| l.saturating_sub(outvec.len() + errvec.len()))
+                    .unwrap_or(BUFFER_SIZE)
+                    .min(BUFFER_SIZE);
+                if !stdout_eof && self.stdout_pending.is_none() {
+                    out_ready = start_read(
+                        self.stdout.as_ref().unwrap(),
+                        &mut self.stdout_pending,
+                        read_size,
+                    )?;
+                }
+                if !stderr_eof && self.stderr_pending.is_none() {
+                    err_ready = start_read(
+                        self.stderr.as_ref().unwrap(),
+                        &mut self.stderr_pending,
+                        read_size,
+                    )?;
+                }
+
+                // If nothing completed immediately, wait for pending operations
+                if !in_ready && !out_ready && !err_ready {
+                    match wait_for_io(
+                        self.stdin_pending.as_ref(),
+                        self.stdout_pending.as_ref(),
+                        self.stderr_pending.as_ref(),
+                        deadline,
+                    )? {
+                        Some(ReadyStream::Stdin) => in_ready = true,
+                        Some(ReadyStream::Stdout) => out_ready = true,
+                        Some(ReadyStream::Stderr) => err_ready = true,
+                        None => return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout")),
+                    }
+                }
+
+                // Complete operations and process data
+                if in_ready {
+                    let n = self.stdin_pending.take().unwrap().complete()? as usize;
+                    self.input_data.drain(..n);
+                    if self.input_data.is_empty() {
+                        // close stdin when done writing, so the child receives EOF
+                        self.stdin.take();
+                    }
+                }
+                if out_ready {
+                    stdout_eof = complete_read(self.stdout_pending.take().unwrap(), outvec)?;
+                }
+                if err_ready {
+                    stderr_eof = complete_read(self.stderr_pending.take().unwrap(), errvec)?;
                 }
             }
 
-            while self.helper_set != 0 {
-                match self.recv_until(deadline) {
-                    Ok((ident, Payload::EOF)) => {
-                        self.helper_set &= !(ident as u8);
-                        continue;
-                    }
-                    Ok((ident, Payload::Data(data))) => {
-                        assert!(data.len() != 0);
-                        if !grow_result(ident, &data, &mut self.leftover) {
-                            break;
-                        }
-                    }
-                    Ok((_ident, Payload::Err(e))) => {
-                        return Err(e);
-                    }
-                    Err(Timeout) => {
-                        return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout"));
-                    }
-                }
-            }
             Ok(())
         }
 
@@ -387,28 +417,16 @@ mod raw {
             deadline: Option<Instant>,
             size_limit: Option<usize>,
         ) -> (Option<io::Error>, (Option<Vec<u8>>, Option<Vec<u8>>)) {
-            // Create both vectors immediately.  This doesn't allocate, and if
-            // one of those is not needed, it just won't get resized.
             let mut outvec = vec![];
             let mut errvec = vec![];
 
             let err = self
                 .read_into(deadline, size_limit, &mut outvec, &mut errvec)
                 .err();
-            let output = {
-                let (mut o, mut e) = (None, None);
-                if self.requested_streams & StreamIdent::Out as u8 != 0 {
-                    o = Some(outvec);
-                } else {
-                    assert!(outvec.len() == 0);
-                }
-                if self.requested_streams & StreamIdent::Err as u8 != 0 {
-                    e = Some(errvec);
-                } else {
-                    assert!(errvec.len() == 0);
-                }
-                (o, e)
-            };
+            let output = (
+                self.stdout.as_ref().map(|_| outvec),
+                self.stderr.as_ref().map(|_| errvec),
+            );
             (err, output)
         }
     }
@@ -424,13 +442,64 @@ use raw::RawCommunicator;
 /// the parent process is blocked on writing the input, it cannot read the output and a
 /// deadlock occurs.  This implementation avoids this issue by reading from and writing to the
 /// subprocess in parallel.  On Unix-like systems this is achieved using `poll()`, and on
-/// Windows using threads.
+/// Windows using overlapped I/O with `WaitForMultipleObjects()`.
 #[must_use]
 #[derive(Debug)]
 pub struct Communicator {
-    inner: RawCommunicator,
+    inner: CommunicatorInner,
     size_limit: Option<usize>,
     time_limit: Option<Duration>,
+}
+
+#[derive(Debug)]
+enum CommunicatorInner {
+    /// Not yet initialized - holds the files/data needed to create RawCommunicator
+    Pending {
+        stdin: Option<File>,
+        stdout: Option<File>,
+        stderr: Option<File>,
+        input_data: Option<Vec<u8>>,
+    },
+    /// Initialized and ready to use
+    Ready(RawCommunicator),
+}
+
+impl CommunicatorInner {
+    /// Get or create the RawCommunicator, returning a mutable reference to it.
+    fn get_or_init(&mut self) -> io::Result<&mut RawCommunicator> {
+        // If already initialized, just return a reference
+        if let CommunicatorInner::Ready(raw) = self {
+            return Ok(raw);
+        }
+
+        // Take ownership of pending state and initialize
+        let old = std::mem::replace(
+            self,
+            CommunicatorInner::Pending {
+                stdin: None,
+                stdout: None,
+                stderr: None,
+                input_data: None,
+            },
+        );
+
+        let CommunicatorInner::Pending {
+            stdin,
+            stdout,
+            stderr,
+            input_data,
+        } = old
+        else {
+            unreachable!()
+        };
+
+        *self = CommunicatorInner::Ready(RawCommunicator::new(stdin, stdout, stderr, input_data)?);
+
+        let CommunicatorInner::Ready(raw) = self else {
+            unreachable!()
+        };
+        Ok(raw)
+    }
 }
 
 impl Communicator {
@@ -441,7 +510,12 @@ impl Communicator {
         input_data: Option<Vec<u8>>,
     ) -> Communicator {
         Communicator {
-            inner: RawCommunicator::new(stdin, stdout, stderr, input_data),
+            inner: CommunicatorInner::Pending {
+                stdin,
+                stdout,
+                stderr,
+                input_data,
+            },
             size_limit: None,
             time_limit: None,
         }
@@ -489,8 +563,12 @@ impl Communicator {
     ///
     /// [`capture`]: struct.CommunicateError.html#structfield.capture
     pub fn read(&mut self) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), CommunicateError> {
+        let inner = self.inner.get_or_init().map_err(|error| CommunicateError {
+            error,
+            capture: (None, None),
+        })?;
         let deadline = self.time_limit.map(|timeout| Instant::now() + timeout);
-        match self.inner.read(deadline, self.size_limit) {
+        match inner.read(deadline, self.size_limit) {
             (None, capture) => Ok(capture),
             (Some(error), capture) => Err(CommunicateError { error, capture }),
         }

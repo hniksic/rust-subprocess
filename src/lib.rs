@@ -82,14 +82,13 @@ mod win32;
 
 mod os_common;
 
-#[cfg(unix)]
-pub use builder::ExecExt;
-pub use builder::{CaptureData, Exec, NullFile, Pipeline};
+pub use builder::{CaptureData, Exec, ExecExt, NullFile, Pipeline};
 pub use communicate::{CommunicateError, Communicator};
 pub use os_common::ExitStatus;
 pub use popen::{Popen, PopenConfig, PopenError, Redirection, Result, make_pipe};
 
 /// Subprocess extensions for Unix platforms.
+#[cfg(unix)]
 pub mod unix {
     pub use super::popen::os_ext::*;
 }

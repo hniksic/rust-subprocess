@@ -1092,6 +1092,7 @@ mod pipeline {
         fn setup_communicate(mut self) -> PopenResult<(Communicator, Vec<Popen>)> {
             assert!(self.cmds.len() >= 2);
 
+            // Parent reads stderr - make_pipe() creates pipes suitable for this
             let (err_read, err_write) = crate::popen::make_pipe()?;
             self = self.stderr_to(err_write);
 
