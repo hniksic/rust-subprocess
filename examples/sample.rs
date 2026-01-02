@@ -1,12 +1,17 @@
-extern crate subprocess;
+//! Basic example: list files with line numbers.
+//!
+//! Run with: cargo run --example sample
 
 use std::io::{BufRead, BufReader};
 use subprocess::Exec;
 
-fn main() {
-    let x = Exec::cmd("ls").stream_stdout().unwrap();
-    let br = BufReader::new(x);
-    for (i, line) in br.lines().enumerate() {
+fn main() -> subprocess::Result<()> {
+    let stream = Exec::cmd("ls").stream_stdout()?;
+    let reader = BufReader::new(stream);
+
+    for (i, line) in reader.lines().enumerate() {
         println!("{}: {}", i, line.unwrap());
     }
+
+    Ok(())
 }
