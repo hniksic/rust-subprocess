@@ -241,9 +241,9 @@ impl std::fmt::Debug for PendingRead {
 }
 
 impl PendingRead {
-    /// Returns true if the operation is still pending.
-    pub fn is_pending(&self) -> bool {
-        matches!(self.state, PendingState::Pending)
+    /// Returns true if the operation is ready.
+    pub fn is_ready(&self) -> bool {
+        matches!(self.state, PendingState::Completed(_))
     }
 
     /// Get the event handle for use with `WaitForMultipleObjects`.
@@ -284,7 +284,7 @@ impl PendingRead {
 
 impl Drop for PendingRead {
     fn drop(&mut self) {
-        if self.is_pending() {
+        if !self.is_ready() {
             let _ = CancelIoEx(self.handle, &mut self.overlapped);
             let _ = self.overlapped.get_result(self.handle, true);
         }
@@ -294,7 +294,7 @@ impl Drop for PendingRead {
 /// A pending overlapped write operation.
 ///
 /// This type owns a copy of the data being written and will cancel the I/O
-/// operation on drop if it hasn't completed. Use `is_pending()` to check status,
+/// operation on drop if it hasn't completed. Use `is_ready()` to check status,
 /// `event()` to get a handle for `WaitForMultipleObjects`, and `complete()` to
 /// finish the operation and retrieve the byte count.
 pub struct PendingWrite {
@@ -314,8 +314,8 @@ impl std::fmt::Debug for PendingWrite {
 
 impl PendingWrite {
     /// Returns true if the operation is still pending.
-    pub fn is_pending(&self) -> bool {
-        matches!(self.state, PendingState::Pending)
+    pub fn is_ready(&self) -> bool {
+        matches!(self.state, PendingState::Completed(_))
     }
 
     /// Get the event handle for use with `WaitForMultipleObjects`.
@@ -341,7 +341,7 @@ impl PendingWrite {
 
 impl Drop for PendingWrite {
     fn drop(&mut self) {
-        if self.is_pending() {
+        if !self.is_ready() {
             let _ = CancelIoEx(self.handle, &mut self.overlapped);
             let _ = self.overlapped.get_result(self.handle, true);
         }
@@ -349,12 +349,6 @@ impl Drop for PendingWrite {
 }
 
 /// Start an overlapped read operation.
-///
-/// Allocates a buffer of the given size and starts reading into it. Returns a
-/// `PendingRead` that owns the buffer and can be used to retrieve the data.
-///
-/// Check `is_pending()` to see if you need to wait, use `event()` with
-/// `WaitForMultipleObjects`, then call `complete()` and `data()`.
 pub fn ReadFileOverlapped(handle: RawHandle, buffer_size: usize) -> Result<PendingRead> {
     use winapi::shared::winerror::{ERROR_BROKEN_PIPE, ERROR_HANDLE_EOF, ERROR_IO_PENDING};
 
@@ -397,12 +391,6 @@ pub fn ReadFileOverlapped(handle: RawHandle, buffer_size: usize) -> Result<Pendi
 }
 
 /// Start an overlapped write operation.
-///
-/// Copies the data into an internal buffer and starts writing from it. Returns
-/// a `PendingWrite` that owns the buffer copy.
-///
-/// Check `is_pending()` to see if you need to wait, use `event()` with
-/// `WaitForMultipleObjects`, then call `complete()` to get bytes written.
 pub fn WriteFileOverlapped(handle: RawHandle, data: &[u8]) -> Result<PendingWrite> {
     use winapi::shared::winerror::ERROR_IO_PENDING;
 

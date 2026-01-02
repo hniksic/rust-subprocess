@@ -228,7 +228,7 @@ mod raw {
         stdout_pending: Option<&PendingRead>,
         stderr_pending: Option<&PendingRead>,
         deadline: Option<Instant>,
-    ) -> io::Result<Option<ReadyStream>> {
+    ) -> io::Result<ReadyStream> {
         let mut handles = Vec::with_capacity(3);
         let mut streams = Vec::with_capacity(3);
 
@@ -244,10 +244,7 @@ mod raw {
             handles.push(p.event().as_raw_handle());
             streams.push(ReadyStream::Stderr);
         }
-
-        if handles.is_empty() {
-            return Ok(None);
-        }
+        assert!(!handles.is_empty());
 
         let timeout = deadline.map(|d| {
             let now = Instant::now();
@@ -259,23 +256,35 @@ mod raw {
         });
 
         match WaitForMultipleObjects(&handles, timeout)? {
-            WaitResult::Timeout => Ok(None),
-            WaitResult::Object(idx) => Ok(Some(streams[idx])),
+            WaitResult::Timeout => Err(io::Error::new(io::ErrorKind::TimedOut, "timeout")),
+            WaitResult::Object(idx) => Ok(streams[idx]),
         }
     }
 
-    /// Start a read operation if not already pending.
+    /// Start a read operation.
+    /// Returns Ok(true) if completed immediately, Ok(false) if pending.
+    fn start_write(
+        file: &File,
+        pending: &mut Option<PendingWrite>,
+        data: &mut VecDeque<u8>,
+    ) -> io::Result<bool> {
+        // make_contiguous() is a no-op: we only drain from the front, so the data never
+        // wraps around.
+        let data = data.make_contiguous();
+        let chunk_size = min(BUFFER_SIZE, data.len());
+        let new = WriteFileOverlapped(file.as_raw_handle(), &data[..chunk_size])?;
+        Ok(pending.insert(new).is_ready())
+    }
+
+    /// Start a read operation.
     /// Returns Ok(true) if completed immediately, Ok(false) if pending.
     fn start_read(
         file: &File,
         pending: &mut Option<PendingRead>,
         read_size: usize,
     ) -> io::Result<bool> {
-        debug_assert!(pending.is_none());
-        let p = ReadFileOverlapped(file.as_raw_handle(), read_size)?;
-        let ready = !p.is_pending();
-        *pending = Some(p);
-        Ok(ready)
+        let new = ReadFileOverlapped(file.as_raw_handle(), read_size)?;
+        Ok(pending.insert(new).is_ready())
     }
 
     /// Complete a read operation and append data to dest.
@@ -287,6 +296,12 @@ mod raw {
             dest.extend_from_slice(pending.data());
             Ok(false)
         }
+    }
+
+    fn complete_write(mut pending: PendingWrite, source: &mut VecDeque<u8>) -> io::Result<()> {
+        let nwritten = pending.complete()? as usize;
+        source.drain(..nwritten);
+        Ok(())
     }
 
     #[derive(Debug)]
@@ -336,7 +351,6 @@ mod raw {
                 {
                     break;
                 }
-
                 if self.stdin.is_none() && stdout_eof && stderr_eof {
                     // When no stream remains, we are done.
                     break;
@@ -350,13 +364,7 @@ mod raw {
                 if let Some(ref stdin) = self.stdin
                     && self.stdin_pending.is_none()
                 {
-                    // make_contiguous() is a no-op here: we start from a Vec and only
-                    // drain from the front, so the data never wraps around.
-                    let data = self.input_data.make_contiguous();
-                    let chunk_size = min(BUFFER_SIZE, data.len());
-                    let pending = WriteFileOverlapped(stdin.as_raw_handle(), &data[..chunk_size])?;
-                    in_ready = !pending.is_pending();
-                    self.stdin_pending = Some(pending);
+                    in_ready = start_write(stdin, &mut self.stdin_pending, &mut self.input_data)?;
                 }
                 let read_size = size_limit
                     .map(|l| l.saturating_sub(outvec.len() + errvec.len()))
@@ -385,17 +393,15 @@ mod raw {
                         self.stderr_pending.as_ref(),
                         deadline,
                     )? {
-                        Some(ReadyStream::Stdin) => in_ready = true,
-                        Some(ReadyStream::Stdout) => out_ready = true,
-                        Some(ReadyStream::Stderr) => err_ready = true,
-                        None => return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout")),
+                        ReadyStream::Stdin => in_ready = true,
+                        ReadyStream::Stdout => out_ready = true,
+                        ReadyStream::Stderr => err_ready = true,
                     }
                 }
 
                 // Complete operations and process data
                 if in_ready {
-                    let n = self.stdin_pending.take().unwrap().complete()? as usize;
-                    self.input_data.drain(..n);
+                    complete_write(self.stdin_pending.take().unwrap(), &mut self.input_data)?;
                     if self.input_data.is_empty() {
                         // close stdin when done writing, so the child receives EOF
                         self.stdin.take();
