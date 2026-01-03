@@ -970,8 +970,10 @@ mod os {
             ///
             /// This is useful for terminating a tree of processes spawned by the child.
             /// For this to work correctly, the child should be started with
-            /// [`setpgid`](PopenConfig::setpgid) set to `true`, which places the child
+            /// [`PopenConfig::setpgid`] set to `true`, which places the child
             /// in a new process group with PGID equal to its PID.
+            ///
+            /// [`PopenConfig::setpgid`]: crate::PopenConfig#structfield.setpgid
             ///
             /// If the child process is known to have finished, this will do nothing
             /// and return `Ok`.
