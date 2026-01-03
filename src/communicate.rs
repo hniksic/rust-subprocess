@@ -11,7 +11,7 @@ mod raw {
     use std::collections::VecDeque;
     use std::fs::File;
     use std::io::{self, Read, Write};
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     fn as_pollfd(f: Option<&File>, for_read: bool) -> posix::PollFd<'_> {
         let events = if for_read {
@@ -40,15 +40,7 @@ mod raw {
                 _ => (),
             }
         }
-
-        let timeout = deadline.map(|deadline| {
-            let now = Instant::now();
-            if now >= deadline {
-                Duration::from_secs(0)
-            } else {
-                deadline - now
-            }
-        });
+        let timeout = deadline.map(|d| d.saturating_duration_since(Instant::now()));
 
         let mut fds = [
             as_pollfd(fin, false),
@@ -206,7 +198,7 @@ mod raw {
     use std::fs::File;
     use std::io;
     use std::os::windows::io::AsRawHandle;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     const BUFFER_SIZE: usize = 4096;
 
@@ -245,15 +237,7 @@ mod raw {
             streams.push(ReadyStream::Stderr);
         }
         assert!(!handles.is_empty());
-
-        let timeout = deadline.map(|d| {
-            let now = Instant::now();
-            if now >= d {
-                Duration::from_secs(0)
-            } else {
-                d - now
-            }
-        });
+        let timeout = deadline.map(|d| d.saturating_duration_since(Instant::now()));
 
         match WaitForMultipleObjects(&handles, timeout)? {
             WaitResult::Timeout => Err(io::Error::new(io::ErrorKind::TimedOut, "timeout")),
