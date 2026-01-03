@@ -440,15 +440,19 @@ mod raw {
 
 use raw::RawCommunicator;
 
-/// Unattended data exchange with the subprocess.
+/// Send input to a subprocess and capture its output, without deadlock.
 ///
-/// When a subprocess both expects input and provides output, care must be taken to avoid
-/// deadlock.  The issue arises when the subprocess responds to part of the input data by
-/// providing some output which must be read for the subprocess to accept further input.  If
-/// the parent process is blocked on writing the input, it cannot read the output and a
-/// deadlock occurs.  This implementation avoids this issue by reading from and writing to the
-/// subprocess in parallel.  On Unix-like systems this is achieved using `poll()`, and on
-/// Windows using overlapped I/O with `WaitForMultipleObjects()`.
+/// `Communicator` writes the provided input data to the subprocess's stdin (which is then
+/// closed), while simultaneously reading its stdout and stderr until end-of-file.  This
+/// parallel operation prevents deadlock that would occur if the subprocess produces output
+/// while waiting for more input.
+///
+/// Create a `Communicator` by calling [`Popen::communicate_start`], then call [`read`] or
+/// [`read_string`] to perform the data exchange.
+///
+/// [`Popen::communicate_start`]: struct.Popen.html#method.communicate_start
+/// [`read`]: #method.read
+/// [`read_string`]: #method.read_string
 #[must_use]
 #[derive(Debug)]
 pub struct Communicator {

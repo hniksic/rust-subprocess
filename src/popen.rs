@@ -517,33 +517,23 @@ impl Popen {
         }
     }
 
-    /// Prepare to communicate with the subprocess.
+    /// Prepare to send input to the subprocess and capture its output.
     ///
-    /// Communicating refers to unattended data exchange with the subprocess.  During
-    /// communication the given `input_data` is written to the subprocess's standard input
-    /// which is then closed, while simultaneously its standard output and error streams are
-    /// read until end-of-file is reached.
+    /// Sets up writing `input_data` to the subprocess's stdin (then closing it) while
+    /// simultaneously reading stdout and stderr until end-of-file.  The actual I/O is
+    /// deferred until you call [`read`] or [`read_string`] on the returned [`Communicator`].
     ///
-    /// The difference between this and simply writing input data to `self.stdin` and then
-    /// reading output from `self.stdout` and `self.stderr` is that the reading and the
-    /// writing are performed simultaneously.  A naive implementation that writes and then
-    /// reads has an issue when the subprocess responds to part of the input by providing
-    /// output.  The output must be read for the subprocess to accept further input, but the
-    /// parent process is still blocked on writing the rest of the input data.  Since neither
-    /// process can proceed, a deadlock occurs.  This is why a correct implementation must
-    /// write and read at the same time.
+    /// The simultaneous reading and writing avoids deadlock when the subprocess produces
+    /// output before consuming all input.  (A naive write-then-read approach would hang
+    /// because the parent blocks on writing while the child blocks on having its output read.)
     ///
-    /// This method does not perform the actual communication, it just sets it up and returns
-    /// a [`Communicator`].  Call the [`read`] or [`read_string`] method on the `Communicator`
-    /// to exchange data with the subprocess.
-    ///
-    /// Compared to `communicate()` and `communicate_bytes()`, the `Communicator` provides
-    /// more control, such as timeout, read size limit, and the ability to retrieve captured
-    /// output in case of read error.
+    /// Unlike [`communicate_bytes`], the `Communicator` allows timeout, size limits, and
+    /// access to partial output on error.
     ///
     /// [`Communicator`]: struct.Communicator.html
     /// [`read`]: struct.Communicator.html#method.read
     /// [`read_string`]: struct.Communicator.html#method.read_string
+    /// [`communicate_bytes`]: #method.communicate_bytes
     pub fn communicate_start(&mut self, input_data: Option<Vec<u8>>) -> Communicator {
         communicate::communicate(
             self.stdin.take(),
@@ -553,26 +543,21 @@ impl Popen {
         )
     }
 
-    /// Feed the subprocess with input data and capture its output.
+    /// Send input to the subprocess and capture its output.
     ///
-    /// This will write the provided `input_data` to the subprocess's standard input, and
-    /// simultaneously read its standard output and error.  The output and error contents are
-    /// returned as a pair of `Option<Vec<u8>>`.  The `None` options correspond to streams not
-    /// specified as `Redirection::Pipe` when creating the subprocess.
+    /// Writes `input_data` to the subprocess's stdin and closes it, while simultaneously
+    /// reading stdout and stderr until end-of-file.  Returns the captured output as a pair of
+    /// `Option<Vec<u8>>`, where `None` indicates a stream not redirected to `Pipe`.
     ///
-    /// This implementation reads and writes simultaneously, avoiding deadlock in case the
-    /// subprocess starts writing output before reading the whole input - see
-    /// [`communicate_start()`] for details.
+    /// The simultaneous reading and writing avoids deadlock when the subprocess produces
+    /// output before consuming all input.
     ///
-    /// Note that this method does not wait for the subprocess to finish, only to close its
-    /// output/error streams.  It is rare but possible for the program to continue running
-    /// after having closed the streams, in which case `Popen::Drop` will wait for it to
-    /// finish.  If such a wait is undesirable, it can be prevented by waiting explicitly
-    /// using `wait()`, by detaching the process using `detach()`, or by terminating it with
-    /// `terminate()`.
+    /// This method does not wait for the subprocess to exit, only for its output streams to
+    /// reach EOF.  In rare cases where a process continues after closing its streams,
+    /// [`Popen::drop`] will wait for it.  Use [`wait`], [`detach`], or [`terminate`] if you
+    /// need explicit control.
     ///
-    /// For additional control over communication, such as timeout and size limit, call
-    /// [`communicate_start()`].
+    /// For timeout and size limit support, use [`communicate_start`] instead.
     ///
     /// # Panics
     ///
@@ -583,7 +568,10 @@ impl Popen {
     ///
     /// * `Err(::std::io::Error)` if a system call fails
     ///
-    /// [`communicate_start()`]: struct.Popen.html#method.communicate_start
+    /// [`wait`]: #method.wait
+    /// [`detach`]: #method.detach
+    /// [`terminate`]: #method.terminate
+    /// [`communicate_start`]: #method.communicate_start
     pub fn communicate_bytes(
         &mut self,
         input_data: Option<&[u8]>,
