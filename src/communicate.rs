@@ -78,13 +78,13 @@ mod raw {
             stdout: Option<File>,
             stderr: Option<File>,
             input_data: Option<Vec<u8>>,
-        ) -> io::Result<RawCommunicator> {
-            Ok(RawCommunicator {
+        ) -> RawCommunicator {
+            RawCommunicator {
                 stdin,
                 stdout,
                 stderr,
                 input_data: VecDeque::from(input_data.unwrap_or_default()),
-            })
+            }
         }
 
         fn do_read(
@@ -321,8 +321,8 @@ mod raw {
             stdout: Option<File>,
             stderr: Option<File>,
             input_data: Option<Vec<u8>>,
-        ) -> io::Result<RawCommunicator> {
-            Ok(RawCommunicator {
+        ) -> RawCommunicator {
+            RawCommunicator {
                 stdin,
                 stdout,
                 stderr,
@@ -330,7 +330,7 @@ mod raw {
                 stdout_pending: None,
                 stderr_pending: None,
                 input_data: VecDeque::from(input_data.unwrap_or_default()),
-            })
+            }
         }
 
         fn read_into(
@@ -452,60 +452,9 @@ use raw::RawCommunicator;
 #[must_use]
 #[derive(Debug)]
 pub struct Communicator {
-    inner: CommunicatorInner,
+    inner: RawCommunicator,
     size_limit: Option<usize>,
     time_limit: Option<Duration>,
-}
-
-#[derive(Debug)]
-enum CommunicatorInner {
-    /// Not yet initialized - holds the files/data needed to create RawCommunicator
-    Pending {
-        stdin: Option<File>,
-        stdout: Option<File>,
-        stderr: Option<File>,
-        input_data: Option<Vec<u8>>,
-    },
-    /// Initialized and ready to use
-    Ready(RawCommunicator),
-}
-
-impl CommunicatorInner {
-    /// Get or create the RawCommunicator, returning a mutable reference to it.
-    fn get_or_init(&mut self) -> io::Result<&mut RawCommunicator> {
-        // If already initialized, just return a reference
-        if let CommunicatorInner::Ready(raw) = self {
-            return Ok(raw);
-        }
-
-        // Take ownership of pending state and initialize
-        let old = std::mem::replace(
-            self,
-            CommunicatorInner::Pending {
-                stdin: None,
-                stdout: None,
-                stderr: None,
-                input_data: None,
-            },
-        );
-
-        let CommunicatorInner::Pending {
-            stdin,
-            stdout,
-            stderr,
-            input_data,
-        } = old
-        else {
-            unreachable!()
-        };
-
-        *self = CommunicatorInner::Ready(RawCommunicator::new(stdin, stdout, stderr, input_data)?);
-
-        let CommunicatorInner::Ready(raw) = self else {
-            unreachable!()
-        };
-        Ok(raw)
-    }
 }
 
 impl Communicator {
@@ -516,12 +465,7 @@ impl Communicator {
         input_data: Option<Vec<u8>>,
     ) -> Communicator {
         Communicator {
-            inner: CommunicatorInner::Pending {
-                stdin,
-                stdout,
-                stderr,
-                input_data,
-            },
+            inner: RawCommunicator::new(stdin, stdout, stderr, input_data),
             size_limit: None,
             time_limit: None,
         }
@@ -569,12 +513,8 @@ impl Communicator {
     ///
     /// [`capture`]: struct.CommunicateError.html#structfield.capture
     pub fn read(&mut self) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), CommunicateError> {
-        let inner = self.inner.get_or_init().map_err(|error| CommunicateError {
-            error,
-            capture: (None, None),
-        })?;
         let deadline = self.time_limit.map(|timeout| Instant::now() + timeout);
-        match inner.read(deadline, self.size_limit) {
+        match self.inner.read(deadline, self.size_limit) {
             (None, capture) => Ok(capture),
             (Some(error), capture) => Err(CommunicateError { error, capture }),
         }
