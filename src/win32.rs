@@ -13,7 +13,12 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use winapi::shared::minwindef::{BOOL, DWORD, FALSE, LPVOID, TRUE};
+use winapi::shared::{
+    minwindef::{BOOL, DWORD, FALSE, LPVOID, TRUE},
+    winerror::{
+        ERROR_BROKEN_PIPE, ERROR_HANDLE_EOF, ERROR_IO_PENDING, ERROR_NOT_FOUND, WAIT_TIMEOUT,
+    },
+};
 use winapi::um::fileapi::CreateFileW;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::ioapiset::GetOverlappedResult;
@@ -25,6 +30,7 @@ use winapi::um::winbase::{
     CREATE_UNICODE_ENVIRONMENT, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
     PIPE_ACCESS_OUTBOUND, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
 };
+use winapi::um::winbase::{INFINITE, WAIT_ABANDONED, WAIT_ABANDONED_0, WAIT_FAILED, WAIT_OBJECT_0};
 use winapi::um::winnt::GENERIC_READ;
 use winapi::um::{fileapi, handleapi, processenv, processthreadsapi, synchapi};
 
@@ -141,69 +147,38 @@ pub fn CreateOverlappedPipe() -> Result<(File, File)> {
 }
 
 /// Create a manual-reset event object for use with overlapped I/O.
-pub fn CreateEvent() -> Result<Handle> {
+fn CreateEvent() -> Result<Handle> {
     let handle = unsafe { CreateEventW(ptr::null_mut(), TRUE, FALSE, ptr::null()) };
     check_handle(handle)?;
     Ok(unsafe { Handle::from_raw_handle(handle) })
 }
 
 /// Reset an event to non-signaled state.
-pub fn ResetEvent(event: &Handle) -> Result<()> {
+fn ResetEvent(event: &Handle) -> Result<()> {
     check(unsafe { synchapi::ResetEvent(event.as_raw_handle()) })
 }
 
-/// An OVERLAPPED structure with its associated event.
-pub struct Overlapped {
-    overlapped: Box<OVERLAPPED>,
-    pub event: Handle,
-}
-
-impl std::fmt::Debug for Overlapped {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Overlapped")
-            .field("event", &self.event)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Overlapped {
-    pub fn new() -> Result<Overlapped> {
-        let event = CreateEvent()?;
-        let mut overlapped: Box<OVERLAPPED> = Box::new(unsafe { mem::zeroed() });
-        overlapped.hEvent = event.as_raw_handle();
-        Ok(Overlapped { overlapped, event })
-    }
-
-    pub fn as_mut_ptr(&mut self) -> *mut OVERLAPPED {
-        &mut *self.overlapped as *mut OVERLAPPED
-    }
-
-    /// Get the result of an overlapped operation.
-    /// Returns Ok(bytes_transferred) or Err if the operation failed.
-    /// ERROR_BROKEN_PIPE and ERROR_HANDLE_EOF are treated as EOF (returns 0 bytes).
-    pub fn get_result(&mut self, handle: RawHandle, wait: bool) -> Result<u32> {
-        use winapi::shared::winerror::{ERROR_BROKEN_PIPE, ERROR_HANDLE_EOF};
-
-        let mut bytes_transferred: DWORD = 0;
-        let result = unsafe {
-            GetOverlappedResult(
-                handle,
-                self.as_mut_ptr(),
-                &mut bytes_transferred,
-                wait as BOOL,
-            )
-        };
-        if result != 0 {
-            Ok(bytes_transferred)
+/// Get the result of an overlapped operation.
+/// Returns Ok(bytes_transferred) or Err if the operation failed.
+/// ERROR_BROKEN_PIPE and ERROR_HANDLE_EOF are treated as EOF (returns 0 bytes).
+fn get_overlapped_result(
+    handle: RawHandle,
+    overlapped: &mut OVERLAPPED,
+    wait: bool,
+) -> Result<u32> {
+    let mut bytes_transferred: DWORD = 0;
+    let result =
+        unsafe { GetOverlappedResult(handle, overlapped, &mut bytes_transferred, wait as BOOL) };
+    if result != 0 {
+        Ok(bytes_transferred)
+    } else {
+        let err = Error::last_os_error();
+        let code = err.raw_os_error();
+        if code == Some(ERROR_BROKEN_PIPE as i32) || code == Some(ERROR_HANDLE_EOF as i32) {
+            // Pipe closed or EOF
+            Ok(0)
         } else {
-            let err = Error::last_os_error();
-            let code = err.raw_os_error();
-            if code == Some(ERROR_BROKEN_PIPE as i32) || code == Some(ERROR_HANDLE_EOF as i32) {
-                // Pipe closed or EOF
-                Ok(0)
-            } else {
-                Err(err)
-            }
+            Err(err)
         }
     }
 }
@@ -225,7 +200,8 @@ enum PendingState {
 /// operation and retrieve the byte count.
 pub struct PendingRead {
     handle: RawHandle,
-    overlapped: Overlapped,
+    overlapped: Box<OVERLAPPED>,
+    event: Handle,
     /// Buffer wrapped in UnsafeCell because the OS writes to it asynchronously
     /// while we may hold shared references to the struct.
     buffer: UnsafeCell<Box<[u8]>>,
@@ -248,7 +224,7 @@ impl PendingRead {
 
     /// Get the event handle for use with `WaitForMultipleObjects`.
     pub fn event(&self) -> &Handle {
-        &self.overlapped.event
+        &self.event
     }
 
     /// Complete the operation and return the number of bytes read.
@@ -259,7 +235,7 @@ impl PendingRead {
         match self.state {
             PendingState::Completed(n) => Ok(n),
             PendingState::Pending => {
-                let n = self.overlapped.get_result(self.handle, false)?;
+                let n = get_overlapped_result(self.handle, &mut self.overlapped, false)?;
                 self.state = PendingState::Completed(n);
                 Ok(n)
             }
@@ -286,7 +262,7 @@ impl Drop for PendingRead {
     fn drop(&mut self) {
         if !self.is_ready() {
             let _ = CancelIoEx(self.handle, &mut self.overlapped);
-            let _ = self.overlapped.get_result(self.handle, true);
+            let _ = get_overlapped_result(self.handle, &mut self.overlapped, true);
         }
     }
 }
@@ -299,7 +275,8 @@ impl Drop for PendingRead {
 /// finish the operation and retrieve the byte count.
 pub struct PendingWrite {
     handle: RawHandle,
-    overlapped: Overlapped,
+    overlapped: Box<OVERLAPPED>,
+    event: Handle,
     buffer: Box<[u8]>,
     state: PendingState,
 }
@@ -320,7 +297,7 @@ impl PendingWrite {
 
     /// Get the event handle for use with `WaitForMultipleObjects`.
     pub fn event(&self) -> &Handle {
-        &self.overlapped.event
+        &self.event
     }
 
     /// Complete the operation and return the number of bytes written.
@@ -331,7 +308,7 @@ impl PendingWrite {
         match self.state {
             PendingState::Completed(n) => Ok(n),
             PendingState::Pending => {
-                let n = self.overlapped.get_result(self.handle, false)?;
+                let n = get_overlapped_result(self.handle, &mut self.overlapped, false)?;
                 self.state = PendingState::Completed(n);
                 Ok(n)
             }
@@ -343,24 +320,27 @@ impl Drop for PendingWrite {
     fn drop(&mut self) {
         if !self.is_ready() {
             let _ = CancelIoEx(self.handle, &mut self.overlapped);
-            let _ = self.overlapped.get_result(self.handle, true);
+            let _ = get_overlapped_result(self.handle, &mut self.overlapped, true);
         }
     }
 }
 
 /// Start an overlapped read operation.
 pub fn ReadFileOverlapped(handle: RawHandle, buffer_size: usize) -> Result<PendingRead> {
-    use winapi::shared::winerror::{ERROR_BROKEN_PIPE, ERROR_HANDLE_EOF, ERROR_IO_PENDING};
+    let event = CreateEvent()?;
+    let mut overlapped: Box<OVERLAPPED> = Box::new(unsafe { mem::zeroed() });
+    overlapped.hEvent = event.as_raw_handle();
 
     let buffer: Box<[u8]> = vec![0u8; buffer_size].into_boxed_slice();
     let mut pending = PendingRead {
         handle,
-        overlapped: Overlapped::new()?,
+        overlapped,
+        event,
         buffer: UnsafeCell::new(buffer),
         state: PendingState::Pending,
     };
 
-    ResetEvent(&pending.overlapped.event)?;
+    ResetEvent(&pending.event)?;
     let mut bytes_read: DWORD = 0;
     // SAFETY: We pass a pointer to the buffer which we own. The OS will write to it
     // asynchronously, which is why the buffer is wrapped in UnsafeCell.
@@ -371,7 +351,7 @@ pub fn ReadFileOverlapped(handle: RawHandle, buffer_size: usize) -> Result<Pendi
             buffer.as_mut_ptr() as LPVOID,
             buffer.len() as DWORD,
             &mut bytes_read,
-            pending.overlapped.as_mut_ptr(),
+            pending.overlapped.as_mut() as _,
         )
     };
     if result != 0 {
@@ -392,16 +372,19 @@ pub fn ReadFileOverlapped(handle: RawHandle, buffer_size: usize) -> Result<Pendi
 
 /// Start an overlapped write operation.
 pub fn WriteFileOverlapped(handle: RawHandle, data: &[u8]) -> Result<PendingWrite> {
-    use winapi::shared::winerror::ERROR_IO_PENDING;
+    let event = CreateEvent()?;
+    let mut overlapped: Box<OVERLAPPED> = Box::new(unsafe { mem::zeroed() });
+    overlapped.hEvent = event.as_raw_handle();
 
     let mut pending = PendingWrite {
         handle,
-        overlapped: Overlapped::new()?,
+        overlapped,
+        event,
         buffer: data.into(),
         state: PendingState::Pending,
     };
 
-    ResetEvent(&pending.overlapped.event)?;
+    ResetEvent(&pending.event)?;
     let mut bytes_written: DWORD = 0;
     let result = unsafe {
         fileapi::WriteFile(
@@ -409,7 +392,7 @@ pub fn WriteFileOverlapped(handle: RawHandle, data: &[u8]) -> Result<PendingWrit
             pending.buffer.as_ptr() as LPVOID,
             pending.buffer.len() as DWORD,
             &mut bytes_written,
-            pending.overlapped.as_mut_ptr(),
+            pending.overlapped.as_mut() as _,
         )
     };
     if result != 0 {
@@ -435,9 +418,6 @@ pub fn WaitForMultipleObjects(
     handles: &[RawHandle],
     timeout: Option<Duration>,
 ) -> Result<WaitResult> {
-    use winapi::shared::winerror::WAIT_TIMEOUT;
-    use winapi::um::winbase::{INFINITE, WAIT_ABANDONED_0, WAIT_FAILED, WAIT_OBJECT_0};
-
     assert!(
         handles.len() <= 64,
         "WaitForMultipleObjects: max 64 handles"
@@ -562,8 +542,6 @@ pub enum WaitEvent {
 }
 
 pub fn WaitForSingleObject(handle: &Handle, mut timeout: Option<Duration>) -> Result<WaitEvent> {
-    use winapi::shared::winerror::WAIT_TIMEOUT;
-    use winapi::um::winbase::{INFINITE, WAIT_ABANDONED, WAIT_FAILED, WAIT_OBJECT_0};
     let deadline = timeout.map(|timeout| Instant::now() + timeout);
 
     let result = loop {
@@ -643,12 +621,10 @@ pub fn make_standard_stream(which: StandardStream) -> Result<Rc<File>> {
 
 /// Cancel pending overlapped I/O on a handle.
 ///
-/// After calling this, you should call `overlapped.get_result(handle, true)` to wait
+/// After calling this, you should call `get_overlapped_result(handle, overlapped, true)` to wait
 /// for the cancellation to complete before freeing the overlapped structure or buffer.
-pub fn CancelIoEx(handle: RawHandle, overlapped: &mut Overlapped) -> Result<()> {
-    use winapi::shared::winerror::ERROR_NOT_FOUND;
-
-    let result = unsafe { winapi::um::ioapiset::CancelIoEx(handle, overlapped.as_mut_ptr()) };
+fn CancelIoEx(handle: RawHandle, overlapped: &mut OVERLAPPED) -> Result<()> {
+    let result = unsafe { winapi::um::ioapiset::CancelIoEx(handle, overlapped as _) };
     if result != 0 {
         Ok(())
     } else {
