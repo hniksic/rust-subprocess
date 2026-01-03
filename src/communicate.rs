@@ -274,12 +274,9 @@ mod raw {
     /// Complete a read operation and append data to dest.
     /// Returns Ok(true) if EOF was reached, Ok(false) otherwise.
     fn complete_read(mut pending: PendingRead, dest: &mut Vec<u8>) -> io::Result<bool> {
-        if pending.complete()? == 0 {
-            Ok(true)
-        } else {
-            dest.extend_from_slice(pending.data());
-            Ok(false)
-        }
+        let data = pending.complete()?;
+        dest.extend_from_slice(data);
+        Ok(data.is_empty())
     }
 
     fn complete_write(mut pending: PendingWrite, source: &mut VecDeque<u8>) -> io::Result<()> {

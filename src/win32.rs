@@ -231,30 +231,19 @@ impl PendingRead {
     ///
     /// If already completed, returns the cached result. If pending, retrieves
     /// the result (which should only be called after the event is signaled).
-    pub fn complete(&mut self) -> Result<u32> {
-        match self.state {
-            PendingState::Completed(n) => Ok(n),
+    pub fn complete(&mut self) -> Result<&[u8]> {
+        let n = match self.state {
+            PendingState::Completed(n) => n,
             PendingState::Pending => {
                 let n = get_overlapped_result(self.handle, &mut self.overlapped, false)?;
                 self.state = PendingState::Completed(n);
-                Ok(n)
+                n
             }
-        }
-    }
-
-    /// Get the data from a completed read.
-    ///
-    /// Panics if called before `complete()`.
-    pub fn data(&self) -> &[u8] {
-        match self.state {
-            PendingState::Completed(n) => {
-                // SAFETY: We only access the buffer after the operation has completed,
-                // so the OS is no longer writing to it.
-                let buffer = unsafe { &*self.buffer.get() };
-                &buffer[..n as usize]
-            }
-            PendingState::Pending => panic!("called data() on pending read"),
-        }
+        };
+        // SAFETY: We only access the buffer after the operation has completed,
+        // so the OS is no longer writing to it.
+        let buffer = unsafe { &*self.buffer.get() };
+        Ok(&buffer[..n as usize])
     }
 }
 
