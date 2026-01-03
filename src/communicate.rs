@@ -114,8 +114,8 @@ mod raw {
             // size.  A large enough write to a pipe deadlocks despite polling.
             const WRITE_SIZE: usize = 4096;
 
-            let mut stdout_ref = self.stdout.as_ref();
-            let mut stderr_ref = self.stderr.as_ref();
+            let mut stdout_live = self.stdout.as_ref();
+            let mut stderr_live = self.stderr.as_ref();
 
             loop {
                 if let Some(size_limit) = size_limit
@@ -124,13 +124,13 @@ mod raw {
                     break;
                 }
 
-                if let (None, None, None) = (self.stdin.as_ref(), stdout_ref, stderr_ref) {
+                if let (None, None, None) = (self.stdin.as_ref(), stdout_live, stderr_live) {
                     // When no stream remains, we are done.
                     break;
                 }
 
                 let (in_ready, out_ready, err_ready) =
-                    maybe_poll(self.stdin.as_ref(), stdout_ref, stderr_ref, deadline)?;
+                    maybe_poll(self.stdin.as_ref(), stdout_live, stderr_live, deadline)?;
                 if !in_ready && !out_ready && !err_ready {
                     return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout"));
                 }
@@ -148,7 +148,7 @@ mod raw {
                 }
                 if out_ready {
                     RawCommunicator::do_read(
-                        &mut stdout_ref,
+                        &mut stdout_live,
                         outvec,
                         size_limit,
                         outvec.len() + errvec.len(),
@@ -156,7 +156,7 @@ mod raw {
                 }
                 if err_ready {
                     RawCommunicator::do_read(
-                        &mut stderr_ref,
+                        &mut stderr_live,
                         errvec,
                         size_limit,
                         outvec.len() + errvec.len(),
@@ -321,10 +321,9 @@ mod raw {
             outvec: &mut Vec<u8>,
             errvec: &mut Vec<u8>,
         ) -> io::Result<()> {
-            // Track whether streams have reached EOF (separate from self.stdout/stderr
-            // which we keep for the return value)
-            let mut stdout_eof = self.stdout.is_none();
-            let mut stderr_eof = self.stderr.is_none();
+            // cleared after EOF
+            let mut stdout_live = self.stdout.as_ref();
+            let mut stderr_live = self.stderr.as_ref();
 
             loop {
                 if let Some(size_limit) = size_limit
@@ -332,7 +331,7 @@ mod raw {
                 {
                     break;
                 }
-                if self.stdin.is_none() && stdout_eof && stderr_eof {
+                if let (None, None, None) = (self.stdin.as_ref(), stdout_live, stderr_live) {
                     // When no stream remains, we are done.
                     break;
                 }
@@ -351,19 +350,15 @@ mod raw {
                     .map(|l| l.saturating_sub(outvec.len() + errvec.len()))
                     .unwrap_or(BUFFER_SIZE)
                     .min(BUFFER_SIZE);
-                if !stdout_eof && self.stdout_pending.is_none() {
-                    out_ready = start_read(
-                        self.stdout.as_ref().unwrap(),
-                        &mut self.stdout_pending,
-                        read_size,
-                    )?;
+                if let Some(stdout) = stdout_live
+                    && self.stdout_pending.is_none()
+                {
+                    out_ready = start_read(stdout, &mut self.stdout_pending, read_size)?;
                 }
-                if !stderr_eof && self.stderr_pending.is_none() {
-                    err_ready = start_read(
-                        self.stderr.as_ref().unwrap(),
-                        &mut self.stderr_pending,
-                        read_size,
-                    )?;
+                if let Some(stderr) = stderr_live
+                    && self.stderr_pending.is_none()
+                {
+                    err_ready = start_read(stderr, &mut self.stderr_pending, read_size)?;
                 }
 
                 // If nothing completed immediately, wait for pending operations
@@ -388,11 +383,11 @@ mod raw {
                         self.stdin.take();
                     }
                 }
-                if out_ready {
-                    stdout_eof = complete_read(self.stdout_pending.take().unwrap(), outvec)?;
+                if out_ready && complete_read(self.stdout_pending.take().unwrap(), outvec)? {
+                    stdout_live = None;
                 }
-                if err_ready {
-                    stderr_eof = complete_read(self.stderr_pending.take().unwrap(), errvec)?;
+                if err_ready && complete_read(self.stderr_pending.take().unwrap(), errvec)? {
+                    stderr_live = None;
                 }
             }
 
