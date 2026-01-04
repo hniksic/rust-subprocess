@@ -3,7 +3,8 @@ use tempfile::TempDir;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Write};
-use std::time::Duration;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use crate::{ExitStatus, Popen, PopenConfig, PopenError, Redirection};
 
@@ -320,4 +321,181 @@ fn failed_cwd() {
         _ => panic!("expected error return"),
     };
     assert_eq!(err_num, libc::ENOENT);
+}
+
+#[test]
+fn detach_does_not_wait_on_drop() {
+    let start = Instant::now();
+    {
+        let mut p = Popen::create(&["sleep", "10"], PopenConfig::default()).unwrap();
+        p.detach();
+        // p is dropped here without waiting
+    }
+    // Should return almost immediately, not wait 10 seconds
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "detach() didn't prevent waiting on drop"
+    );
+}
+
+#[test]
+fn poll_running_process() {
+    let mut p = Popen::create(&["sleep", "10"], PopenConfig::default()).unwrap();
+    assert!(
+        p.poll().is_none(),
+        "poll() should return None for running process"
+    );
+    p.terminate().unwrap();
+    p.wait().unwrap();
+    assert!(
+        p.poll().is_some(),
+        "poll() should return Some after process finished"
+    );
+}
+
+#[test]
+fn poll_finished_process() {
+    let mut p = Popen::create(&["true"], PopenConfig::default()).unwrap();
+    p.wait().unwrap();
+    assert_eq!(p.poll(), Some(ExitStatus::Exited(0)));
+    // Multiple polls should return the same result
+    assert_eq!(p.poll(), Some(ExitStatus::Exited(0)));
+}
+
+#[test]
+fn wait_multiple_times() {
+    let mut p = Popen::create(&["sh", "-c", "exit 42"], PopenConfig::default()).unwrap();
+    let s1 = p.wait().unwrap();
+    let s2 = p.wait().unwrap();
+    let s3 = p.wait().unwrap();
+    assert_eq!(s1, ExitStatus::Exited(42));
+    assert_eq!(s1, s2);
+    assert_eq!(s2, s3);
+}
+
+#[test]
+fn merge_on_stdin_rejected() {
+    let result = Popen::create(
+        &["true"],
+        PopenConfig {
+            stdin: Redirection::Merge,
+            ..Default::default()
+        },
+    );
+    assert!(
+        matches!(result, Err(PopenError::LogicError(_))),
+        "Merge on stdin should be rejected"
+    );
+}
+
+#[test]
+fn merge_both_stdout_stderr_rejected() {
+    let result = Popen::create(
+        &["true"],
+        PopenConfig {
+            stdout: Redirection::Merge,
+            stderr: Redirection::Merge,
+            ..Default::default()
+        },
+    );
+    assert!(
+        matches!(result, Err(PopenError::LogicError(_))),
+        "Merge on both stdout and stderr should be rejected"
+    );
+}
+
+#[test]
+fn broken_pipe_on_stdin() {
+    // Child exits immediately without reading stdin
+    let mut p = Popen::create(
+        &["true"],
+        PopenConfig {
+            stdin: Redirection::Pipe,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    // Try to write data - the child exits without reading, causing broken pipe
+    let large_data = vec![0u8; 100_000];
+    // Write may succeed or fail with BrokenPipe, but must not hang
+    let _ = p.stdin.as_mut().unwrap().write_all(&large_data);
+    drop(p.stdin.take());
+    // Process should still be waitable
+    p.wait().unwrap();
+}
+
+#[test]
+fn rcfile_shared_output() {
+    let tmpdir = TempDir::new().unwrap();
+    let tmpname = tmpdir.path().join("output");
+    let file = Rc::new(File::create(&tmpname).unwrap());
+    let mut p = Popen::create(
+        &["sh", "-c", "printf out; printf err >&2"],
+        PopenConfig {
+            stdout: Redirection::RcFile(Rc::clone(&file)),
+            stderr: Redirection::RcFile(file),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    p.wait().unwrap();
+    let content = fs::read_to_string(&tmpname).unwrap();
+    // Both stdout and stderr should go to the same file
+    assert!(content.contains("out"), "stdout missing from shared file");
+    assert!(content.contains("err"), "stderr missing from shared file");
+}
+
+#[test]
+fn pid_while_running() {
+    let mut p = Popen::create(&["sleep", "10"], PopenConfig::default()).unwrap();
+    assert!(p.pid().is_some(), "pid() should return Some while running");
+    assert!(
+        p.exit_status().is_none(),
+        "exit_status() should be None while running"
+    );
+    p.terminate().unwrap();
+    p.wait().unwrap();
+    assert!(p.pid().is_none(), "pid() should return None after exit");
+    assert!(
+        p.exit_status().is_some(),
+        "exit_status() should be Some after exit"
+    );
+}
+
+#[test]
+fn terminate_after_exit() {
+    let mut p = Popen::create(&["true"], PopenConfig::default()).unwrap();
+    p.wait().unwrap();
+    // Should be no-op, not error
+    p.terminate().unwrap();
+    p.kill().unwrap();
+}
+
+#[test]
+fn wait_timeout_zero() {
+    let mut p = Popen::create(&["sleep", "10"], PopenConfig::default()).unwrap();
+    // Zero timeout should return immediately
+    let start = Instant::now();
+    let result = p.wait_timeout(Duration::ZERO).unwrap();
+    assert!(
+        start.elapsed() < Duration::from_millis(100),
+        "zero timeout took too long"
+    );
+    assert!(result.is_none());
+    p.terminate().unwrap();
+    p.wait().unwrap();
+}
+
+#[test]
+fn wait_timeout_already_finished() {
+    let mut p = Popen::create(&["true"], PopenConfig::default()).unwrap();
+    p.wait().unwrap();
+    // Timeout on finished process should return immediately with cached status
+    let start = Instant::now();
+    let result = p.wait_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        start.elapsed() < Duration::from_millis(100),
+        "wait_timeout on finished process took too long"
+    );
+    assert_eq!(result, Some(ExitStatus::Exited(0)));
 }

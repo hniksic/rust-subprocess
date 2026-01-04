@@ -107,3 +107,27 @@ fn send_signal_group_after_finish() {
     p.wait().unwrap();
     p.send_signal_group(libc::SIGTERM).unwrap();
 }
+
+#[test]
+fn kill_process() {
+    // kill() sends SIGKILL which cannot be caught
+    let mut p = Popen::create(&["sleep", "1000"], PopenConfig::default()).unwrap();
+    p.kill().unwrap();
+    assert_eq!(p.wait().unwrap(), ExitStatus::Signaled(libc::SIGKILL as u8));
+}
+
+#[test]
+fn kill_vs_terminate() {
+    // Demonstrate that terminate (SIGTERM) and kill (SIGKILL) produce different exit statuses
+    let mut p1 = Popen::create(&["sleep", "1000"], PopenConfig::default()).unwrap();
+    p1.terminate().unwrap();
+    let status1 = p1.wait().unwrap();
+
+    let mut p2 = Popen::create(&["sleep", "1000"], PopenConfig::default()).unwrap();
+    p2.kill().unwrap();
+    let status2 = p2.wait().unwrap();
+
+    assert_eq!(status1, ExitStatus::Signaled(libc::SIGTERM as u8));
+    assert_eq!(status2, ExitStatus::Signaled(libc::SIGKILL as u8));
+    assert_ne!(status1, status2);
+}
