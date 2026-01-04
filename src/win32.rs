@@ -9,7 +9,6 @@ use std::mem;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::ptr;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -597,13 +596,10 @@ unsafe fn GetStdHandle(which: StandardStream) -> Result<RawHandle> {
     Ok(raw_handle)
 }
 
-pub fn make_standard_stream(which: StandardStream) -> Result<Rc<File>> {
+pub fn make_standard_stream(which: StandardStream) -> Result<File> {
     unsafe {
         let raw = GetStdHandle(which)?;
-        let stream = Rc::new(File::from_raw_handle(raw));
-        // Leak the Rc so the object we return doesn't close the underlying system handle.
-        mem::forget(Rc::clone(&stream));
-        Ok(stream)
+        Ok(File::from_raw_handle(raw))
     }
 }
 
