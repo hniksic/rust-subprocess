@@ -56,20 +56,18 @@ pub fn setpgid(pid: u32, pgid: u32) -> Result<()> {
 }
 
 fn os_to_cstring(s: &OsStr) -> Result<CString> {
-    // Like CString::new, but returns an io::Result for consistency with
-    // everything else.
+    // Like CString::new, but returns an io::Result for consistency with everything else.
     CString::new(s.as_bytes()).map_err(|_| Error::from_raw_os_error(libc::EINVAL))
 }
 
 #[derive(Debug)]
 struct CVec {
-    // Individual C strings.  Each element self.ptrs[i] points to the
-    // data of self.strings[i].as_bytes_with_nul().as_ptr().
+    // Individual C strings.  Each element self.ptrs[i] points to the data of
+    // self.strings[i].as_bytes_with_nul().as_ptr().
     #[allow(dead_code)]
     strings: Vec<CString>,
 
-    // nullptr-terminated vector of pointers to data inside
-    // self.strings.
+    // nullptr-terminated vector of pointers to data inside self.strings.
     ptrs: Vec<*const c_char>,
 }
 
@@ -92,10 +90,10 @@ impl CVec {
 }
 
 fn split_path(mut path: &OsStr) -> impl Iterator<Item = &OsStr> {
-    // Can't use `env::split`_path because it allocates OsString objects, and
-    // we need to iterate over PATH after fork() when allocations are strictly
-    // verboten.  We can't use `str::split()` either because PATH is an
-    // `OsStr`, and there is no `OsStr::split()`.
+    // Can't use `env::split`_path because it allocates OsString objects, and we need to
+    // iterate over PATH after fork() when allocations are strictly verboten.  We can't
+    // use `str::split()` either because PATH is an `OsStr`, and there is no
+    // `OsStr::split()`.
     std::iter::from_fn(move || {
         while let Some(pos) = path.as_bytes().iter().position(|&c| c == b':') {
             let piece = OsStr::from_bytes(&path.as_bytes()[..pos]);
@@ -128,15 +126,15 @@ impl PrepExec {
         envvec: Option<CVec>,
         search_path: Option<OsString>,
     ) -> PrepExec {
-        // Avoid allocation after fork() by pre-allocating the buffer
-        // that will be used for constructing the executable C string.
+        // Avoid allocation after fork() by pre-allocating the buffer that will be used
+        // for constructing the executable C string.
 
-        // Allocate enough room for "<pathdir>/<command>\0", pathdir
-        // being the longest component of PATH.
+        // Allocate enough room for "<pathdir>/<command>\0", pathdir being the longest
+        // component of PATH.
         let mut max_exe_len = cmd.len() + 1;
         if let Some(ref search_path) = search_path {
-            // make sure enough room is present for the largest of the
-            // PATH components, plus 1 for the intervening '/'.
+            // make sure enough room is present for the largest of the PATH components,
+            // plus 1 for the intervening '/'.
             max_exe_len += 1 + split_path(search_path).map(OsStr::len).max().unwrap_or(0);
         }
 
@@ -155,8 +153,8 @@ impl PrepExec {
 
         if let Some(ref search_path) = self.search_path {
             let mut err = Ok(());
-            // POSIX requires execvp and execve, but not execvpe (although
-            // glibc provides one), so we have to iterate over PATH ourselves
+            // POSIX requires execvp and execve, but not execvpe (although glibc provides
+            // one), so we have to iterate over PATH ourselves
             for dir in split_path(search_path.as_os_str()) {
                 err = self.libc_exec(PrepExec::assemble_exe(
                     &mut exe,
@@ -165,8 +163,8 @@ impl PrepExec {
                 // if exec succeeds, we won't run anymore; if we're here, it failed
                 assert!(err.is_err());
             }
-            // we haven't found the command anywhere on the path, just return
-            // the last error
+            // we haven't found the command anywhere on the path, just return the last
+            // error
             return err;
         }
 
@@ -290,26 +288,23 @@ pub fn dup2(oldfd: i32, newfd: i32) -> Result<()> {
 
 pub fn make_standard_stream(which: StandardStream) -> Result<Rc<File>> {
     let stream = Rc::new(unsafe { File::from_raw_fd(which as RawFd) });
-    // Leak the Rc so the object we return doesn't close the underlying file
-    // descriptor.  We didn't open it, and it is shared by everything else, so
-    // we are not allowed to close it either.
+    // Leak the Rc so the object we return doesn't close the underlying file descriptor.
+    // We didn't open it, and it is shared by everything else, so we are not allowed to
+    // close it either.
     mem::forget(Rc::clone(&stream));
     Ok(stream)
 }
 
 pub fn reset_sigpipe() -> Result<()> {
-    // This is called after forking to reset SIGPIPE handling to the
-    // defaults that Unix programs expect.  Quoting
-    // std::process::Command::do_exec:
+    // This is called after forking to reset SIGPIPE handling to the defaults that Unix
+    // programs expect.  Quoting std::process::Command::do_exec:
     //
     // """
-    // libstd ignores SIGPIPE, and signal-handling libraries often set
-    // a mask. Child processes inherit ignored signals and the signal
-    // mask from their parent, but most UNIX programs do not reset
-    // these things on their own, so we need to clean things up now to
-    // avoid confusing the program we're about to run.
+    // libstd ignores SIGPIPE, and signal-handling libraries often set a mask. Child
+    // processes inherit ignored signals and the signal mask from their parent, but most
+    // UNIX programs do not reset these things on their own, so we need to clean things up
+    // now to avoid confusing the program we're about to run.
     // """
-
     unsafe {
         let mut set: mem::MaybeUninit<libc::sigset_t> = mem::MaybeUninit::uninit();
         check_err(libc::sigemptyset(set.as_mut_ptr()))?;
@@ -319,9 +314,8 @@ pub fn reset_sigpipe() -> Result<()> {
             &set,
             ptr::null_mut(),
         ))?;
-        match libc::signal(libc::SIGPIPE, libc::SIG_DFL) {
-            libc::SIG_ERR => return Err(Error::last_os_error()),
-            _ => (),
+        if libc::signal(libc::SIGPIPE, libc::SIG_DFL) == libc::SIG_ERR {
+            return Err(Error::last_os_error());
         }
     }
     Ok(())
@@ -352,9 +346,9 @@ pub use libc::{POLLHUP, POLLIN, POLLOUT};
 pub fn poll(fds: &mut [PollFd<'_>], mut timeout: Option<Duration>) -> Result<usize> {
     let deadline = timeout.map(|timeout| Instant::now() + timeout);
     loop {
-        // poll() accepts a maximum timeout of 2**31-1 ms, which is
-        // less than 25 days.  The caller can specify Durations much
-        // larger than that, so support them by waiting in a loop.
+        // poll() accepts a maximum timeout of 2**31-1 ms, which is less than 25 days.
+        // The caller can specify Durations much larger than that, so support them by
+        // waiting in a loop.
         let (timeout_ms, overflow) = timeout
             .map(|timeout| {
                 let timeout = timeout.as_millis();

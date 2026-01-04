@@ -849,8 +849,8 @@ fn wait_timeout() {
     let mut p = Popen::create(&["sleep", "0.5"], PopenConfig::default()).unwrap();
     let ret = p.wait_timeout(Duration::from_millis(100)).unwrap();
     assert!(ret.is_none());
-    // We sleep for a very long time to avoid flaky failures when we get a slow
-    // machine that takes too long to start sleep(1).
+    // We sleep for a very long time to avoid flaky failures when we get a slow machine
+    // that takes too long to start sleep(1).
     let ret = p.wait_timeout(Duration::from_millis(900)).unwrap();
     assert_eq!(ret, Some(ExitStatus::Exited(0)));
 }
@@ -893,10 +893,9 @@ fn cwd() {
     let tmpdir = TempDir::new().unwrap();
     let tmpdir_name = tmpdir.path().as_os_str().to_owned();
 
-    // Test that CWD works by cwd-ing into an empty temporary
-    // directory and creating a file there.  Trying to print the
-    // directory's name and compare it to tmpdir fails due to MinGW
-    // interference on Windows and symlinks on Unix.
+    // Test that CWD works by cwd-ing into an empty temporary directory and creating a
+    // file there.  Trying to print the directory's name and compare it to tmpdir fails
+    // due to MinGW interference on Windows and symlinks on Unix.
 
     Popen::create(
         &["touch", "here"],

@@ -4,9 +4,9 @@ use crate::{ExitStatus, Popen, PopenConfig, Redirection};
 
 #[test]
 fn setup_executable() {
-    // Test that PopenConfig::executable overrides the actual executable while
-    // argv[0] is passed to the process. We run PowerShell with executable override,
-    // and have it print its argv[0] which should be "foobar", not "powershell".
+    // Test that PopenConfig::executable overrides the actual executable while argv[0] is
+    // passed to the process. We run PowerShell with executable override, and have it
+    // print its argv[0] which should be "foobar", not "powershell".
     let mut p = Popen::create(
         &[
             "foobar",

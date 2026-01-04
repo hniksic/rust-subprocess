@@ -341,7 +341,8 @@ impl<'a> TmpEnvVar<'a> {
 
 impl Drop for TmpEnvVar<'_> {
     fn drop(&mut self) {
-        // SAFETY: We hold a mutex guard that serializes all env var modifications in tests
+        // SAFETY: We hold a mutex guard that serializes all env var modifications in
+        // tests
         unsafe { env::remove_var(self.varname) };
     }
 }
@@ -383,8 +384,8 @@ fn env_inherit_set() {
     );
 }
 
-// XXX move tests under the builder module so we can call
-// Exec::display_escape() instead of copying it.
+// XXX move tests under the builder module so we can call Exec::display_escape() instead
+// of copying it.
 fn display_escape(s: &str) -> Cow<'_, str> {
     fn nice_char(c: char) -> bool {
         match c {

@@ -113,8 +113,8 @@ pub fn CreateOverlappedPipe() -> Result<(File, File)> {
         bInheritHandle: TRUE,
     };
 
-    // Create the write end as server (named pipe), then connect read end as client.
-    // Both ends get FILE_FLAG_OVERLAPPED.
+    // Create the write end as server (named pipe), then connect read end as client. Both
+    // ends get FILE_FLAG_OVERLAPPED.
     let write_handle = check_handle(unsafe {
         CreateNamedPipeW(
             pipe_name.as_ptr(),
@@ -240,8 +240,8 @@ impl PendingRead {
                 n
             }
         };
-        // SAFETY: We only access the buffer after the operation has completed,
-        // so the OS is no longer writing to it.
+        // SAFETY: We only access the buffer after the operation has completed, so the OS
+        // is no longer writing to it.
         let buffer = unsafe { &*self.buffer.get() };
         Ok(&buffer[..n as usize])
     }
@@ -534,8 +534,8 @@ pub fn WaitForSingleObject(handle: &Handle, mut timeout: Option<Duration>) -> Re
     let deadline = timeout.map(|timeout| Instant::now() + timeout);
 
     let result = loop {
-        // Allow timeouts greater than 50 days by clamping the
-        // timeout and sleeping in a loop.
+        // Allow timeouts greater than 50 days by clamping the timeout and sleeping in a
+        // loop.
         let (timeout_ms, overflow) = timeout
             .map(|timeout| {
                 let timeout = timeout.as_millis();
@@ -585,8 +585,8 @@ pub fn TerminateProcess(handle: &Handle, exit_code: u32) -> Result<()> {
 }
 
 unsafe fn GetStdHandle(which: StandardStream) -> Result<RawHandle> {
-    // private/unsafe because the raw handle it returns must be
-    // duplicated or leaked before converting to an owned Handle.
+    // private/unsafe because the raw handle it returns must be duplicated or leaked
+    // before converting to an owned Handle.
     use winapi::um::winbase::{STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
     let id = match which {
         StandardStream::Input => STD_INPUT_HANDLE,
@@ -601,8 +601,7 @@ pub fn make_standard_stream(which: StandardStream) -> Result<Rc<File>> {
     unsafe {
         let raw = GetStdHandle(which)?;
         let stream = Rc::new(File::from_raw_handle(raw));
-        // Leak the Rc so the object we return doesn't close the underlying
-        // system handle.
+        // Leak the Rc so the object we return doesn't close the underlying system handle.
         mem::forget(Rc::clone(&stream));
         Ok(stream)
     }

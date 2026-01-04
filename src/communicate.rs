@@ -28,10 +28,10 @@ mod raw {
         ferr: Option<&File>,
         deadline: Option<Instant>,
     ) -> io::Result<(bool, bool, bool)> {
-        // Polling is needed to prevent deadlock when interacting with
-        // multiple streams, and for timeout.  If we're interacting with a
-        // single stream without timeout, we can skip the actual poll()
-        // syscall and just tell the caller to go ahead with reading/writing.
+        // Polling is needed to prevent deadlock when interacting with multiple streams,
+        // and for timeout.  If we're interacting with a single stream without timeout, we
+        // can skip the actual poll() syscall and just tell the caller to go ahead with
+        // reading/writing.
         if deadline.is_none() {
             match (&fin, &fout, &ferr) {
                 (None, None, Some(..)) => return Ok((false, false, true)),
@@ -110,8 +110,8 @@ mod raw {
             outvec: &mut Vec<u8>,
             errvec: &mut Vec<u8>,
         ) -> io::Result<()> {
-            // Note: chunk size for writing must be smaller than the pipe buffer
-            // size.  A large enough write to a pipe deadlocks despite polling.
+            // Note: chunk size for writing must be smaller than the pipe buffer size.  A
+            // large enough write to a pipe deadlocks despite polling.
             const WRITE_SIZE: usize = 4096;
 
             let mut stdout_live = self.stdout.as_ref();

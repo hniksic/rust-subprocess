@@ -178,9 +178,9 @@ pub struct PopenConfig {
     #[cfg(unix)]
     pub setpgid: bool,
 
-    // Add this field to force construction using ..Default::default() for
-    // backward compatibility.  Unfortunately we can't mark this non-public
-    // because then ..Default::default() wouldn't work either.
+    // Add this field to force construction using ..Default::default() for backward
+    // compatibility.  Unfortunately we can't mark this non-public because then
+    // ..Default::default() wouldn't work either.
     #[doc(hidden)]
     pub _use_default_to_construct: (),
 }
@@ -357,16 +357,14 @@ impl Popen {
         Ok(inst)
     }
 
-    // Create the pipes requested by stdin, stdout, and stderr from
-    // the PopenConfig used to construct us, and return the Files to
-    // be given to the child process.
+    // Create the pipes requested by stdin, stdout, and stderr from the PopenConfig used
+    // to construct us, and return the Files to be given to the child process.
     //
-    // For Redirection::Pipe, this stores the parent end of the pipe
-    // to the appropriate self.std* field, and returns the child end
-    // of the pipe.
+    // For Redirection::Pipe, this stores the parent end of the pipe to the appropriate
+    // self.std* field, and returns the child end of the pipe.
     //
-    // For Redirection::File, this transfers the ownership of the File
-    // to the corresponding child.
+    // For Redirection::File, this transfers the ownership of the File to the
+    // corresponding child.
     fn setup_streams(
         &mut self,
         stdin: Redirection,
@@ -378,9 +376,9 @@ impl Popen {
             parent_ref: &mut Option<File>,
             child_ref: &mut Option<Rc<File>>,
         ) -> Result<()> {
-            // Store the parent's end of the pipe into the given reference, and
-            // store the child end. On Windows, this creates pipes where both
-            // ends support overlapped I/O (see make_pipe() for details).
+            // Store the parent's end of the pipe into the given reference, and store the
+            // child end. On Windows, this creates pipes where both ends support
+            // overlapped I/O (see make_pipe() for details).
             let (read, write) = os::make_pipe()?;
             let (parent_end, child_end) = if parent_writes {
                 (write, read)
@@ -409,9 +407,8 @@ impl Popen {
             src: &mut Option<Rc<File>>,
             src_id: StandardStream,
         ) -> io::Result<()> {
-            // For Redirection::Merge, make stdout and stderr refer to
-            // the same File.  If the file is unavailable, use the
-            // appropriate system output stream.
+            // For Redirection::Merge, make stdout and stderr refer to the same File.  If
+            // the file is unavailable, use the appropriate system output stream.
             if src.is_none() {
                 *src = Some(get_standard_stream(src_id)?);
             }
@@ -462,13 +459,11 @@ impl Popen {
             Redirection::None => (),
         };
 
-        // Handle Redirection::Merge after creating the output child
-        // streams.  Merge by cloning the child stream, or the
-        // appropriate standard stream if we don't have a child stream
-        // requested using Redirection::Pipe or Redirection::File.  In
-        // other words, 2>&1 (ErrToOut) is implemented by making
-        // child_stderr point to a dup of child_stdout, or of the OS's
-        // stdout stream.
+        // Handle Redirection::Merge after creating the output child streams.  Merge by
+        // cloning the child stream, or the appropriate standard stream if we don't have a
+        // child stream requested using Redirection::Pipe or Redirection::File.  In other
+        // words, 2>&1 (ErrToOut) is implemented by making child_stderr point to a dup of
+        // child_stdout, or of the OS's stdout stream.
         match merge {
             MergeKind::ErrToOut => {
                 reuse_stream(&mut child_stderr, &mut child_stdout, StandardStream::Output)?
@@ -699,8 +694,8 @@ mod os {
                 let cmd_to_exec = config.executable.as_ref().unwrap_or(&argv[0]);
                 let just_exec = posix::prep_exec(cmd_to_exec, &argv, child_env.as_deref())?;
                 unsafe {
-                    // unsafe because after the call to fork() the
-                    // child is not allowed to allocate
+                    // unsafe because after the call to fork() the child is not allowed to
+                    // allocate
                     match posix::fork()? {
                         Some(child_pid) => {
                             self.child_state = Running {
@@ -718,8 +713,8 @@ mod os {
                                 config.setgid,
                                 config.setpgid,
                             );
-                            // If we are here, it means that exec has failed.  Notify
-                            // the parent and exit.
+                            // If we are here, it means that exec has failed.  Notify the
+                            // parent and exit.
                             let error_code = match result {
                                 Ok(()) => unreachable!(),
                                 Err(e) => e.raw_os_error().unwrap_or(-1),
@@ -809,8 +804,8 @@ mod os {
     }
 
     fn format_env(env: &[(OsString, OsString)]) -> Vec<OsString> {
-        // Convert Vec of (key, val) pairs to Vec of key=val, as required by
-        // execvpe.  Eliminate dups, in favor of later-appearing entries.
+        // Convert Vec of (key, val) pairs to Vec of key=val, as required by execvpe.
+        // Eliminate dups, in favor of later-appearing entries.
         let mut seen = HashSet::<&OsStr>::new();
         let mut formatted: Vec<_> = env
             .iter()
@@ -870,8 +865,8 @@ mod os {
             }
             posix::reset_sigpipe()?;
 
-            // setgid must come before setuid: once we drop privileges with setuid,
-            // we may no longer have permission to call setgid
+            // setgid must come before setuid: once we drop privileges with setuid, we may
+            // no longer have permission to call setgid
             if let Some(gid) = setgid {
                 posix::setgid(gid)?;
             }
@@ -894,10 +889,9 @@ mod os {
                             if let Some(errno) = e.raw_os_error()
                                 && errno == posix::ECHILD
                             {
-                                // Someone else has waited for the child
-                                // (another thread, a signal handler...).
-                                // The PID no longer exists and we cannot
-                                // find its exit status.
+                                // Someone else has waited for the child (another thread,
+                                // a signal handler...). The PID no longer exists and we
+                                // cannot find its exit status.
                                 self.child_state = Finished(ExitStatus::Undetermined);
                                 return Ok(());
                             }
@@ -1018,8 +1012,8 @@ mod os {
             ensure_child_stream(&mut child_stderr, StandardStream::Error)?;
             let cmdline = assemble_cmdline(argv)?;
             let env_block = config.env.map(|env| format_env_block(&env));
-            // CreateProcess doesn't search for appname in the PATH.
-            // We do it ourselves to match the Unix behavior.
+            // CreateProcess doesn't search for appname in the PATH. We do it ourselves to
+            // match the Unix behavior.
             let executable = config.executable.map(locate_in_path);
             let (handle, pid) = win32::CreateProcess(
                 executable.as_ref().map(OsString::as_ref),
@@ -1045,11 +1039,10 @@ mod os {
             match self.child_state {
                 Preparing => panic!("child_state == Preparing"),
                 Finished(exit_status) => Ok(exit_status),
-                // Since we invoked wait_handle without timeout, exit
-                // status should exist at this point.  The only way
-                // for it not to exist would be if something strange
-                // happened, like WaitForSingleObject returning
-                // something other than OBJECT_0.
+                // Since we invoked wait_handle without timeout, exit status should exist
+                // at this point.  The only way for it not to exist would be if something
+                // strange happened, like WaitForSingleObject returning something other
+                // than OBJECT_0.
                 Running { .. } => Err(PopenError::LogicError("Failed to obtain exit status")),
             }
         }
@@ -1153,11 +1146,10 @@ mod os {
     }
 
     fn ensure_child_stream(stream: &mut Option<Rc<File>>, which: StandardStream) -> io::Result<()> {
-        // If no stream is sent to CreateProcess, the child doesn't
-        // get a valid stream.  This results in e.g.
-        // Exec("sh").arg("-c").arg("echo foo >&2").stream_stderr()
-        // failing because the shell tries to redirect stdout to
-        // stderr, but fails because it didn't receive a valid stdout.
+        // If no stream is sent to CreateProcess, the child doesn't get a valid stream.
+        // This results in e.g. Exec("sh").arg("-c").arg("echo foo >&2").stream_stderr()
+        // failing because the shell tries to redirect stdout to stderr, but fails because
+        // it didn't receive a valid stdout.
         if stream.is_none() {
             *stream = Some(get_standard_stream(which)?);
         }
@@ -1291,8 +1283,7 @@ mod os {
 }
 
 impl Drop for Popen {
-    // Wait for the process to exit.  To avoid the wait, call
-    // detach().
+    // Wait for the process to exit.  To avoid the wait, call detach().
     fn drop(&mut self) {
         if let (false, &Running { .. }) = (self.detached, &self.child_state) {
             // Should we log error if one occurs during drop()?

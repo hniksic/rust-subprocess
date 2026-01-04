@@ -585,11 +585,10 @@ mod exec {
         }
     }
 
-    // We must implement Drop in order to close the stream.  The typical
-    // use case for stream_stdin() is a process that reads something from
-    // stdin.  WriteAdapter going out of scope invokes Popen::drop(),
-    // which waits for the process to exit.  Without closing stdin, this
-    // deadlocks because the child process hangs reading its stdin.
+    // We must implement Drop in order to close the stream.  The typical use case for
+    // stream_stdin() is a process that reads something from stdin.  WriteAdapter going
+    // out of scope invokes Popen::drop(), which waits for the process to exit.  Without
+    // closing stdin, this deadlocks because the child process hangs reading its stdin.
 
     impl Drop for WriteAdapter {
         fn drop(&mut self) {
@@ -1054,10 +1053,9 @@ mod pipeline {
         pub fn join(self) -> PopenResult<ExitStatus> {
             self.check_no_stdin_data("join");
             let mut v = self.popen()?;
-            // Waiting on a pipeline waits for all commands, but
-            // returns the status of the last one.  This is how the
-            // shells do it.  If the caller needs more precise control
-            // over which status is returned, they can call popen().
+            // Waiting on a pipeline waits for all commands, but returns the status of the
+            // last one.  This is how the shells do it.  If the caller needs more precise
+            // control over which status is returned, they can call popen().
             v.last_mut().unwrap().wait()
         }
 

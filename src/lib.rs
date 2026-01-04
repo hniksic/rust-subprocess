@@ -5,19 +5,20 @@
 //! `Exec` provides a builder-pattern API with convenient methods for streaming and capturing
 //! of output, as well as combining `Popen` instances into pipelines.
 //!
-//! Compared to `std::process`, the module follows the following additional features:
+//! Compared to `std::process`, the crate provides these additional features:
 //!
-//! * The *communicate* [family of methods] for deadlock-free capturing of subprocess
-//!   output/error, while simultaneously feeding data to its standard input.  Capturing
-//!   supports optional timeout and read size limit.
+//! * The *communicate* [family of methods](Popen::communicate_start) for deadlock-free
+//!   capturing of subprocess output/error, while simultaneously feeding data to its standard
+//!   input.  Capturing supports optional timeout and read size limit.
 //!
-//! * Connecting multiple commands into OS-level [pipelines].
+//! * Connecting multiple commands into OS-level [pipelines](Pipeline).
 //!
-//! * Flexible [redirection options], such as connecting standard streams to arbitary [open
-//!   files], or [merging] output streams like shell's `2>&1` and `1>&2` operators.
+//! * Flexible [redirection options](Redirection), such as connecting standard streams to
+//!   arbitrary [open files](Redirection::File), or [merging](Redirection::Merge) output
+//!   streams like shell's `2>&1` and `1>&2` operators.
 //!
-//! * Non-blocking and timeout methods to wait on the process: [`poll`], [`wait`], and
-//!   [`wait_timeout`].
+//! * Non-blocking and timeout methods to wait on the process: [`poll`](Popen::poll),
+//!   [`wait`](Popen::wait), and [`wait_timeout`](Popen::wait_timeout).
 //!
 //! # Examples
 //!
@@ -55,20 +56,10 @@
 //! # }
 //! ```
 //!
-//! [`Popen`]: struct.Popen.html
-//! [`Exec`]: struct.Exec.html
-//! [family of methods]: struct.Popen.html#method.communicate_start
-//! [redirection options]: enum.Redirection.html
-//! [open files]: enum.Redirection.html#variant.File
-//! [merging]: enum.Redirection.html#variant.Merge
-//! [`poll`]: struct.Popen.html#method.poll
-//! [`wait`]: struct.Popen.html#method.wait
-//! [`wait_timeout`]: struct.Popen.html#method.wait_timeout
 //! [`subprocess.Popen`]: https://docs.python.org/3/library/subprocess.html#subprocess.Popen
-//! [pipelines]: struct.Pipeline.html
 
-#![warn(missing_debug_implementations, rust_2018_idioms, missing_docs)]
-#![allow(clippy::type_complexity, clippy::single_match)]
+#![warn(missing_debug_implementations, missing_docs)]
+#![allow(clippy::type_complexity)]
 
 mod builder;
 mod communicate;

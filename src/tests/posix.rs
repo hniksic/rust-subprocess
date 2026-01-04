@@ -5,9 +5,9 @@ use crate::{ExitStatus, Popen, PopenConfig, Redirection};
 
 #[test]
 fn setup_executable() {
-    // Test that PopenConfig::executable overrides the actual executable while
-    // argv[0] is passed to the process. We run sh with executable override,
-    // and have it print $0 which should be "foobar", not "sh".
+    // Test that PopenConfig::executable overrides the actual executable while argv[0] is
+    // passed to the process. We run sh with executable override, and have it print $0
+    // which should be "foobar", not "sh".
     let mut p = Popen::create(
         &["foobar", "-c", r#"printf %s "$0""#],
         PopenConfig {
@@ -79,8 +79,8 @@ fn env_set_all_2() {
 
 #[test]
 fn send_signal_group() {
-    // Spawn a shell in a new process group that spawns a background child.
-    // Signaling the group should terminate both the shell and its child.
+    // Spawn a shell in a new process group that spawns a background child. Signaling the
+    // group should terminate both the shell and its child.
     let mut p = Popen::create(
         &["sh", "-c", "sleep 100 & wait"],
         PopenConfig {
