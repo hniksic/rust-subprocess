@@ -585,17 +585,6 @@ mod exec {
         }
     }
 
-    // We must implement Drop in order to close the stream.  The typical use case for
-    // stream_stdin() is a process that reads something from stdin.  WriteAdapter going
-    // out of scope invokes Popen::drop(), which waits for the process to exit.  Without
-    // closing stdin, this deadlocks because the child process hangs reading its stdin.
-
-    impl Drop for WriteAdapter {
-        fn drop(&mut self) {
-            self.0.stdin.take();
-        }
-    }
-
     /// Data captured by [`Exec::capture`] and [`Pipeline::capture`].
     ///
     /// [`Exec::capture`]: struct.Exec.html#method.capture
@@ -1245,14 +1234,6 @@ mod pipeline {
         }
         fn flush(&mut self) -> io::Result<()> {
             self.stdin().flush()
-        }
-    }
-
-    impl Drop for WritePipelineAdapter {
-        // the same rationale as Drop for WriteAdapter
-        fn drop(&mut self) {
-            let first = &mut self.0[0];
-            first.stdin.take();
         }
     }
 }

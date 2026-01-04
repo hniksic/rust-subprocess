@@ -1285,6 +1285,9 @@ mod os {
 impl Drop for Popen {
     // Wait for the process to exit.  To avoid the wait, call detach().
     fn drop(&mut self) {
+        // Close stdin before waiting for the child to exit. This prevents deadlock by
+        // delivering EOF in case the child reads from stdin before exiting.
+        self.stdin = None;
         if let (false, &Running { .. }) = (self.detached, &self.child_state) {
             // Should we log error if one occurs during drop()?
             self.wait().ok();
