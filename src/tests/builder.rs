@@ -1,7 +1,7 @@
 use std::env;
 use std::fs::File;
 use std::sync::{Mutex, MutexGuard};
-use std::{borrow::Cow, time::Duration};
+use std::time::Duration;
 
 use std::io::{ErrorKind, prelude::*};
 
@@ -384,23 +384,6 @@ fn env_inherit_set() {
     );
 }
 
-// XXX move tests under the builder module so we can call Exec::display_escape() instead
-// of copying it.
-fn display_escape(s: &str) -> Cow<'_, str> {
-    fn nice_char(c: char) -> bool {
-        match c {
-            '-' | '_' | '.' | ',' | '/' => true,
-            c if c.is_ascii_alphanumeric() => true,
-            _ => false,
-        }
-    }
-    if !s.chars().all(nice_char) {
-        Cow::Owned(format!("'{}'", s.replace("'", r#"'\''"#)))
-    } else {
-        Cow::Borrowed(s)
-    }
-}
-
 #[test]
 fn exec_to_string() {
     let _guard = MUTATE_ENV.lock().unwrap();
@@ -431,7 +414,7 @@ fn exec_to_string() {
         format!(
             "Exec {{ {} sh arg1 'don'\\''t' 'arg3 arg4' '?' ' ' '\u{009c}' }}",
             env::vars()
-                .map(|(k, _)| format!("{}=", display_escape(&k)))
+                .map(|(k, _)| format!("{}=", Exec::display_escape(&k)))
                 .collect::<Vec<_>>()
                 .join(" ")
         )

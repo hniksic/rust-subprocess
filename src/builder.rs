@@ -465,7 +465,7 @@ mod exec {
         }
 
         // used for Debug impl
-        fn display_escape(s: &str) -> Cow<'_, str> {
+        pub(crate) fn display_escape(s: &str) -> Cow<'_, str> {
             fn nice_char(c: char) -> bool {
                 match c {
                     '-' | '_' | '.' | ',' | '/' => true,
