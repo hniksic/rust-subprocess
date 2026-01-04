@@ -189,6 +189,7 @@ mod raw {
 
 #[cfg(windows)]
 mod raw {
+    use crate::os_common::StandardStream;
     use crate::win32::{
         PendingRead, PendingWrite, ReadFileOverlapped, WaitForMultipleObjects, WaitResult,
         WriteFileOverlapped,
@@ -202,14 +203,6 @@ mod raw {
 
     const BUFFER_SIZE: usize = 4096;
 
-    /// Identifies which stream became ready after waiting.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum ReadyStream {
-        Stdin,
-        Stdout,
-        Stderr,
-    }
-
     /// Wait for I/O completion on pending operations. Analogous to Unix maybe_poll().
     ///
     /// Takes references to pending operations and waits for any to complete.
@@ -220,21 +213,21 @@ mod raw {
         stdout_pending: Option<&PendingRead>,
         stderr_pending: Option<&PendingRead>,
         deadline: Option<Instant>,
-    ) -> io::Result<ReadyStream> {
+    ) -> io::Result<StandardStream> {
         let mut handles = Vec::with_capacity(3);
         let mut streams = Vec::with_capacity(3);
 
         if let Some(p) = stdin_pending {
             handles.push(p.event().as_raw_handle());
-            streams.push(ReadyStream::Stdin);
+            streams.push(StandardStream::Input);
         }
         if let Some(p) = stdout_pending {
             handles.push(p.event().as_raw_handle());
-            streams.push(ReadyStream::Stdout);
+            streams.push(StandardStream::Output);
         }
         if let Some(p) = stderr_pending {
             handles.push(p.event().as_raw_handle());
-            streams.push(ReadyStream::Stderr);
+            streams.push(StandardStream::Error);
         }
         assert!(!handles.is_empty());
         let timeout = deadline.map(|d| d.saturating_duration_since(Instant::now()));
@@ -369,9 +362,9 @@ mod raw {
                         self.stderr_pending.as_ref(),
                         deadline,
                     )? {
-                        ReadyStream::Stdin => in_ready = true,
-                        ReadyStream::Stdout => out_ready = true,
-                        ReadyStream::Stderr => err_ready = true,
+                        StandardStream::Input => in_ready = true,
+                        StandardStream::Output => out_ready = true,
+                        StandardStream::Error => err_ready = true,
                     }
                 }
 
