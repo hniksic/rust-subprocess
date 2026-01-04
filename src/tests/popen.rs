@@ -1,3 +1,6 @@
+// note that these tests run on Windows despite using `sh` and such - those Unix commands
+// are expected to be present in Windows CI.
+
 use tempfile::TempDir;
 
 use std::ffi::OsString;
