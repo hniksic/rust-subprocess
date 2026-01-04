@@ -94,6 +94,7 @@ pub mod windows {
 mod tests {
     mod builder;
     mod common;
+    mod communicate;
     #[cfg(unix)]
     mod posix;
     #[cfg(windows)]

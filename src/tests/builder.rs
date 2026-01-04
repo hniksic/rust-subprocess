@@ -1,15 +1,12 @@
 use std::env;
-use std::fs::File;
+use std::fs::{self, File};
+use std::io::{self, ErrorKind, prelude::*};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
-use std::io::{ErrorKind, prelude::*};
-
-use crate::{Exec, ExitStatus, NullFile, Redirection};
-
 use tempfile::TempDir;
 
-use crate::tests::common::read_whole_file;
+use crate::{Exec, ExitStatus, NullFile, Redirection};
 
 #[test]
 fn exec_join() {
@@ -31,7 +28,7 @@ fn null_file() {
 #[test]
 fn stream_stdout() {
     let stream = Exec::cmd("printf").arg("foo").stream_stdout().unwrap();
-    assert_eq!(read_whole_file(stream), "foo");
+    assert_eq!(io::read_to_string(stream).unwrap(), "foo");
 }
 
 #[test]
@@ -40,7 +37,7 @@ fn stream_stderr() {
         .args(&["-c", "printf foo >&2"])
         .stream_stderr()
         .unwrap();
-    assert_eq!(read_whole_file(stream), "foo");
+    assert_eq!(io::read_to_string(stream).unwrap(), "foo");
 }
 
 #[test]
@@ -54,7 +51,7 @@ fn stream_stdin() {
             .unwrap();
         stream.write_all(b"foo").unwrap();
     }
-    assert_eq!(read_whole_file(File::open(&tmpname).unwrap()), "foo");
+    assert_eq!(fs::read_to_string(&tmpname).unwrap(), "foo");
 }
 
 #[test]
@@ -101,7 +98,7 @@ fn capture_out_with_input_data2() {
 #[test]
 fn exec_shell() {
     let stream = Exec::shell("printf foo").stream_stdout().unwrap();
-    assert_eq!(read_whole_file(stream), "foo");
+    assert_eq!(io::read_to_string(stream).unwrap(), "foo");
 }
 
 #[test]
@@ -119,7 +116,7 @@ fn pipeline_stream_out() {
     let stream = { Exec::cmd("echo").arg("foo\nbar") | Exec::cmd("wc").arg("-l") }
         .stream_stdout()
         .unwrap();
-    assert_eq!(read_whole_file(stream).trim(), "2");
+    assert_eq!(io::read_to_string(stream).unwrap().trim(), "2");
 }
 
 #[test]
@@ -133,7 +130,7 @@ fn pipeline_stream_in() {
             .unwrap();
         stream.write_all(b"foo\nbar\nbaz\n").unwrap();
     }
-    assert_eq!(read_whole_file(File::open(&tmpname).unwrap()).trim(), "3");
+    assert_eq!(fs::read_to_string(&tmpname).unwrap().trim(), "3");
 }
 
 #[test]
@@ -142,7 +139,7 @@ fn pipeline_compose_pipelines() {
     let pipe2 = Exec::cmd("uniq") | Exec::cmd("wc").arg("-l");
     let pipe = pipe1 | pipe2;
     let stream = pipe.stream_stdout().unwrap();
-    assert_eq!(read_whole_file(stream).trim(), "2");
+    assert_eq!(io::read_to_string(stream).unwrap().trim(), "2");
 }
 
 trait Crlf {
