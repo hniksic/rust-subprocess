@@ -73,6 +73,9 @@ mod win32;
 
 mod os_common;
 
+#[cfg(test)]
+mod tests;
+
 pub use builder::{CaptureData, Exec, ExecExt, NullFile, Pipeline};
 pub use communicate::{CommunicateError, Communicator};
 pub use os_common::ExitStatus;
@@ -88,15 +91,4 @@ pub mod unix {
 #[cfg(windows)]
 pub mod windows {
     pub use super::builder::windows::*;
-}
-
-#[cfg(test)]
-mod tests {
-    mod builder;
-    mod common;
-    mod communicate;
-    #[cfg(unix)]
-    mod posix;
-    #[cfg(windows)]
-    mod win32;
 }
