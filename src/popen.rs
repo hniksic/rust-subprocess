@@ -681,6 +681,25 @@ mod os {
     use crate::os_common::ExitStatus;
     use crate::unix::PopenExt;
 
+    /// Read exactly N bytes, or return None on immediate EOF. Similar to read_exact(),
+    /// but distinguishes between no read and partial read (which is treated as error).
+    fn read_exact_or_eof<const N: usize>(source: &mut File) -> io::Result<Option<[u8; N]>> {
+        let mut buf = [0u8; N];
+        let mut total_read = 0;
+        while total_read < N {
+            let n = source.read(&mut buf[total_read..])?;
+            if n == 0 {
+                break;
+            }
+            total_read += n;
+        }
+        match total_read {
+            0 => Ok(None),
+            n if n == N => Ok(Some(buf)),
+            _ => Err(io::ErrorKind::UnexpectedEof.into()),
+        }
+    }
+
     pub type ExtChildState = ();
 
     impl super::PopenOs for Popen {
@@ -719,45 +738,19 @@ mod os {
                                 Ok(()) => unreachable!(),
                                 Err(e) => e.raw_os_error().unwrap_or(-1),
                             } as u32;
-                            exec_fail_pipe
-                                .1
-                                .write_all(&[
-                                    error_code as u8,
-                                    (error_code >> 8) as u8,
-                                    (error_code >> 16) as u8,
-                                    (error_code >> 24) as u8,
-                                ])
-                                .ok();
+                            exec_fail_pipe.1.write_all(&error_code.to_le_bytes()).ok();
                             posix::_exit(127);
                         }
                     }
                 }
             }
             drop(exec_fail_pipe.1);
-            let mut error_buf = [0u8; 4];
-            // Loop to handle short reads - POSIX allows read() to return fewer bytes
-            let mut total_read = 0;
-            while total_read < 4 {
-                let read_cnt = exec_fail_pipe.0.read(&mut error_buf[total_read..])?;
-                if read_cnt == 0 {
-                    break; // EOF
+            match read_exact_or_eof::<4>(&mut exec_fail_pipe.0)? {
+                None => Ok(()),
+                Some(error_buf) => {
+                    let error_code = u32::from_le_bytes(error_buf);
+                    Err(io::Error::from_raw_os_error(error_code as i32).into())
                 }
-                total_read += read_cnt;
-            }
-            if total_read == 0 {
-                Ok(())
-            } else if total_read == 4 {
-                let error_code: u32 = error_buf[0] as u32
-                    | (error_buf[1] as u32) << 8
-                    | (error_buf[2] as u32) << 16
-                    | (error_buf[3] as u32) << 24;
-                Err(PopenError::from(io::Error::from_raw_os_error(
-                    error_code as i32,
-                )))
-            } else {
-                Err(PopenError::LogicError(
-                    "incomplete error code from exec pipe",
-                ))
             }
         }
 
@@ -1224,9 +1217,7 @@ mod os {
                 is_first = false;
             }
             if arg.encode_wide().any(|c| c == 0) {
-                return Err(io::Error::from_raw_os_error(
-                    win32::ERROR_BAD_PATHNAME as i32,
-                ));
+                return Err(io::Error::from_raw_os_error(win32::ERROR_BAD_PATHNAME as _));
             }
             append_quoted(&arg, &mut cmdline);
         }
