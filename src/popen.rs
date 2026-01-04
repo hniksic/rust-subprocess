@@ -724,7 +724,7 @@ mod os {
                         }
                         None => {
                             drop(exec_fail_pipe.0);
-                            let result = Popen::do_exec(
+                            let result = do_exec(
                                 just_exec,
                                 child_ends,
                                 config.cwd.as_deref(),
@@ -815,89 +815,66 @@ mod os {
         formatted
     }
 
-    trait PopenOsImpl: super::PopenOs {
-        fn do_exec(
-            just_exec: impl FnOnce() -> io::Result<()>,
-            child_ends: (Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>),
-            cwd: Option<&OsStr>,
-            setuid: Option<u32>,
-            setgid: Option<u32>,
-            setpgid: bool,
-        ) -> io::Result<()>;
-        fn waitpid(&mut self, block: bool) -> io::Result<()>;
+    fn dup2_if_needed(file: &Option<Rc<File>>, target_fd: i32) -> io::Result<()> {
+        if let Some(f) = file
+            && f.as_raw_fd() != target_fd
+        {
+            posix::dup2(f.as_raw_fd(), target_fd)?;
+        }
+        Ok(())
     }
 
-    impl PopenOsImpl for Popen {
-        fn do_exec(
-            just_exec: impl FnOnce() -> io::Result<()>,
-            child_ends: (Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>),
-            cwd: Option<&OsStr>,
-            setuid: Option<u32>,
-            setgid: Option<u32>,
-            setpgid: bool,
-        ) -> io::Result<()> {
-            if let Some(cwd) = cwd {
-                env::set_current_dir(cwd)?;
-            }
-
-            let (stdin, stdout, stderr) = child_ends;
-            if let Some(stdin) = stdin
-                && stdin.as_raw_fd() != 0
-            {
-                posix::dup2(stdin.as_raw_fd(), 0)?;
-            }
-            if let Some(stdout) = stdout
-                && stdout.as_raw_fd() != 1
-            {
-                posix::dup2(stdout.as_raw_fd(), 1)?;
-            }
-            if let Some(stderr) = stderr
-                && stderr.as_raw_fd() != 2
-            {
-                posix::dup2(stderr.as_raw_fd(), 2)?;
-            }
-            posix::reset_sigpipe()?;
-
-            // setgid must come before setuid: once we drop privileges with setuid, we may
-            // no longer have permission to call setgid
-            if let Some(gid) = setgid {
-                posix::setgid(gid)?;
-            }
-            if let Some(uid) = setuid {
-                posix::setuid(uid)?;
-            }
-            if setpgid {
-                posix::setpgid(0, 0)?;
-            }
-            just_exec()?;
-            unreachable!();
+    fn do_exec(
+        just_exec: impl FnOnce() -> io::Result<()>,
+        child_ends: (Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>),
+        cwd: Option<&OsStr>,
+        setuid: Option<u32>,
+        setgid: Option<u32>,
+        setpgid: bool,
+    ) -> io::Result<()> {
+        if let Some(cwd) = cwd {
+            env::set_current_dir(cwd)?;
         }
 
+        let (stdin, stdout, stderr) = child_ends;
+        dup2_if_needed(&stdin, 0)?;
+        dup2_if_needed(&stdout, 1)?;
+        dup2_if_needed(&stderr, 2)?;
+        posix::reset_sigpipe()?;
+
+        // setgid must come before setuid: once we drop privileges with setuid, we may
+        // no longer have permission to call setgid
+        if let Some(gid) = setgid {
+            posix::setgid(gid)?;
+        }
+        if let Some(uid) = setuid {
+            posix::setuid(uid)?;
+        }
+        if setpgid {
+            posix::setpgid(0, 0)?;
+        }
+        just_exec()?;
+        unreachable!();
+    }
+
+    impl Popen {
         fn waitpid(&mut self, block: bool) -> io::Result<()> {
-            match self.child_state {
+            let pid = match self.child_state {
                 Preparing => panic!("child_state == Preparing"),
-                Running { pid, .. } => {
-                    match posix::waitpid(pid, if block { 0 } else { posix::WNOHANG }) {
-                        Err(e) => {
-                            if let Some(errno) = e.raw_os_error()
-                                && errno == posix::ECHILD
-                            {
-                                // Someone else has waited for the child (another thread,
-                                // a signal handler...). The PID no longer exists and we
-                                // cannot find its exit status.
-                                self.child_state = Finished(ExitStatus::Undetermined);
-                                return Ok(());
-                            }
-                            return Err(e);
-                        }
-                        Ok((pid_out, exit_status)) => {
-                            if pid_out == pid {
-                                self.child_state = Finished(exit_status);
-                            }
-                        }
-                    }
+                Running { pid, .. } => pid,
+                Finished(..) => return Ok(()),
+            };
+            match posix::waitpid(pid, if block { 0 } else { posix::WNOHANG }) {
+                Ok((pid_out, exit_status)) if pid_out == pid => {
+                    self.child_state = Finished(exit_status);
                 }
-                Finished(..) => (),
+                Ok(_) => {}
+                Err(e) if e.raw_os_error() == Some(posix::ECHILD) => {
+                    // Someone else has waited for the child (another thread, a signal
+                    // handler...). The PID no longer exists and we cannot find its exit status.
+                    self.child_state = Finished(ExitStatus::Undetermined);
+                }
+                Err(e) => return Err(e),
             }
             Ok(())
         }
@@ -980,7 +957,7 @@ mod os {
     use std::collections::HashSet;
     use std::env;
     use std::ffi::{OsStr, OsString};
-    use std::fs::{self, File};
+    use std::fs::File;
     use std::io;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::os::windows::io::{AsRawHandle, RawHandle};
@@ -1028,15 +1005,10 @@ mod os {
 
         fn os_wait(&mut self) -> Result<ExitStatus> {
             self.wait_handle(None)?;
-            match self.child_state {
-                Preparing => panic!("child_state == Preparing"),
-                Finished(exit_status) => Ok(exit_status),
-                // Since we invoked wait_handle without timeout, exit status should exist
-                // at this point.  The only way for it not to exist would be if something
-                // strange happened, like WaitForSingleObject returning something other
-                // than OBJECT_0.
-                Running { .. } => Err(PopenError::LogicError("Failed to obtain exit status")),
-            }
+            // wait_handle(None) should always result in Finished state. The only way for it
+            // not to would be if WaitForSingleObject returned something other than OBJECT_0.
+            self.exit_status()
+                .ok_or(PopenError::LogicError("Failed to obtain exit status"))
         }
 
         fn os_wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
@@ -1053,20 +1025,16 @@ mod os {
                 ext: ExtChildState(ref handle),
                 ..
             } = self.child_state
+                && let Err(err) = win32::TerminateProcess(handle, 1)
             {
-                match win32::TerminateProcess(handle, 1) {
-                    Err(err) => {
-                        if err.raw_os_error() != Some(win32::ERROR_ACCESS_DENIED as i32) {
-                            return Err(err);
-                        }
-                        let rc = win32::GetExitCodeProcess(handle)?;
-                        if rc == win32::STILL_ACTIVE {
-                            return Err(err);
-                        }
-                        new_child_state = Some(Finished(ExitStatus::Exited(rc)));
-                    }
-                    Ok(_) => (),
+                if err.raw_os_error() != Some(win32::ERROR_ACCESS_DENIED as i32) {
+                    return Err(err);
                 }
+                let rc = win32::GetExitCodeProcess(handle)?;
+                if rc == win32::STILL_ACTIVE {
+                    return Err(err);
+                }
+                new_child_state = Some(Finished(ExitStatus::Exited(rc)));
             }
             if let Some(new_child_state) = new_child_state {
                 self.child_state = new_child_state;
@@ -1112,12 +1080,8 @@ mod os {
         block
     }
 
-    trait PopenOsImpl {
-        fn wait_handle(&mut self, timeout: Option<Duration>) -> io::Result<Option<ExitStatus>>;
-    }
-
-    impl PopenOsImpl for Popen {
-        fn wait_handle(&mut self, timeout: Option<Duration>) -> io::Result<Option<ExitStatus>> {
+    impl Popen {
+        fn wait_handle(&mut self, timeout: Option<Duration>) -> io::Result<()> {
             let mut new_child_state = None;
             if let Running {
                 ext: ExtChildState(ref handle),
@@ -1133,7 +1097,7 @@ mod os {
             if let Some(new_child_state) = new_child_state {
                 self.child_state = new_child_state;
             }
-            Ok(self.exit_status())
+            Ok(())
         }
     }
 
@@ -1193,14 +1157,15 @@ mod os {
     }
 
     fn locate_in_path(executable: OsString) -> OsString {
-        if let Some(path) = env::var_os("PATH") {
-            for path in env::split_paths(&path) {
-                let path = path
-                    .join(&executable)
-                    .with_extension(::std::env::consts::EXE_EXTENSION);
-                if fs::metadata(&path).is_ok() {
-                    return path.into_os_string();
-                }
+        let Some(path_var) = env::var_os("PATH") else {
+            return executable;
+        };
+        for dir in env::split_paths(&path_var) {
+            let candidate = dir
+                .join(&executable)
+                .with_extension(std::env::consts::EXE_EXTENSION);
+            if candidate.exists() {
+                return candidate.into_os_string();
             }
         }
         executable
