@@ -202,7 +202,7 @@ impl PopenConfig {
             detached: self.detached,
             #[cfg(windows)]
             creation_flags: self.creation_flags,
-            executable: self.executable.as_ref().cloned(),
+            executable: self.executable.clone(),
             env: self.env.clone(),
             cwd: self.cwd.clone(),
             #[cfg(unix)]
@@ -412,7 +412,7 @@ impl Popen {
             if src.is_none() {
                 *src = Some(get_standard_stream(src_id)?);
             }
-            *dest = Some(Rc::clone(src.as_ref().unwrap()));
+            *dest = src.clone();
             Ok(())
         }
 
@@ -904,9 +904,8 @@ mod os {
     }
 
     pub fn set_inheritable(f: &File, inheritable: bool) -> io::Result<()> {
-        if inheritable {
-            // Unix pipes are inheritable by default.
-        } else {
+        // Unix pipes are inheritable by default, so we only need to act when removing the flag.
+        if !inheritable {
             let fd = f.as_raw_fd();
             let old = posix::fcntl(fd, posix::F_GETFD, None)?;
             posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC))?;
@@ -1086,7 +1085,7 @@ mod os {
                 &s.encode_wide()
                     .map(|c| {
                         if c < 128 {
-                            (c as u8 as char).to_ascii_uppercase() as u16
+                            (c as u8).to_ascii_uppercase() as u16
                         } else {
                             c
                         }
@@ -1209,17 +1208,14 @@ mod os {
 
     fn assemble_cmdline(argv: Vec<OsString>) -> io::Result<OsString> {
         let mut cmdline = vec![];
-        let mut is_first = true;
-        for arg in argv {
-            if !is_first {
+        for (i, arg) in argv.iter().enumerate() {
+            if i > 0 {
                 cmdline.push(' ' as u16);
-            } else {
-                is_first = false;
             }
             if arg.encode_wide().any(|c| c == 0) {
                 return Err(io::Error::from_raw_os_error(win32::ERROR_BAD_PATHNAME as _));
             }
-            append_quoted(&arg, &mut cmdline);
+            append_quoted(arg, &mut cmdline);
         }
         Ok(OsString::from_wide(&cmdline))
     }

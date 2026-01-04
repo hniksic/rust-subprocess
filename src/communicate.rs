@@ -233,7 +233,7 @@ mod raw {
         let timeout = deadline.map(|d| d.saturating_duration_since(Instant::now()));
 
         match WaitForMultipleObjects(&handles, timeout)? {
-            WaitResult::Timeout => Err(io::Error::new(io::ErrorKind::TimedOut, "timeout")),
+            WaitResult::Timeout => Err(io::ErrorKind::TimedOut.into()),
             WaitResult::Object(idx) => Ok(streams[idx]),
         }
     }
