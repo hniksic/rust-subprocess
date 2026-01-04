@@ -704,12 +704,20 @@ mod exec {
     pub mod unix {
         use super::Exec;
 
-        /// Trait allowing for custom implementations of `setuid` and `setgid` behaviors on Unix
-        /// which handle file system permissions (owner or group respectively).
+        /// Extension trait for Unix-specific process creation options.
         pub trait ExecExt {
-            /// sets the access right flag, similar to unix setuid
+            /// Set the user ID for the spawned process.
+            ///
+            /// The child process will run with the specified user ID, which affects file
+            /// access permissions and process ownership. This calls `setuid(2)` in the child
+            /// process after `fork()` but before `exec()`.
             fn setuid(self, uid: u32) -> Self;
-            /// sets the access right flag, similar to unix setgid
+
+            /// Set the group ID for the spawned process.
+            ///
+            /// The child process will run with the specified group ID, which affects file
+            /// access permissions based on group ownership. This calls `setgid(2)` in the
+            /// child process after `fork()` but before `exec()`.
             fn setgid(self, gid: u32) -> Self;
         }
 
