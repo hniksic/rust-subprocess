@@ -8,6 +8,7 @@ use std::mem;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::ptr;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use libc::{c_char, c_int};
@@ -285,11 +286,13 @@ pub fn dup2(oldfd: i32, newfd: i32) -> Result<()> {
     Ok(())
 }
 
-pub fn make_standard_stream(which: StandardStream) -> Result<File> {
-    // SAFETY: This is in fact not IO-safe, the caller must be careful not to ever destroy
-    // the file, or the underlying file descriptor would get closed, which we don't want.
-    // There is no memory-unsafety, though.
-    Ok(unsafe { File::from_raw_fd(which as RawFd) })
+pub fn make_standard_stream(which: StandardStream) -> Result<Rc<File>> {
+    let stream = Rc::new(unsafe { File::from_raw_fd(which as RawFd) });
+    // Leak the Rc so the object we return doesn't close the underlying file descriptor.
+    // We didn't open it, and it is shared by everything else, so we are not allowed to
+    // close it either.
+    mem::forget(Rc::clone(&stream));
+    Ok(stream)
 }
 
 pub fn reset_sigpipe() -> Result<()> {
