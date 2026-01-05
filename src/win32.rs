@@ -15,9 +15,7 @@ use std::time::{Duration, Instant};
 
 use winapi::shared::{
     minwindef::{BOOL, DWORD, FALSE, LPVOID, TRUE},
-    winerror::{
-        ERROR_BROKEN_PIPE, ERROR_HANDLE_EOF, ERROR_IO_PENDING, ERROR_NOT_FOUND, WAIT_TIMEOUT,
-    },
+    winerror::{ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_NOT_FOUND, WAIT_TIMEOUT},
 };
 use winapi::um::fileapi::CreateFileW;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
@@ -160,7 +158,9 @@ fn ResetEvent(event: &Handle) -> Result<()> {
 
 /// Get the result of an overlapped operation.
 /// Returns Ok(bytes_transferred) or Err if the operation failed.
-/// ERROR_BROKEN_PIPE and ERROR_HANDLE_EOF are treated as EOF (returns 0 bytes).
+///
+/// ERROR_BROKEN_PIPE is treated as EOF (returns 0 bytes). This is the correct EOF signal for
+/// pipes per MSDN: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile
 fn get_overlapped_result(
     handle: RawHandle,
     overlapped: &mut OVERLAPPED,
@@ -173,9 +173,7 @@ fn get_overlapped_result(
         Ok(bytes_transferred)
     } else {
         let err = Error::last_os_error();
-        let code = err.raw_os_error();
-        if code == Some(ERROR_BROKEN_PIPE as i32) || code == Some(ERROR_HANDLE_EOF as i32) {
-            // Pipe closed or EOF
+        if err.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) {
             Ok(0)
         } else {
             Err(err)
@@ -350,7 +348,8 @@ pub fn ReadFileOverlapped(handle: RawHandle, buffer_size: usize) -> Result<Pendi
         let code = err.raw_os_error();
         if code == Some(ERROR_IO_PENDING as i32) {
             // Already set to Pending
-        } else if code == Some(ERROR_BROKEN_PIPE as i32) || code == Some(ERROR_HANDLE_EOF as i32) {
+        } else if code == Some(ERROR_BROKEN_PIPE as i32) {
+            // EOF for pipes, per MSDN ReadFile docs
             pending.state = PendingState::Completed(0);
         } else {
             return Err(err);
