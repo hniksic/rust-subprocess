@@ -103,23 +103,34 @@ mod posix {
             Ok(())
         }
 
-        fn read_into(
+        pub fn read(
             &mut self,
             deadline: Option<Instant>,
             size_limit: Option<usize>,
-            outvec: &mut Vec<u8>,
-            errvec: &mut Vec<u8>,
+            outret: &mut Option<Vec<u8>>,
+            errret: &mut Option<Vec<u8>>,
         ) -> io::Result<()> {
             // Note: chunk size for writing must be smaller than the pipe buffer size.  A
             // large enough write to a pipe deadlocks despite polling.
             const WRITE_SIZE: usize = 4096;
 
+            let outvec = if self.stdout.is_some() {
+                outret.insert(vec![])
+            } else {
+                &mut vec![]
+            };
+            let errvec = if self.stderr.is_some() {
+                errret.insert(vec![])
+            } else {
+                &mut vec![]
+            };
             let mut stdout_live = self.stdout.as_ref();
             let mut stderr_live = self.stderr.as_ref();
 
             loop {
+                let total = outvec.len() + errvec.len();
                 if let Some(size_limit) = size_limit
-                    && outvec.len() + errvec.len() >= size_limit
+                    && total >= size_limit
                 {
                     break;
                 }
@@ -147,42 +158,14 @@ mod posix {
                     }
                 }
                 if out_ready {
-                    RawCommunicator::do_read(
-                        &mut stdout_live,
-                        outvec,
-                        size_limit,
-                        outvec.len() + errvec.len(),
-                    )?;
+                    RawCommunicator::do_read(&mut stdout_live, outvec, size_limit, total)?;
                 }
                 if err_ready {
-                    RawCommunicator::do_read(
-                        &mut stderr_live,
-                        errvec,
-                        size_limit,
-                        outvec.len() + errvec.len(),
-                    )?;
+                    RawCommunicator::do_read(&mut stderr_live, errvec, size_limit, total)?;
                 }
             }
 
             Ok(())
-        }
-
-        pub fn read(
-            &mut self,
-            deadline: Option<Instant>,
-            size_limit: Option<usize>,
-        ) -> (Option<io::Error>, (Option<Vec<u8>>, Option<Vec<u8>>)) {
-            let mut outvec = vec![];
-            let mut errvec = vec![];
-
-            let err = self
-                .read_into(deadline, size_limit, &mut outvec, &mut errvec)
-                .err();
-            let output = (
-                self.stdout.as_ref().map(|_| outvec),
-                self.stderr.as_ref().map(|_| errvec),
-            );
-            (err, output)
         }
     }
 }
@@ -307,20 +290,31 @@ mod win32 {
             }
         }
 
-        fn read_into(
+        pub fn read(
             &mut self,
             deadline: Option<Instant>,
             size_limit: Option<usize>,
-            outvec: &mut Vec<u8>,
-            errvec: &mut Vec<u8>,
+            outret: &mut Option<Vec<u8>>,
+            errret: &mut Option<Vec<u8>>,
         ) -> io::Result<()> {
+            let outvec = if self.stdout.is_some() {
+                outret.insert(vec![])
+            } else {
+                &mut vec![]
+            };
+            let errvec = if self.stderr.is_some() {
+                errret.insert(vec![])
+            } else {
+                &mut vec![]
+            };
             // cleared after EOF
             let mut stdout_live = self.stdout.as_ref();
             let mut stderr_live = self.stderr.as_ref();
 
             loop {
+                let total = outvec.len() + errvec.len();
                 if let Some(size_limit) = size_limit
-                    && outvec.len() + errvec.len() >= size_limit
+                    && total >= size_limit
                 {
                     break;
                 }
@@ -340,7 +334,7 @@ mod win32 {
                     in_ready = start_write(stdin, &mut self.stdin_pending, &mut self.input_data)?;
                 }
                 let read_size = size_limit
-                    .map(|l| l.saturating_sub(outvec.len() + errvec.len()))
+                    .map(|l| l.saturating_sub(total))
                     .unwrap_or(BUFFER_SIZE)
                     .min(BUFFER_SIZE);
                 if let Some(stdout) = stdout_live
@@ -385,24 +379,6 @@ mod win32 {
             }
 
             Ok(())
-        }
-
-        pub fn read(
-            &mut self,
-            deadline: Option<Instant>,
-            size_limit: Option<usize>,
-        ) -> (Option<io::Error>, (Option<Vec<u8>>, Option<Vec<u8>>)) {
-            let mut outvec = vec![];
-            let mut errvec = vec![];
-
-            let err = self
-                .read_into(deadline, size_limit, &mut outvec, &mut errvec)
-                .err();
-            let output = (
-                self.stdout.as_ref().map(|_| outvec),
-                self.stderr.as_ref().map(|_| errvec),
-            );
-            (err, output)
         }
     }
 }
@@ -490,9 +466,18 @@ impl Communicator {
     /// [`capture`]: struct.CommunicateError.html#structfield.capture
     pub fn read(&mut self) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), CommunicateError> {
         let deadline = self.time_limit.map(|timeout| Instant::now() + timeout);
-        match self.inner.read(deadline, self.size_limit) {
-            (None, capture) => Ok(capture),
-            (Some(error), capture) => Err(CommunicateError { error, capture }),
+        let mut outvec = None;
+        let mut errvec = None;
+
+        match self
+            .inner
+            .read(deadline, self.size_limit, &mut outvec, &mut errvec)
+        {
+            Ok(()) => Ok((outvec, errvec)),
+            Err(error) => Err(CommunicateError {
+                error,
+                capture: (outvec, errvec),
+            }),
         }
     }
 
