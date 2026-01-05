@@ -161,6 +161,7 @@ mod posix {
                     RawCommunicator::do_read(&mut stdout_live, outvec, size_limit, total)?;
                 }
                 if err_ready {
+                    let total = outvec.len() + errvec.len();
                     RawCommunicator::do_read(&mut stderr_live, errvec, size_limit, total)?;
                 }
             }
