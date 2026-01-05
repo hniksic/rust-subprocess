@@ -298,6 +298,15 @@ mod win32 {
             outret: &mut Option<Vec<u8>>,
             errret: &mut Option<Vec<u8>>,
         ) -> io::Result<()> {
+            // Note: size_limit enforcement is approximate on Windows when capturing both stdout
+            // and stderr. On Unix, poll() signals readiness and we control how much to read. On
+            // Windows, completion-based I/O means data is already in our buffer when we find out
+            // about it. If both streams complete simultaneously, each may contribute a full
+            // buffer before we can enforce the limit. We tried tracking partially-consumed
+            // buffers to enforce strict limits, but the complexity wasn't worth it for a feature
+            // whose intent is "don't read megabytes when I asked for kilobytes". The overshoot
+            // is bounded by ~2x BUFFER_SIZE.
+
             let outvec = if self.stdout.is_some() {
                 outret.insert(vec![])
             } else {
@@ -492,6 +501,9 @@ impl Communicator {
     }
 
     /// Limit the amount of data the next `read()` will read from the subprocess.
+    ///
+    /// On Windows, when capturing both stdout and stderr, the limit is approximate
+    /// and may be exceeded by several kilobytes.
     pub fn limit_size(mut self, size: usize) -> Communicator {
         self.size_limit = Some(size);
         self
