@@ -5,7 +5,7 @@ use std::io::{self, ErrorKind};
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
-mod raw {
+mod posix {
     use crate::posix;
     use std::cmp::min;
     use std::collections::VecDeque;
@@ -188,7 +188,7 @@ mod raw {
 }
 
 #[cfg(windows)]
-mod raw {
+mod win32 {
     use crate::os_common::StandardStream;
     use crate::win32::{
         PendingRead, PendingWrite, ReadFileOverlapped, WaitForMultipleObjects, WaitResult,
@@ -407,7 +407,10 @@ mod raw {
     }
 }
 
-use raw::RawCommunicator;
+#[cfg(unix)]
+use posix::RawCommunicator;
+#[cfg(windows)]
+use win32::RawCommunicator;
 
 /// Send input to a subprocess and capture its output, without deadlock.
 ///
