@@ -97,11 +97,7 @@ fn unique_pipe_name() -> Vec<u16> {
     name.encode_utf16().chain(iter::once(0u16)).collect()
 }
 
-/// Create a pipe where both ends support overlapped I/O.
-///
-/// Returns (read_handle, write_handle), both with FILE_FLAG_OVERLAPPED.
-/// Both handles are inheritable; use SetHandleInformation to change this.
-pub fn CreateOverlappedPipe() -> Result<(File, File)> {
+pub fn make_pipe() -> Result<(File, File)> {
     let pipe_name = unique_pipe_name();
     const BUFFER_SIZE: DWORD = 4096;
 

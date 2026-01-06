@@ -1123,37 +1123,26 @@ mod os {
 
     /// Create a pipe where both ends support overlapped I/O.
     ///
-    /// Returns (read_end, write_end), both with FILE_FLAG_OVERLAPPED.
     /// Both handles are created inheritable; callers should use `set_inheritable`
     /// to make the parent's end non-inheritable before spawning children.
-    ///
-    /// # Why overlapped pipes?
-    ///
-    /// On Windows, `communicate()` requires overlapped (async) I/O to simultaneously
-    /// read from stdout/stderr and write to stdin without deadlocking. This is
-    /// analogous to how Unix uses `poll()` for the same purpose.
-    ///
-    /// # Why this is safe for synchronous I/O too
-    ///
-    /// Although MSDN warns that passing NULL for lpOverlapped on an overlapped
-    /// handle "can incorrectly report that the read operation is complete", in
-    /// practice synchronous I/O works correctly on overlapped pipe handles:
-    ///
-    /// - Raymond Chen explains that for pipes and mailslots, the I/O subsystem
-    ///   accepts synchronous I/O on overlapped handles ("Sure, whatever.")
-    ///   https://devblogs.microsoft.com/oldnewthing/20120411-00/?p=7883
-    ///
-    /// - Rust's std library relies on this: it creates overlapped pipes for the
-    ///   parent's end (to enable simultaneous stdout/stderr reading) but reads
-    ///   from them using normal synchronous File::read() calls.
-    ///   https://github.com/rust-lang/rust/issues/95759
-    ///   https://github.com/rust-lang/rust/pull/95841
-    ///
-    /// This means both `communicate()` (which uses overlapped I/O) and the
-    /// `stream_*` methods (which use synchronous File::read/write) work correctly
-    /// with these pipes.
     pub fn make_pipe() -> io::Result<(File, File)> {
-        win32::CreateOverlappedPipe()
+        // We create overlap pipes because Windows `communicate()` requires overlapped
+        // (async) I/O to simultaneously read from stdout/stderr and write to stdin
+        // without deadlocking. This is analogous to how Unix uses `poll()` for the same
+        // purpose.
+        //
+        // Although MSDN warns that passing NULL for lpOverlapped on an overlapped
+        // handle "can incorrectly report that the read operation is complete", in
+        // practice synchronous I/O works correctly on overlapped pipe handles.
+        //
+        // Raymond Chen notes that for pipes and mailslots, the I/O subsystem
+        // accepts synchronous I/O on overlapped handles
+        // https://devblogs.microsoft.com/oldnewthing/20120411-00/?p=7883
+        //
+        // This means both `communicate()` (which uses overlapped I/O) and the
+        // `stream_*` methods (which use synchronous File::read/write) work correctly
+        // with these pipes.
+        win32::make_pipe()
     }
 
     fn locate_in_path(executable: OsString) -> OsString {
