@@ -159,8 +159,8 @@ fn ResetEvent(event: &Handle) -> Result<()> {
 /// Get the result of an overlapped operation.
 /// Returns Ok(bytes_transferred) or Err if the operation failed.
 ///
-/// ERROR_BROKEN_PIPE is treated as EOF (returns 0 bytes). This is the correct EOF signal for
-/// pipes per MSDN: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile
+/// ERROR_BROKEN_PIPE is treated as EOF (returns 0 bytes). This is the standard EOF indicator for
+/// pipes on Windows - see comment in ReadFileOverlapped for details.
 fn get_overlapped_result(
     handle: RawHandle,
     overlapped: &mut OVERLAPPED,
@@ -248,8 +248,7 @@ impl PendingRead {
 impl Drop for PendingRead {
     fn drop(&mut self) {
         if !self.is_ready() {
-            let _ = CancelIoEx(self.handle, &mut self.overlapped);
-            let _ = get_overlapped_result(self.handle, &mut self.overlapped, true);
+            cancel_and_wait_io(self.handle, &mut self.overlapped);
         }
     }
 }
@@ -306,8 +305,7 @@ impl PendingWrite {
 impl Drop for PendingWrite {
     fn drop(&mut self) {
         if !self.is_ready() {
-            let _ = CancelIoEx(self.handle, &mut self.overlapped);
-            let _ = get_overlapped_result(self.handle, &mut self.overlapped, true);
+            cancel_and_wait_io(self.handle, &mut self.overlapped);
         }
     }
 }
@@ -349,7 +347,12 @@ pub fn ReadFileOverlapped(handle: RawHandle, buffer_size: usize) -> Result<Pendi
         if code == Some(ERROR_IO_PENDING as i32) {
             // Already set to Pending
         } else if code == Some(ERROR_BROKEN_PIPE as i32) {
-            // EOF for pipes, per MSDN ReadFile docs
+            // The write end of the pipe was closed before we started reading. This is the
+            // standard EOF indicator for pipes on Windows, documented for anonymous pipes at
+            // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile
+            // and confirmed to also apply to byte-mode named pipes in practice. Treating this
+            // as immediate completion with 0 bytes (EOF) is correct and matches the async
+            // completion path where get_overlapped_result() handles the same error.
             pending.state = PendingState::Completed(0);
         } else {
             return Err(err);
@@ -606,21 +609,23 @@ pub fn make_standard_stream(which: StandardStream) -> Result<Rc<File>> {
     }
 }
 
-/// Cancel pending overlapped I/O on a handle.
+/// Cancel pending overlapped I/O and wait for it to complete.
 ///
-/// After calling this, you should call `get_overlapped_result(handle, overlapped, true)` to wait
-/// for the cancellation to complete before freeing the overlapped structure or buffer.
-fn CancelIoEx(handle: RawHandle, overlapped: &mut OVERLAPPED) -> Result<()> {
-    let result = unsafe { winapi::um::ioapiset::CancelIoEx(handle, overlapped as _) };
-    if result != 0 {
-        Ok(())
+/// This is used by Drop implementations to safely clean up pending I/O before freeing the
+/// overlapped structure and buffer. It handles the case where no I/O was actually pending
+/// (e.g., ReadFile failed immediately with ERROR_BROKEN_PIPE) by checking CancelIoEx's return.
+fn cancel_and_wait_io(handle: RawHandle, overlapped: &mut OVERLAPPED) {
+    let cancel_result = unsafe { winapi::um::ioapiset::CancelIoEx(handle, overlapped as _) };
+    if cancel_result != 0 {
+        // I/O was pending and is now cancelled - wait for completion
+        let _ = get_overlapped_result(handle, overlapped, true);
     } else {
         let err = Error::last_os_error();
-        // ERROR_NOT_FOUND means no pending I/O on this handle/overlapped - that's fine
         if err.raw_os_error() == Some(ERROR_NOT_FOUND as i32) {
-            Ok(())
+            // No I/O was pending - nothing to wait for
         } else {
-            Err(err)
+            // Cancellation failed for another reason - try to wait anyway to be safe
+            let _ = get_overlapped_result(handle, overlapped, true);
         }
     }
 }
