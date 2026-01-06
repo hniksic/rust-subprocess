@@ -258,8 +258,20 @@ impl Drop for PendingRead {
         eprintln!("[DEBUG PendingRead::Drop] state={:?}", self.state);
         if !self.is_ready() {
             eprintln!("[DEBUG PendingRead::Drop] cancelling pending I/O");
-            let _ = CancelIoEx(self.handle, &mut self.overlapped);
-            let _ = get_overlapped_result(self.handle, &mut self.overlapped, true);
+            match CancelIoEx(self.handle, &mut self.overlapped) {
+                Ok(true) => {
+                    // I/O was actually pending and is now cancelled - wait for completion
+                    let _ = get_overlapped_result(self.handle, &mut self.overlapped, true);
+                }
+                Ok(false) => {
+                    // No I/O was pending (e.g., ReadFile failed immediately) - nothing to wait for
+                    eprintln!("[DEBUG PendingRead::Drop] no I/O was pending");
+                }
+                Err(_) => {
+                    // Cancellation failed for another reason - try to wait anyway to be safe
+                    let _ = get_overlapped_result(self.handle, &mut self.overlapped, true);
+                }
+            }
             eprintln!("[DEBUG PendingRead::Drop] cancellation complete");
         }
     }
@@ -317,8 +329,19 @@ impl PendingWrite {
 impl Drop for PendingWrite {
     fn drop(&mut self) {
         if !self.is_ready() {
-            let _ = CancelIoEx(self.handle, &mut self.overlapped);
-            let _ = get_overlapped_result(self.handle, &mut self.overlapped, true);
+            match CancelIoEx(self.handle, &mut self.overlapped) {
+                Ok(true) => {
+                    // I/O was actually pending and is now cancelled - wait for completion
+                    let _ = get_overlapped_result(self.handle, &mut self.overlapped, true);
+                }
+                Ok(false) => {
+                    // No I/O was pending - nothing to wait for
+                }
+                Err(_) => {
+                    // Cancellation failed for another reason - try to wait anyway to be safe
+                    let _ = get_overlapped_result(self.handle, &mut self.overlapped, true);
+                }
+            }
         }
     }
 }
@@ -628,17 +651,18 @@ pub fn make_standard_stream(which: StandardStream) -> Result<Rc<File>> {
 
 /// Cancel pending overlapped I/O on a handle.
 ///
-/// After calling this, you should call `get_overlapped_result(handle, overlapped, true)` to wait
-/// for the cancellation to complete before freeing the overlapped structure or buffer.
-fn CancelIoEx(handle: RawHandle, overlapped: &mut OVERLAPPED) -> Result<()> {
+/// Returns `Ok(true)` if I/O was cancelled, `Ok(false)` if no I/O was pending.
+/// After a successful cancellation (Ok(true)), call `get_overlapped_result(handle, overlapped,
+/// true)` to wait for completion before freeing the overlapped structure or buffer.
+fn CancelIoEx(handle: RawHandle, overlapped: &mut OVERLAPPED) -> Result<bool> {
     let result = unsafe { winapi::um::ioapiset::CancelIoEx(handle, overlapped as _) };
     if result != 0 {
-        Ok(())
+        Ok(true)
     } else {
         let err = Error::last_os_error();
-        // ERROR_NOT_FOUND means no pending I/O on this handle/overlapped - that's fine
+        // ERROR_NOT_FOUND means no pending I/O on this handle/overlapped
         if err.raw_os_error() == Some(ERROR_NOT_FOUND as i32) {
-            Ok(())
+            Ok(false)
         } else {
             Err(err)
         }
