@@ -166,16 +166,22 @@ fn get_overlapped_result(
     overlapped: &mut OVERLAPPED,
     wait: bool,
 ) -> Result<u32> {
+    eprintln!("[DEBUG get_overlapped_result] called with wait={wait}");
     let mut bytes_transferred: DWORD = 0;
     let result =
         unsafe { GetOverlappedResult(handle, overlapped, &mut bytes_transferred, wait as BOOL) };
     if result != 0 {
+        eprintln!("[DEBUG get_overlapped_result] success, bytes_transferred={bytes_transferred}");
         Ok(bytes_transferred)
     } else {
         let err = Error::last_os_error();
-        if err.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) {
+        let code = err.raw_os_error();
+        eprintln!("[DEBUG get_overlapped_result] failed, error code={code:?}");
+        if code == Some(ERROR_BROKEN_PIPE as i32) {
+            eprintln!("[DEBUG get_overlapped_result] -> ERROR_BROKEN_PIPE, treating as EOF");
             Ok(0)
         } else {
+            eprintln!("[DEBUG get_overlapped_result] -> returning error: {err}");
             Err(err)
         }
     }
@@ -230,6 +236,7 @@ impl PendingRead {
     /// If already completed, returns the cached result. If pending, retrieves
     /// the result (which should only be called after the event is signaled).
     pub fn complete(&mut self) -> Result<&[u8]> {
+        eprintln!("[DEBUG PendingRead::complete] state={:?}", self.state);
         let n = match self.state {
             PendingState::Completed(n) => n,
             PendingState::Pending => {
@@ -238,6 +245,7 @@ impl PendingRead {
                 n
             }
         };
+        eprintln!("[DEBUG PendingRead::complete] returning {} bytes", n);
         // SAFETY: We only access the buffer after the operation has completed, so the OS
         // is no longer writing to it.
         let buffer = unsafe { &*self.buffer.get() };
@@ -247,9 +255,12 @@ impl PendingRead {
 
 impl Drop for PendingRead {
     fn drop(&mut self) {
+        eprintln!("[DEBUG PendingRead::Drop] state={:?}", self.state);
         if !self.is_ready() {
+            eprintln!("[DEBUG PendingRead::Drop] cancelling pending I/O");
             let _ = CancelIoEx(self.handle, &mut self.overlapped);
             let _ = get_overlapped_result(self.handle, &mut self.overlapped, true);
+            eprintln!("[DEBUG PendingRead::Drop] cancellation complete");
         }
     }
 }
@@ -342,16 +353,20 @@ pub fn ReadFileOverlapped(handle: RawHandle, buffer_size: usize) -> Result<Pendi
         )
     };
     if result != 0 {
+        eprintln!("[DEBUG ReadFileOverlapped] ReadFile succeeded immediately, bytes_read={bytes_read}");
         pending.state = PendingState::Completed(bytes_read);
     } else {
         let err = Error::last_os_error();
         let code = err.raw_os_error();
+        eprintln!("[DEBUG ReadFileOverlapped] ReadFile returned 0, error code={code:?}");
         if code == Some(ERROR_IO_PENDING as i32) {
+            eprintln!("[DEBUG ReadFileOverlapped] -> ERROR_IO_PENDING, operation is pending");
             // Already set to Pending
         // } else if code == Some(ERROR_BROKEN_PIPE as i32) {
         //     // EOF for pipes, per MSDN ReadFile docs
         //     pending.state = PendingState::Completed(0);
         } else {
+            eprintln!("[DEBUG ReadFileOverlapped] -> returning error: {err}");
             return Err(err);
         }
     }
@@ -406,6 +421,7 @@ pub fn WaitForMultipleObjects(
     handles: &[RawHandle],
     timeout: Option<Duration>,
 ) -> Result<WaitResult> {
+    eprintln!("[DEBUG WaitForMultipleObjects] waiting on {} handles, timeout={timeout:?}", handles.len());
     assert!(
         handles.len() <= 64,
         "WaitForMultipleObjects: max 64 handles"
@@ -436,10 +452,14 @@ pub fn WaitForMultipleObjects(
         };
 
         if result < WAIT_OBJECT_0 + handles.len() as u32 {
-            return Ok(WaitResult::Object((result - WAIT_OBJECT_0) as usize));
+            let idx = (result - WAIT_OBJECT_0) as usize;
+            eprintln!("[DEBUG WaitForMultipleObjects] object {idx} signaled");
+            return Ok(WaitResult::Object(idx));
         } else if result >= WAIT_ABANDONED_0 && result < WAIT_ABANDONED_0 + handles.len() as u32 {
             // Treat abandoned mutex like signaled
-            return Ok(WaitResult::Object((result - WAIT_ABANDONED_0) as usize));
+            let idx = (result - WAIT_ABANDONED_0) as usize;
+            eprintln!("[DEBUG WaitForMultipleObjects] object {idx} abandoned");
+            return Ok(WaitResult::Object(idx));
         } else if result == WAIT_TIMEOUT {
             if !overflow {
                 return Ok(WaitResult::Timeout);

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master, test]
   pull_request:
     branches: [master]
 
@@ -33,7 +33,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - run: cargo build
-      - run: cargo test
+      - run: cargo test -- --nocapture
 
   freebsd:
     runs-on: ubuntu-latest
