@@ -348,9 +348,9 @@ pub fn ReadFileOverlapped(handle: RawHandle, buffer_size: usize) -> Result<Pendi
         let code = err.raw_os_error();
         if code == Some(ERROR_IO_PENDING as i32) {
             // Already set to Pending
-        } else if code == Some(ERROR_BROKEN_PIPE as i32) {
-            // EOF for pipes, per MSDN ReadFile docs
-            pending.state = PendingState::Completed(0);
+        // } else if code == Some(ERROR_BROKEN_PIPE as i32) {
+        //     // EOF for pipes, per MSDN ReadFile docs
+        //     pending.state = PendingState::Completed(0);
         } else {
             return Err(err);
         }
