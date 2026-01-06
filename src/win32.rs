@@ -376,7 +376,9 @@ pub fn ReadFileOverlapped(handle: RawHandle, buffer_size: usize) -> Result<Pendi
         )
     };
     if result != 0 {
-        eprintln!("[DEBUG ReadFileOverlapped] ReadFile succeeded immediately, bytes_read={bytes_read}");
+        eprintln!(
+            "[DEBUG ReadFileOverlapped] ReadFile succeeded immediately, bytes_read={bytes_read}"
+        );
         pending.state = PendingState::Completed(bytes_read);
     } else {
         let err = Error::last_os_error();
@@ -385,9 +387,9 @@ pub fn ReadFileOverlapped(handle: RawHandle, buffer_size: usize) -> Result<Pendi
         if code == Some(ERROR_IO_PENDING as i32) {
             eprintln!("[DEBUG ReadFileOverlapped] -> ERROR_IO_PENDING, operation is pending");
             // Already set to Pending
-        // } else if code == Some(ERROR_BROKEN_PIPE as i32) {
-        //     // EOF for pipes, per MSDN ReadFile docs
-        //     pending.state = PendingState::Completed(0);
+            // } else if code == Some(ERROR_BROKEN_PIPE as i32) {
+            //     // EOF for pipes, per MSDN ReadFile docs
+            //     pending.state = PendingState::Completed(0);
         } else {
             eprintln!("[DEBUG ReadFileOverlapped] -> returning error: {err}");
             return Err(err);
@@ -444,7 +446,10 @@ pub fn WaitForMultipleObjects(
     handles: &[RawHandle],
     timeout: Option<Duration>,
 ) -> Result<WaitResult> {
-    eprintln!("[DEBUG WaitForMultipleObjects] waiting on {} handles, timeout={timeout:?}", handles.len());
+    eprintln!(
+        "[DEBUG WaitForMultipleObjects] waiting on {} handles, timeout={timeout:?}",
+        handles.len()
+    );
     assert!(
         handles.len() <= 64,
         "WaitForMultipleObjects: max 64 handles"
