@@ -196,11 +196,17 @@ pub struct PendingRead {
     handle: RawHandle,
     overlapped: Box<OVERLAPPED>,
     event: Handle,
-    /// Buffer wrapped in UnsafeCell because the OS writes to it asynchronously
-    /// while we may hold shared references to the struct.
+    /// Buffer wrapped in UnsafeCell because the OS writes to it asynchronously while we
+    /// may hold shared references to the struct.
     buffer: UnsafeCell<Box<[u8]>>,
     state: PendingState,
 }
+
+// SAFETY: The raw handle and OVERLAPPED pointer are thread-safe. The buffer managed by
+// `UnsafeCell` is only accessed from `complete()` and `drop()`, both of which take `&mut
+// self`. Sync because `&self` methods don't access the buffer at all.
+unsafe impl Send for PendingRead {}
+unsafe impl Sync for PendingRead {}
 
 impl std::fmt::Debug for PendingRead {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -262,6 +268,11 @@ pub struct PendingWrite {
     buffer: Box<[u8]>,
     state: PendingState,
 }
+
+// SAFETY: The raw handle and OVERLAPPED pointer are thread-safe, and the remaining fields
+// are Send+Sync.
+unsafe impl Send for PendingWrite {}
+unsafe impl Sync for PendingWrite {}
 
 impl std::fmt::Debug for PendingWrite {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
