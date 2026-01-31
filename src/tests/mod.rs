@@ -6,9 +6,7 @@ mod posix;
 #[cfg(windows)]
 mod win32;
 
-use crate::{
-    CaptureData, CommunicateError, Communicator, ExitStatus, NullFile, Popen, PopenError,
-};
+use crate::{CaptureData, CommunicateError, Communicator, ExitStatus, NullFile, Popen, PopenError};
 
 fn assert_send_sync<T: Send + Sync>() {}
 
