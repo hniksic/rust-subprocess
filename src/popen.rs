@@ -815,7 +815,7 @@ mod os {
         formatted
     }
 
-    fn dup2_if_needed(file: &Option<Rc<File>>, target_fd: i32) -> io::Result<()> {
+    fn dup2_if_needed(file: Option<Rc<File>>, target_fd: i32) -> io::Result<()> {
         if let Some(f) = file
             && f.as_raw_fd() != target_fd
         {
@@ -837,9 +837,9 @@ mod os {
         }
 
         let (stdin, stdout, stderr) = child_ends;
-        dup2_if_needed(&stdin, 0)?;
-        dup2_if_needed(&stdout, 1)?;
-        dup2_if_needed(&stderr, 2)?;
+        dup2_if_needed(stdin, 0)?;
+        dup2_if_needed(stdout, 1)?;
+        dup2_if_needed(stderr, 2)?;
         posix::reset_sigpipe()?;
 
         // setgid must come before setuid: once we drop privileges with setuid, we may
