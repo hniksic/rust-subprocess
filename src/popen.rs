@@ -972,8 +972,8 @@ mod os {
 
     impl super::PopenOs for Popen {
         fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig) -> Result<()> {
-            fn raw(opt: &Option<Arc<File>>) -> Option<RawHandle> {
-                opt.as_ref().map(|f| f.as_raw_handle())
+            fn raw(opt: Option<&Arc<File>>) -> Option<RawHandle> {
+                opt.map(|f| f.as_raw_handle())
             }
             let (mut child_stdin, mut child_stdout, mut child_stderr) =
                 self.setup_streams(config.stdin, config.stdout, config.stderr)?;
@@ -988,13 +988,13 @@ mod os {
             let (handle, pid) = win32::CreateProcess(
                 executable.as_ref().map(OsString::as_ref),
                 &cmdline,
-                &env_block,
-                &config.cwd.as_deref(),
+                env_block.as_deref(),
+                config.cwd.as_deref(),
                 true,
                 config.creation_flags,
-                raw(&child_stdin),
-                raw(&child_stdout),
-                raw(&child_stderr),
+                raw(child_stdin.as_ref()),
+                raw(child_stdout.as_ref()),
+                raw(child_stderr.as_ref()),
                 win32::STARTF_USESTDHANDLES,
             )?;
             self.child_state = Running {

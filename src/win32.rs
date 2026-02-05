@@ -482,8 +482,8 @@ pub fn SetHandleInformation(handle: &File, dwMask: u32, dwFlags: u32) -> Result<
 pub fn CreateProcess(
     appname: Option<&OsStr>,
     cmdline: &OsStr,
-    env_block: &Option<Vec<u16>>,
-    cwd: &Option<&OsStr>,
+    env_block: Option<&[u16]>,
+    cwd: Option<&OsStr>,
     inherit_handles: bool,
     mut creation_flags: u32,
     stdin: Option<RawHandle>,
@@ -500,10 +500,7 @@ pub fn CreateProcess(
     let mut pinfo: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let mut cmdline = to_nullterm(cmdline);
     let wc_appname = appname.map(to_nullterm);
-    let env_block_ptr = env_block
-        .as_ref()
-        .map(|v| v.as_ptr())
-        .unwrap_or(ptr::null()) as LPVOID;
+    let env_block_ptr = env_block.map(|v| v.as_ptr()).unwrap_or(ptr::null()) as LPVOID;
     let cwd = cwd.map(to_nullterm);
     creation_flags |= CREATE_UNICODE_ENVIRONMENT;
     check(unsafe {
