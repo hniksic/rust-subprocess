@@ -6,7 +6,7 @@ use tempfile::TempDir;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Write};
-use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::{ExitStatus, Popen, PopenConfig, PopenError, Redirection};
@@ -428,15 +428,15 @@ fn broken_pipe_on_stdin() {
 }
 
 #[test]
-fn rcfile_shared_output() {
+fn shared_file_output() {
     let tmpdir = TempDir::new().unwrap();
     let tmpname = tmpdir.path().join("output");
-    let file = Rc::new(File::create(&tmpname).unwrap());
+    let file = Arc::new(File::create(&tmpname).unwrap());
     let mut p = Popen::create(
         &["sh", "-c", "printf out; printf err >&2"],
         PopenConfig {
-            stdout: Redirection::RcFile(Rc::clone(&file)),
-            stderr: Redirection::RcFile(file),
+            stdout: Redirection::SharedFile(Arc::clone(&file)),
+            stderr: Redirection::SharedFile(file),
             ..Default::default()
         },
     )

@@ -6,12 +6,12 @@ mod posix;
 #[cfg(windows)]
 mod win32;
 
-use crate::{CaptureData, CommunicateError, Communicator, ExitStatus, NullFile, Popen, PopenError};
+use crate::{
+    CaptureData, CommunicateError, Communicator, Exec, ExitStatus, NullFile, Pipeline, Popen,
+    PopenConfig, PopenError, Redirection,
+};
 
 fn assert_send_sync<T: Send + Sync>() {}
-
-// Exec, Pipeline, PopenConfig, and Redirection are intentionally
-// !Send because Redirection contains Rc<File>.
 
 #[test]
 fn public_types_are_send_and_sync() {
@@ -22,4 +22,8 @@ fn public_types_are_send_and_sync() {
     assert_send_sync::<PopenError>();
     assert_send_sync::<CommunicateError>();
     assert_send_sync::<NullFile>();
+    assert_send_sync::<Exec>();
+    assert_send_sync::<Pipeline>();
+    assert_send_sync::<PopenConfig>();
+    assert_send_sync::<Redirection>();
 }

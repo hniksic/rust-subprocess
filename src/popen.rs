@@ -1,12 +1,11 @@
-use std::cell::RefCell;
 use std::env;
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::File;
 use std::io;
-use std::rc::Rc;
 use std::result;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crate::communicate;
@@ -297,10 +296,9 @@ pub enum Redirection {
     /// The field in `Popen` corresponding to the stream will be `None`.
     File(File),
 
-    /// Like `File`, but the file is specified as `Rc`.
-    ///
-    /// This allows the same file to be used in multiple redirections.
-    RcFile(Rc<File>),
+    /// Like `File`, but the file may be shared among multiple redirections without
+    /// duplicating the file descriptor.
+    SharedFile(Arc<File>),
 }
 
 impl Redirection {
@@ -313,7 +311,7 @@ impl Redirection {
             Redirection::Pipe => Redirection::Pipe,
             Redirection::Merge => Redirection::Merge,
             Redirection::File(ref f) => Redirection::File(f.try_clone()?),
-            Redirection::RcFile(ref f) => Redirection::RcFile(Rc::clone(f)),
+            Redirection::SharedFile(ref f) => Redirection::SharedFile(Arc::clone(f)),
         })
     }
 }
@@ -370,11 +368,11 @@ impl Popen {
         stdin: Redirection,
         stdout: Redirection,
         stderr: Redirection,
-    ) -> Result<(Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>)> {
+    ) -> Result<(Option<Arc<File>>, Option<Arc<File>>, Option<Arc<File>>)> {
         fn prepare_pipe(
             parent_writes: bool,
             parent_ref: &mut Option<File>,
-            child_ref: &mut Option<Rc<File>>,
+            child_ref: &mut Option<Arc<File>>,
         ) -> Result<()> {
             // Store the parent's end of the pipe into the given reference, and store the
             // child end. On Windows, this creates pipes where both ends support
@@ -387,24 +385,27 @@ impl Popen {
             };
             os::set_inheritable(&parent_end, false)?;
             *parent_ref = Some(parent_end);
-            *child_ref = Some(Rc::new(child_end));
+            *child_ref = Some(Arc::new(child_end));
             Ok(())
         }
-        fn prepare_file(file: File, child_ref: &mut Option<Rc<File>>) -> io::Result<()> {
+        fn prepare_file(file: File, child_ref: &mut Option<Arc<File>>) -> io::Result<()> {
             // Make the File inheritable and store it for use in the child.
             os::set_inheritable(&file, true)?;
-            *child_ref = Some(Rc::new(file));
+            *child_ref = Some(Arc::new(file));
             Ok(())
         }
-        fn prepare_rc_file(file: Rc<File>, child_ref: &mut Option<Rc<File>>) -> io::Result<()> {
-            // Like prepare_file, but for Rc<File>
+        fn prepare_shared_file(
+            file: Arc<File>,
+            child_ref: &mut Option<Arc<File>>,
+        ) -> io::Result<()> {
+            // Like prepare_file, but for Arc<File>
             os::set_inheritable(&file, true)?;
             *child_ref = Some(file);
             Ok(())
         }
         fn reuse_stream(
-            dest: &mut Option<Rc<File>>,
-            src: &mut Option<Rc<File>>,
+            dest: &mut Option<Arc<File>>,
+            src: &mut Option<Arc<File>>,
             src_id: StandardStream,
         ) -> io::Result<()> {
             // For Redirection::Merge, make stdout and stderr refer to the same File.  If
@@ -429,7 +430,7 @@ impl Popen {
         match stdin {
             Redirection::Pipe => prepare_pipe(true, &mut self.stdin, &mut child_stdin)?,
             Redirection::File(file) => prepare_file(file, &mut child_stdin)?,
-            Redirection::RcFile(file) => prepare_rc_file(file, &mut child_stdin)?,
+            Redirection::SharedFile(file) => prepare_shared_file(file, &mut child_stdin)?,
             Redirection::Merge => {
                 return Err(PopenError::LogicError(
                     "Redirection::Merge not valid for stdin",
@@ -440,14 +441,14 @@ impl Popen {
         match stdout {
             Redirection::Pipe => prepare_pipe(false, &mut self.stdout, &mut child_stdout)?,
             Redirection::File(file) => prepare_file(file, &mut child_stdout)?,
-            Redirection::RcFile(file) => prepare_rc_file(file, &mut child_stdout)?,
+            Redirection::SharedFile(file) => prepare_shared_file(file, &mut child_stdout)?,
             Redirection::Merge => merge = MergeKind::OutToErr,
             Redirection::None => (),
         };
         match stderr {
             Redirection::Pipe => prepare_pipe(false, &mut self.stderr, &mut child_stderr)?,
             Redirection::File(file) => prepare_file(file, &mut child_stderr)?,
-            Redirection::RcFile(file) => prepare_rc_file(file, &mut child_stderr)?,
+            Redirection::SharedFile(file) => prepare_shared_file(file, &mut child_stderr)?,
             Redirection::Merge => {
                 if merge != MergeKind::None {
                     return Err(PopenError::LogicError(
@@ -815,7 +816,7 @@ mod os {
         formatted
     }
 
-    fn dup2_if_needed(file: Option<Rc<File>>, target_fd: i32) -> io::Result<()> {
+    fn dup2_if_needed(file: Option<Arc<File>>, target_fd: i32) -> io::Result<()> {
         if let Some(f) = file
             && f.as_raw_fd() != target_fd
         {
@@ -826,7 +827,7 @@ mod os {
 
     fn do_exec(
         just_exec: impl FnOnce() -> io::Result<()>,
-        child_ends: (Option<Rc<File>>, Option<Rc<File>>, Option<Rc<File>>),
+        child_ends: (Option<Arc<File>>, Option<Arc<File>>, Option<Arc<File>>),
         cwd: Option<&OsStr>,
         setuid: Option<u32>,
         setgid: Option<u32>,
@@ -971,7 +972,7 @@ mod os {
 
     impl super::PopenOs for Popen {
         fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig) -> Result<()> {
-            fn raw(opt: &Option<Rc<File>>) -> Option<RawHandle> {
+            fn raw(opt: &Option<Arc<File>>) -> Option<RawHandle> {
                 opt.as_ref().map(|f| f.as_raw_handle())
             }
             let (mut child_stdin, mut child_stdout, mut child_stderr) =
@@ -1101,7 +1102,10 @@ mod os {
         }
     }
 
-    fn ensure_child_stream(stream: &mut Option<Rc<File>>, which: StandardStream) -> io::Result<()> {
+    fn ensure_child_stream(
+        stream: &mut Option<Arc<File>>,
+        which: StandardStream,
+    ) -> io::Result<()> {
         // If no stream is sent to CreateProcess, the child doesn't get a valid stream.
         // This results in e.g. Exec("sh").arg("-c").arg("echo foo >&2").stream_stderr()
         // failing because the shell tries to redirect stdout to stderr, but fails because
@@ -1236,24 +1240,21 @@ impl Drop for Popen {
     }
 }
 
-thread_local! {
-    static STREAMS: RefCell<[Option<Rc<File>>; 3]> = RefCell::default();
-}
-
 #[cfg(unix)]
 use crate::posix::make_standard_stream;
 #[cfg(windows)]
 use crate::win32::make_standard_stream;
 
-fn get_standard_stream(which: StandardStream) -> io::Result<Rc<File>> {
-    STREAMS.with(|streams| {
-        if let Some(ref stream) = streams.borrow()[which as usize] {
-            return Ok(Rc::clone(stream));
-        }
-        let stream = make_standard_stream(which)?;
-        streams.borrow_mut()[which as usize] = Some(Rc::clone(&stream));
-        Ok(stream)
-    })
+fn get_standard_stream(which: StandardStream) -> io::Result<Arc<File>> {
+    static STREAMS: [OnceLock<Arc<File>>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    let lock = &STREAMS[which as usize];
+    if let Some(stream) = lock.get() {
+        return Ok(Arc::clone(stream));
+    }
+    let stream = make_standard_stream(which)?;
+    // in case of another thread getting here first, our `stream` will just be dropped.
+    // That can happen at most once.
+    Ok(Arc::clone(lock.get_or_init(|| stream)))
 }
 
 /// Error in [`Popen`] calls.

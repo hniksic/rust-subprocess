@@ -795,7 +795,7 @@ mod pipeline {
     use std::fs::File;
     use std::io::{self, Read, Write};
     use std::ops::BitOr;
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     use crate::communicate::{self, Communicator};
     use crate::os_common::ExitStatus;
@@ -1015,11 +1015,11 @@ mod pipeline {
             assert!(self.cmds.len() >= 2);
 
             if let Some(stderr_to) = self.stderr_file {
-                let stderr_to = Rc::new(stderr_to);
+                let stderr_to = Arc::new(stderr_to);
                 self.cmds = self
                     .cmds
                     .into_iter()
-                    .map(|cmd| cmd.stderr(Redirection::RcFile(Rc::clone(&stderr_to))))
+                    .map(|cmd| cmd.stderr(Redirection::SharedFile(Arc::clone(&stderr_to))))
                     .collect();
             }
 
