@@ -14,7 +14,7 @@ mod os {
 pub use exec::unix::ExecExt;
 #[cfg(windows)]
 pub use exec::windows::ExecExt;
-pub use exec::{CaptureData, Exec, NullFile};
+pub use exec::{Capture, Exec, NullFile};
 pub use pipeline::Pipeline;
 
 /// Windows-specific process creation constants and extensions.
@@ -443,7 +443,7 @@ mod exec {
         /// Unlike `Popen::communicate`, this method actually waits for the process to finish,
         /// rather than simply waiting for its standard streams to close.  If this is
         /// undesirable, use `detached()`.
-        pub fn capture(self) -> PopenResult<CaptureData> {
+        pub fn capture(self) -> PopenResult<Capture> {
             let timeout = self.time_limit;
             let (mut comm, mut p) = self.setup_communicate()?;
             if let Some(t) = timeout {
@@ -451,7 +451,7 @@ mod exec {
             }
 
             let (stdout, stderr) = comm.read()?;
-            Ok(CaptureData {
+            Ok(Capture {
                 stdout,
                 stderr,
                 exit_status: match timeout {
@@ -589,7 +589,7 @@ mod exec {
     /// [`Exec::capture`]: struct.Exec.html#method.capture
     /// [`Pipeline::capture`]: struct.Pipeline.html#method.capture
     #[derive(Debug)]
-    pub struct CaptureData {
+    pub struct Capture {
         /// Standard output as bytes.
         pub stdout: Vec<u8>,
         /// Standard error as bytes.
@@ -598,7 +598,7 @@ mod exec {
         pub exit_status: ExitStatus,
     }
 
-    impl CaptureData {
+    impl Capture {
         /// Returns the standard output as string, converted from bytes using
         /// `String::from_utf8_lossy`.
         pub fn stdout_str(&self) -> String {
@@ -800,7 +800,7 @@ mod pipeline {
     use crate::os_common::ExitStatus;
     use crate::popen::{Popen, Redirection, Result as PopenResult};
 
-    use super::exec::{CaptureData, Exec, InputRedirection, OutputRedirection};
+    use super::exec::{Capture, Exec, InputRedirection, OutputRedirection};
 
     /// A builder for multiple [`Popen`] instances connected via pipes.
     ///
@@ -1128,14 +1128,14 @@ mod pipeline {
         /// Unlike `Popen::communicate`, this method actually waits for the processes to
         /// finish, rather than simply waiting for the output to close.  If this is
         /// undesirable, use `detached()`.
-        pub fn capture(self) -> PopenResult<CaptureData> {
+        pub fn capture(self) -> PopenResult<Capture> {
             let (mut comm, mut v) = self.setup_communicate()?;
             let (stdout, stderr) = comm.read()?;
 
             let vlen = v.len();
             let status = v[vlen - 1].wait()?;
 
-            Ok(CaptureData {
+            Ok(Capture {
                 stdout,
                 stderr,
                 exit_status: status,
