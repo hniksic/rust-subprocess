@@ -1,3 +1,5 @@
+use std::fmt;
+
 /// Exit status of a process.
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -40,6 +42,28 @@ impl ExitStatus {
             return n == signum;
         }
         false
+    }
+
+    /// Returns the exit code if the process exited normally.
+    ///
+    /// Returns `Some(code)` if the exit status is `Exited(code)`,
+    /// `None` otherwise.
+    pub fn code(self) -> Option<u32> {
+        match self {
+            ExitStatus::Exited(code) => Some(code),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for ExitStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            ExitStatus::Exited(code) => write!(f, "exit code {}", code),
+            ExitStatus::Signaled(sig) => write!(f, "signal {}", sig),
+            ExitStatus::Other(status) => write!(f, "exit status {}", status),
+            ExitStatus::Undetermined => write!(f, "undetermined exit status"),
+        }
     }
 }
 
