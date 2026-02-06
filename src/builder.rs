@@ -988,6 +988,10 @@ mod pipeline {
         /// standard errors are not connected in any way.  This is also the reason only a
         /// `File` is supported - it allows for efficient sharing of the same file by all
         /// commands.
+        ///
+        /// Note that this differs from the shell's `cmd1 | cmd2 2>file`, which only
+        /// redirects stderr of the last command.  This method is equivalent to
+        /// `(cmd1 | cmd2) 2>file`, but without the overhead of a subshell.
         pub fn stderr_to(mut self, to: File) -> Pipeline {
             self.stderr_file = Some(to);
             self
