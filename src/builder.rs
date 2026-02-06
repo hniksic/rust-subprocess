@@ -12,7 +12,7 @@ mod os {
 pub use exec::unix::ExecExt;
 #[cfg(windows)]
 pub use exec::windows::ExecExt;
-pub use exec::{Capture, Exec};
+pub use exec::{Capture, Exec, InputRedirection, OutputRedirection};
 pub use pipeline::Pipeline;
 
 /// Windows-specific process creation constants and extensions.
@@ -287,13 +287,13 @@ mod exec {
         ///
         /// [`Redirection`]: enum.Redirection.html
         /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
-        pub fn stdin(mut self, stdin: impl Into<InputRedirection>) -> Exec {
-            match (&self.config.stdin, stdin.into()) {
-                (&Redirection::None, InputRedirection::AsRedirection(new)) => {
+        pub fn stdin(mut self, stdin: impl InputRedirection) -> Exec {
+            match (&self.config.stdin, stdin.into_input_redirection()) {
+                (&Redirection::None, InputRedirectionKind::AsRedirection(new)) => {
                     self.config.stdin = new
                 }
-                (&Redirection::Pipe, InputRedirection::AsRedirection(Redirection::Pipe)) => (),
-                (&Redirection::None, InputRedirection::FeedData(data)) => {
+                (&Redirection::Pipe, InputRedirectionKind::AsRedirection(Redirection::Pipe)) => (),
+                (&Redirection::None, InputRedirectionKind::FeedData(data)) => {
                     self.config.stdin = Redirection::Pipe;
                     self.stdin_data = Some(data);
                 }
@@ -312,8 +312,8 @@ mod exec {
         ///
         /// [`Redirection`]: enum.Redirection.html
         /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
-        pub fn stdout(mut self, stdout: impl Into<OutputRedirection>) -> Exec {
-            match (&self.config.stdout, stdout.into().into_redirection()) {
+        pub fn stdout(mut self, stdout: impl OutputRedirection) -> Exec {
+            match (&self.config.stdout, stdout.into_output_redirection()) {
                 (&Redirection::None, new) => self.config.stdout = new,
                 (&Redirection::Pipe, Redirection::Pipe) => (),
                 (_, _) => panic!("stdout is already set"),
@@ -331,8 +331,8 @@ mod exec {
         ///
         /// [`Redirection`]: enum.Redirection.html
         /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
-        pub fn stderr(mut self, stderr: impl Into<OutputRedirection>) -> Exec {
-            match (&self.config.stderr, stderr.into().into_redirection()) {
+        pub fn stderr(mut self, stderr: impl OutputRedirection) -> Exec {
+            match (&self.config.stderr, stderr.into_output_redirection()) {
                 (&Redirection::None, new) => self.config.stderr = new,
                 (&Redirection::Pipe, Redirection::Pipe) => (),
                 (_, _) => panic!("stderr is already set"),
@@ -619,56 +619,77 @@ mod exec {
     }
 
     #[derive(Debug)]
-    pub enum InputRedirection {
+    pub enum InputRedirectionKind {
         AsRedirection(Redirection),
         FeedData(Vec<u8>),
     }
 
-    impl From<Redirection> for InputRedirection {
-        fn from(r: Redirection) -> Self {
-            if let Redirection::Merge = r {
+    mod sealed {
+        pub trait InputRedirectionSealed {}
+        pub trait OutputRedirectionSealed {}
+    }
+
+    /// Trait for types that can be used to redirect standard input.
+    ///
+    /// This is a sealed trait that cannot be implemented outside this crate.
+    #[allow(private_interfaces)]
+    pub trait InputRedirection: sealed::InputRedirectionSealed {
+        /// Convert to internal representation.
+        #[doc(hidden)]
+        fn into_input_redirection(self) -> InputRedirectionKind;
+    }
+
+    /// Trait for types that can be used to redirect standard output or standard error.
+    ///
+    /// This is a sealed trait that cannot be implemented outside this crate.
+    pub trait OutputRedirection: sealed::OutputRedirectionSealed {
+        /// Convert to internal representation.
+        #[doc(hidden)]
+        fn into_output_redirection(self) -> Redirection;
+    }
+
+    impl sealed::InputRedirectionSealed for Redirection {}
+    impl InputRedirection for Redirection {
+        fn into_input_redirection(self) -> InputRedirectionKind {
+            if let Redirection::Merge = self {
                 panic!("Redirection::Merge is only allowed for output streams");
             }
-            InputRedirection::AsRedirection(r)
+            InputRedirectionKind::AsRedirection(self)
         }
     }
 
-    impl From<File> for InputRedirection {
-        fn from(f: File) -> Self {
-            InputRedirection::AsRedirection(Redirection::File(f))
+    impl sealed::InputRedirectionSealed for File {}
+    impl InputRedirection for File {
+        fn into_input_redirection(self) -> InputRedirectionKind {
+            InputRedirectionKind::AsRedirection(Redirection::File(self))
         }
     }
 
-    impl From<Vec<u8>> for InputRedirection {
-        fn from(v: Vec<u8>) -> Self {
-            InputRedirection::FeedData(v)
+    impl sealed::InputRedirectionSealed for Vec<u8> {}
+    impl InputRedirection for Vec<u8> {
+        fn into_input_redirection(self) -> InputRedirectionKind {
+            InputRedirectionKind::FeedData(self)
         }
     }
 
-    impl<'a> From<&'a str> for InputRedirection {
-        fn from(s: &'a str) -> Self {
-            InputRedirection::FeedData(s.as_bytes().to_vec())
+    impl sealed::InputRedirectionSealed for &str {}
+    impl InputRedirection for &str {
+        fn into_input_redirection(self) -> InputRedirectionKind {
+            InputRedirectionKind::FeedData(self.as_bytes().to_vec())
         }
     }
 
-    #[derive(Debug)]
-    pub struct OutputRedirection(Redirection);
-
-    impl OutputRedirection {
-        pub fn into_redirection(self) -> Redirection {
-            self.0
+    impl sealed::OutputRedirectionSealed for Redirection {}
+    impl OutputRedirection for Redirection {
+        fn into_output_redirection(self) -> Redirection {
+            self
         }
     }
 
-    impl From<Redirection> for OutputRedirection {
-        fn from(r: Redirection) -> Self {
-            OutputRedirection(r)
-        }
-    }
-
-    impl From<File> for OutputRedirection {
-        fn from(f: File) -> Self {
-            OutputRedirection(Redirection::File(f))
+    impl sealed::OutputRedirectionSealed for File {}
+    impl OutputRedirection for File {
+        fn into_output_redirection(self) -> Redirection {
+            Redirection::File(self)
         }
     }
 
@@ -773,7 +794,7 @@ mod pipeline {
     use crate::popen::ExitStatus;
     use crate::popen::{Popen, Redirection};
 
-    use super::exec::{Capture, Exec, InputRedirection, OutputRedirection};
+    use super::exec::{Capture, Exec, InputRedirection, InputRedirectionKind, OutputRedirection};
 
     /// A builder for multiple [`Popen`] instances connected via pipes.
     ///
@@ -925,10 +946,10 @@ mod pipeline {
         ///
         /// [`Redirection`]: enum.Redirection.html
         /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
-        pub fn stdin(mut self, stdin: impl Into<InputRedirection>) -> Pipeline {
-            match stdin.into() {
-                InputRedirection::AsRedirection(r) => self.stdin = r,
-                InputRedirection::FeedData(data) => {
+        pub fn stdin(mut self, stdin: impl InputRedirection) -> Pipeline {
+            match stdin.into_input_redirection() {
+                InputRedirectionKind::AsRedirection(r) => self.stdin = r,
+                InputRedirectionKind::FeedData(data) => {
                     self.stdin = Redirection::Pipe;
                     self.stdin_data = Some(data);
                 }
@@ -946,8 +967,8 @@ mod pipeline {
         ///
         /// [`Redirection`]: enum.Redirection.html
         /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
-        pub fn stdout(mut self, stdout: impl Into<OutputRedirection>) -> Pipeline {
-            self.stdout = stdout.into().into_redirection();
+        pub fn stdout(mut self, stdout: impl OutputRedirection) -> Pipeline {
+            self.stdout = stdout.into_output_redirection();
             self
         }
 

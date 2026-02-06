@@ -74,7 +74,7 @@ mod win32;
 #[cfg(test)]
 mod tests;
 
-pub use builder::{Capture, Exec, ExecExt, Pipeline};
+pub use builder::{Capture, Exec, ExecExt, InputRedirection, OutputRedirection, Pipeline};
 pub use communicate::Communicator;
 pub use popen::{_PrivateSeal, ExitStatus, Popen, PopenConfig, Redirection, make_pipe};
 
