@@ -412,7 +412,7 @@ mod exec {
             }
             let mut p = self.popen()?;
 
-            Ok((p.communicate_start(stdin_data), p))
+            Ok((p.communicate(stdin_data.unwrap_or_default()), p))
         }
 
         /// Starts the process and returns a `Communicator` handle.
@@ -421,8 +421,8 @@ mod exec {
         /// performed, such as read size limit and timeout, equivalent to
         /// [`Popen::communicate`].
         ///
-        /// Unlike `capture()`, this method doesn't wait for the process to finish, effectively
-        /// detaching it.
+        /// Unlike `capture()`, this method doesn't wait for the process to finish,
+        /// effectively detaching it.
         ///
         /// [`Popen::communicate`]: struct.Popen.html#method.communicate
         pub fn communicate(self) -> PopenResult<Communicator> {

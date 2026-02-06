@@ -403,10 +403,10 @@ use win32::RawCommunicator;
 /// parallel operation prevents deadlock that would occur if the subprocess produces output
 /// while waiting for more input.
 ///
-/// Create a `Communicator` by calling [`Popen::communicate_start`], then call [`read`] or
+/// Create a `Communicator` by calling [`Popen::communicate`], then call [`read`] or
 /// [`read_string`] to perform the data exchange.
 ///
-/// [`Popen::communicate_start`]: struct.Popen.html#method.communicate_start
+/// [`Popen::communicate`]: struct.Popen.html#method.communicate
 /// [`read`]: #method.read
 /// [`read_string`]: #method.read_string
 #[must_use]
@@ -573,15 +573,11 @@ pub fn communicate(
     stderr: Option<File>,
     input_data: Option<Vec<u8>>,
 ) -> Communicator {
-    if stdin.is_some() {
-        input_data
-            .as_ref()
-            .expect("must provide input to redirected stdin");
-    } else {
-        assert!(
-            input_data.as_ref().is_none(),
-            "cannot provide input to non-redirected stdin"
-        );
+    if stdin.is_some() && input_data.is_none() {
+        panic!("must provide input to redirected stdin");
+    }
+    if stdin.is_none() && input_data.is_some() {
+        panic!("cannot provide input to non-redirected stdin");
     }
     Communicator::new(stdin, stdout, stderr, input_data)
 }

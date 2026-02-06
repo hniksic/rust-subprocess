@@ -27,7 +27,7 @@ pub use os::make_pipe;
 /// Depending on how the subprocess was configured, its input, output, and error streams can
 /// be connected to the parent and available as [`stdin`], [`stdout`], and [`stderr`] public
 /// fields.  If you need to read the output and errors into memory (or provide input as a
-/// memory slice), use the [`communicate`] family of methods.
+/// memory slice), use the [`communicate`] method.
 ///
 /// `Popen` instances can be obtained with the [`create`] method, or using the [`popen`]
 /// method of the [`Exec`] type.  Subprocesses can be connected into pipes, most easily
@@ -534,89 +534,58 @@ impl Popen {
         }
     }
 
-    /// Prepare to send input to the subprocess and capture its output.
+    /// Return a [`Communicator`] handle for exchanging data with the subprocess.
     ///
-    /// Sets up writing `input_data` to the subprocess's stdin (then closing it) while
+    /// The communicate writes `input` to the subprocess's stdin (then closes it) while
     /// simultaneously reading stdout and stderr until end-of-file.  The actual I/O is
-    /// deferred until you call [`read`] or [`read_string`] on the returned [`Communicator`].
+    /// deferred until you call [`read`], [`read_string`], or [`read_to`] on the returned
+    /// handle.
     ///
-    /// The simultaneous reading and writing avoids deadlock when the subprocess produces
-    /// output before consuming all input.  (A naive write-then-read approach would hang
-    /// because the parent blocks on writing while the child blocks on having its output read.)
+    /// The simultaneous reading and writing avoids deadlock that would occur if the
+    /// subprocess produces output while waiting for more input.
     ///
-    /// Unlike [`communicate_bytes`], the `Communicator` allows timeout, size limits, and
-    /// access to partial output on error (via [`read_to`]).
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use subprocess::*;
+    /// # fn f() -> Result<()> {
+    /// # let mut p = Popen::create(&["cat"], PopenConfig {
+    /// #     stdin: Redirection::Pipe, stdout: Redirection::Pipe,
+    /// #     ..Default::default()
+    /// # })?;
+    /// // Exchange bytes:
+    /// let (out, err) = p.communicate(b"hello").read()?;
+    /// // Exchange strings:
+    /// let (out, err) = p.communicate("hello").read_string()?;
+    /// // No input (just capture output):
+    /// let (out, err) = p.communicate([]).read()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// If `input` is non-empty and `stdin` was not redirected to a pipe.
     ///
     /// [`Communicator`]: struct.Communicator.html
     /// [`read`]: struct.Communicator.html#method.read
     /// [`read_string`]: struct.Communicator.html#method.read_string
     /// [`read_to`]: struct.Communicator.html#method.read_to
-    /// [`communicate_bytes`]: #method.communicate_bytes
-    pub fn communicate_start(&mut self, input_data: Option<Vec<u8>>) -> Communicator {
+    pub fn communicate(&mut self, input: impl AsRef<[u8]>) -> Communicator {
+        let input_data = if self.stdin.is_some() {
+            Some(input.as_ref().to_vec())
+        } else {
+            if !input.as_ref().is_empty() {
+                panic!("cannot provide input to non-redirected stdin");
+            }
+            None
+        };
         communicate::communicate(
             self.stdin.take(),
             self.stdout.take(),
             self.stderr.take(),
             input_data,
         )
-    }
-
-    /// Send input to the subprocess and capture its output.
-    ///
-    /// Writes `input_data` to the subprocess's stdin and closes it, while simultaneously
-    /// reading stdout and stderr until end-of-file.  Returns the captured output as a pair of
-    /// `Vec<u8>`.  An empty `Vec` means the stream was not redirected to a pipe, or that no
-    /// data was produced.
-    ///
-    /// The simultaneous reading and writing avoids deadlock when the subprocess produces
-    /// output before consuming all input.
-    ///
-    /// This method does not wait for the subprocess to exit, only for its output streams to
-    /// reach EOF.  In rare cases where a process continues after closing its streams,
-    /// [`Popen::drop`] will wait for it.  Use [`wait`], [`detach`], or [`terminate`] if you
-    /// need explicit control.
-    ///
-    /// For timeout and size limit support, use [`communicate_start`] instead.
-    ///
-    /// # Panics
-    ///
-    /// If `input_data` is provided and `stdin` was not redirected to a pipe.  Also, if
-    /// `input_data` is not provided and `stdin` was redirected to a pipe.
-    ///
-    /// # Errors
-    ///
-    /// * `Err(::std::io::Error)` if a system call fails
-    ///
-    /// [`wait`]: #method.wait
-    /// [`detach`]: #method.detach
-    /// [`terminate`]: #method.terminate
-    /// [`communicate_start`]: #method.communicate_start
-    pub fn communicate_bytes(
-        &mut self,
-        input_data: Option<&[u8]>,
-    ) -> io::Result<(Vec<u8>, Vec<u8>)> {
-        self.communicate_start(input_data.map(|i| i.to_vec()))
-            .read()
-    }
-
-    /// Feed the subprocess with data and capture its output as string.
-    ///
-    /// This is a convenience method equivalent to [`communicate_bytes`], but with input as
-    /// `&str` and output as `String`.  Invalid UTF-8 sequences, if found, are replaced with
-    /// the `U+FFFD` Unicode replacement character.
-    ///
-    /// # Panics
-    ///
-    /// The same as with `communicate_bytes`.
-    ///
-    /// # Errors
-    ///
-    /// * `Err(::std::io::Error)` if a system call fails
-    ///
-    /// [`communicate_bytes`]: struct.Popen.html#method.communicate_bytes
-    pub fn communicate(&mut self, input_data: Option<&str>) -> io::Result<(String, String)> {
-        self.communicate_start(input_data.map(|s| s.as_bytes().to_vec()))
-            .read_string()
     }
 
     /// Check whether the process is still running, without blocking or errors.

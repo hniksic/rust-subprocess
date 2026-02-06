@@ -21,7 +21,7 @@ fn null_file() {
         .stdout(Redirection::Pipe)
         .popen()
         .unwrap();
-    let (out, _) = p.communicate(None).unwrap();
+    let (out, _) = p.communicate([]).read_string().unwrap();
     assert_eq!(out, "");
 }
 
@@ -107,7 +107,7 @@ fn pipeline_open() {
         .stdout(Redirection::Pipe)
         .popen()
         .unwrap();
-    let (output, _) = processes[1].communicate(None).unwrap();
+    let (output, _) = processes[1].communicate([]).read_string().unwrap();
     assert_eq!(output.trim(), "2");
 }
 
