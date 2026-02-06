@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 
-use crate::{Exec, ExitStatus, NullFile, Redirection};
+use crate::{Exec, ExitStatus, Redirection};
 
 #[test]
 fn exec_join() {
@@ -17,7 +17,7 @@ fn exec_join() {
 #[test]
 fn null_file() {
     let mut p = Exec::cmd("cat")
-        .stdin(NullFile)
+        .stdin(Redirection::Null)
         .stdout(Redirection::Pipe)
         .popen()
         .unwrap();
@@ -261,7 +261,7 @@ fn pipeline_rejects_first_cmd_stdin() {
 #[test]
 #[should_panic(expected = "stdout of the last command is already redirected")]
 fn pipeline_rejects_last_cmd_stdout() {
-    let last = Exec::cmd("wc").stdout(NullFile);
+    let last = Exec::cmd("wc").stdout(Redirection::Null);
     let _pipeline = Exec::cmd("echo") | last;
 }
 

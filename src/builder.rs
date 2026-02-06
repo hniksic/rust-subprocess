@@ -1,12 +1,10 @@
 #[cfg(unix)]
 mod os {
-    pub const NULL_DEVICE: &str = "/dev/null";
     pub const SHELL: [&str; 2] = ["sh", "-c"];
 }
 
 #[cfg(windows)]
 mod os {
-    pub const NULL_DEVICE: &str = "nul";
     pub const SHELL: [&str; 2] = ["cmd.exe", "/c"];
 }
 
@@ -14,7 +12,7 @@ mod os {
 pub use exec::unix::ExecExt;
 #[cfg(windows)]
 pub use exec::windows::ExecExt;
-pub use exec::{Capture, Exec, NullFile};
+pub use exec::{Capture, Exec};
 pub use pipeline::Pipeline;
 
 /// Windows-specific process creation constants and extensions.
@@ -29,7 +27,7 @@ mod exec {
     use std::env;
     use std::ffi::{OsStr, OsString};
     use std::fmt;
-    use std::fs::{File, OpenOptions};
+    use std::fs::File;
     use std::io::ErrorKind;
     use std::io::{self, Read, Write};
     use std::ops::BitOr;
@@ -276,16 +274,15 @@ mod exec {
         ///
         /// Argument can be:
         ///
-        /// * a [`Redirection`];
+        /// * a [`Redirection`], including [`Redirection::Null`] to redirect
+        ///   to the null device;
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
         /// * a `Vec<u8>` or `&str`, which will set up a `Redirection::Pipe`
         ///   for stdin, making sure that `capture` feeds that data into the
-        ///   standard input of the subprocess;
-        /// * [`NullFile`], which will redirect the standard input to read from
-        ///   `/dev/null`.
+        ///   standard input of the subprocess.
         ///
         /// [`Redirection`]: enum.Redirection.html
-        /// [`NullFile`]: struct.NullFile.html
+        /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stdin(mut self, stdin: impl Into<InputRedirection>) -> Exec {
             match (&self.config.stdin, stdin.into()) {
                 (&Redirection::None, InputRedirection::AsRedirection(new)) => {
@@ -305,13 +302,12 @@ mod exec {
         ///
         /// Argument can be:
         ///
-        /// * a [`Redirection`];
-        /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-        /// * [`NullFile`], which will redirect the standard output to go to
-        ///   `/dev/null`.
+        /// * a [`Redirection`], including [`Redirection::Null`] to redirect
+        ///   to the null device;
+        /// * a `File`, which is a shorthand for `Redirection::File(file)`.
         ///
         /// [`Redirection`]: enum.Redirection.html
-        /// [`NullFile`]: struct.NullFile.html
+        /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stdout(mut self, stdout: impl Into<OutputRedirection>) -> Exec {
             match (&self.config.stdout, stdout.into().into_redirection()) {
                 (&Redirection::None, new) => self.config.stdout = new,
@@ -325,13 +321,12 @@ mod exec {
         ///
         /// Argument can be:
         ///
-        /// * a [`Redirection`];
-        /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-        /// * [`NullFile`], which will redirect the standard error to go to
-        ///   `/dev/null`.
+        /// * a [`Redirection`], including [`Redirection::Null`] to redirect
+        ///   to the null device;
+        /// * a `File`, which is a shorthand for `Redirection::File(file)`.
         ///
         /// [`Redirection`]: enum.Redirection.html
-        /// [`NullFile`]: struct.NullFile.html
+        /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stderr(mut self, stderr: impl Into<OutputRedirection>) -> Exec {
             match (&self.config.stderr, stderr.into().into_redirection()) {
                 (&Redirection::None, new) => self.config.stderr = new,
@@ -638,27 +633,6 @@ mod exec {
         }
     }
 
-    /// Marker value for [`stdin`], [`stdout`], and [`stderr`] methods of [`Exec`] and
-    /// [`Pipeline`].
-    ///
-    /// Use of this value means that the corresponding stream should be redirected to the
-    /// devnull device.
-    ///
-    /// [`stdin`]: struct.Exec.html#method.stdin
-    /// [`stdout`]: struct.Exec.html#method.stdout
-    /// [`stderr`]: struct.Exec.html#method.stderr
-    /// [`Exec`]: struct.Exec.html
-    /// [`Pipeline`]: struct.Pipeline.html
-    #[derive(Debug)]
-    pub struct NullFile;
-
-    impl From<NullFile> for InputRedirection {
-        fn from(_nf: NullFile) -> Self {
-            let null_file = OpenOptions::new().read(true).open(NULL_DEVICE).unwrap();
-            InputRedirection::AsRedirection(Redirection::File(null_file))
-        }
-    }
-
     impl From<Vec<u8>> for InputRedirection {
         fn from(v: Vec<u8>) -> Self {
             InputRedirection::FeedData(v)
@@ -689,13 +663,6 @@ mod exec {
     impl From<File> for OutputRedirection {
         fn from(f: File) -> Self {
             OutputRedirection(Redirection::File(f))
-        }
-    }
-
-    impl From<NullFile> for OutputRedirection {
-        fn from(_nf: NullFile) -> Self {
-            let null_file = OpenOptions::new().write(true).open(NULL_DEVICE).unwrap();
-            OutputRedirection(Redirection::File(null_file))
         }
     }
 
@@ -943,15 +910,15 @@ mod pipeline {
         ///
         /// Argument can be:
         ///
-        /// * a [`Redirection`];
+        /// * a [`Redirection`], including [`Redirection::Null`] to redirect
+        ///   to the null device;
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
         /// * a `Vec<u8>` or `&str`, which will set up a `Redirection::Pipe`
         ///   for stdin, making sure that `capture` feeds that data into the
         ///   standard input of the subprocess.
-        /// * `NullFile`, which will redirect the standard input to read from
-        ///   /dev/null.
         ///
         /// [`Redirection`]: enum.Redirection.html
+        /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stdin(mut self, stdin: impl Into<InputRedirection>) -> Pipeline {
             match stdin.into() {
                 InputRedirection::AsRedirection(r) => self.stdin = r,
@@ -967,12 +934,12 @@ mod pipeline {
         ///
         /// Argument can be:
         ///
-        /// * a [`Redirection`];
-        /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-        /// * `NullFile`, which will redirect the standard output to write to
-        ///   /dev/null.
+        /// * a [`Redirection`], including [`Redirection::Null`] to redirect
+        ///   to the null device;
+        /// * a `File`, which is a shorthand for `Redirection::File(file)`.
         ///
         /// [`Redirection`]: enum.Redirection.html
+        /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stdout(mut self, stdout: impl Into<OutputRedirection>) -> Pipeline {
             self.stdout = stdout.into().into_redirection();
             self

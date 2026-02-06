@@ -4,7 +4,7 @@
 
 use std::fs::{self, File};
 use std::io::Read;
-use subprocess::{Exec, NullFile, Redirection};
+use subprocess::{Exec, Redirection};
 
 fn main() -> subprocess::Result<()> {
     let output_path = "/tmp/subprocess_example_output.txt";
@@ -37,7 +37,7 @@ fn main() -> subprocess::Result<()> {
     // Redirect to /dev/null
     Exec::cmd("echo")
         .arg("This output is discarded")
-        .stdout(NullFile)
+        .stdout(Redirection::Null)
         .join()?;
     println!("Output sent to /dev/null");
 

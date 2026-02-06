@@ -1,6 +1,6 @@
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::ErrorKind;
 use std::sync::{Arc, OnceLock};
@@ -297,6 +297,12 @@ pub enum Redirection {
     /// Like `File`, but the file may be shared among multiple redirections without
     /// duplicating the file descriptor.
     SharedFile(Arc<File>),
+
+    /// Redirect the stream to the null device (`/dev/null` on Unix, `nul` on Windows).
+    ///
+    /// This is equivalent to `Redirection::File` with a null device file, but more
+    /// convenient and portable.
+    Null,
 }
 
 impl Redirection {
@@ -310,6 +316,7 @@ impl Redirection {
             Redirection::Merge => Redirection::Merge,
             Redirection::File(ref f) => Redirection::File(f.try_clone()?),
             Redirection::SharedFile(ref f) => Redirection::SharedFile(Arc::clone(f)),
+            Redirection::Null => Redirection::Null,
         })
     }
 }
@@ -404,6 +411,14 @@ impl Popen {
             *child_ref = Some(file);
             Ok(())
         }
+        fn prepare_null_file(for_read: bool, child_ref: &mut Option<Arc<File>>) -> io::Result<()> {
+            let file = if for_read {
+                OpenOptions::new().read(true).open(os::NULL_DEVICE)?
+            } else {
+                OpenOptions::new().write(true).open(os::NULL_DEVICE)?
+            };
+            prepare_file(file, child_ref)
+        }
         fn reuse_stream(
             dest: &mut Option<Arc<File>>,
             src: &mut Option<Arc<File>>,
@@ -432,6 +447,7 @@ impl Popen {
             Redirection::Pipe => prepare_pipe(true, &mut self.stdin, &mut child_stdin)?,
             Redirection::File(file) => prepare_file(file, &mut child_stdin)?,
             Redirection::SharedFile(file) => prepare_shared_file(file, &mut child_stdin)?,
+            Redirection::Null => prepare_null_file(true, &mut child_stdin)?,
             Redirection::Merge => {
                 return Err(io::Error::new(
                     ErrorKind::InvalidInput,
@@ -444,6 +460,7 @@ impl Popen {
             Redirection::Pipe => prepare_pipe(false, &mut self.stdout, &mut child_stdout)?,
             Redirection::File(file) => prepare_file(file, &mut child_stdout)?,
             Redirection::SharedFile(file) => prepare_shared_file(file, &mut child_stdout)?,
+            Redirection::Null => prepare_null_file(false, &mut child_stdout)?,
             Redirection::Merge => merge = MergeKind::OutToErr,
             Redirection::None => (),
         };
@@ -451,6 +468,7 @@ impl Popen {
             Redirection::Pipe => prepare_pipe(false, &mut self.stderr, &mut child_stderr)?,
             Redirection::File(file) => prepare_file(file, &mut child_stderr)?,
             Redirection::SharedFile(file) => prepare_shared_file(file, &mut child_stderr)?,
+            Redirection::Null => prepare_null_file(false, &mut child_stderr)?,
             Redirection::Merge => {
                 if merge != MergeKind::None {
                     return Err(io::Error::new(
@@ -670,6 +688,8 @@ trait PopenOs {
 #[cfg(unix)]
 mod os {
     use super::*;
+
+    pub const NULL_DEVICE: &str = "/dev/null";
 
     use crate::posix;
     use std::collections::HashSet;
@@ -954,6 +974,8 @@ mod os {
 #[cfg(windows)]
 mod os {
     use super::*;
+
+    pub const NULL_DEVICE: &str = "nul";
 
     use std::collections::HashSet;
     use std::env;
