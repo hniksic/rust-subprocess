@@ -3,7 +3,7 @@
 //! Run with: cargo run --example signals_unix
 
 #[cfg(unix)]
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     use subprocess::unix::PopenExt;
     use subprocess::{Popen, PopenConfig};
 

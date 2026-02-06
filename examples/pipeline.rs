@@ -4,7 +4,7 @@
 
 use subprocess::Exec;
 
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     // Simple pipeline: generate data, transform it, capture output
     let data = (Exec::cmd("echo").args(&["cherry", "apple", "banana"])
         | Exec::cmd("tr").args(&[" ", "\n"])

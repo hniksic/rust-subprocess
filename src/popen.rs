@@ -336,7 +336,7 @@ impl Popen {
     ///
     /// ```no_run
     /// # use subprocess::*;
-    /// # fn dummy() -> Result<()> {
+    /// # fn dummy() -> std::io::Result<()> {
     /// Popen::create(&["cargo", "update"], PopenConfig::default())?;
     /// # Ok(())
     /// # }
@@ -349,7 +349,7 @@ impl Popen {
     /// `PATH`, but other errors are also possible.  Note that this is distinct from the
     /// program running and then exiting with a failure code - this can be detected by calling
     /// the `wait` method to obtain its exit status.
-    pub fn create(argv: &[impl AsRef<OsStr>], config: PopenConfig) -> Result<Popen> {
+    pub fn create(argv: &[impl AsRef<OsStr>], config: PopenConfig) -> io::Result<Popen> {
         if argv.is_empty() {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
@@ -381,12 +381,12 @@ impl Popen {
         stdin: Redirection,
         stdout: Redirection,
         stderr: Redirection,
-    ) -> Result<(Option<Arc<File>>, Option<Arc<File>>, Option<Arc<File>>)> {
+    ) -> io::Result<(Option<Arc<File>>, Option<Arc<File>>, Option<Arc<File>>)> {
         fn prepare_pipe(
             parent_writes: bool,
             parent_ref: &mut Option<File>,
             child_ref: &mut Option<Arc<File>>,
-        ) -> Result<()> {
+        ) -> io::Result<()> {
             // Store the parent's end of the pipe into the given reference, and store the
             // child end. On Windows, this creates pipes where both ends support
             // overlapped I/O (see make_pipe() for details).
@@ -552,7 +552,7 @@ impl Popen {
     ///
     /// ```no_run
     /// # use subprocess::*;
-    /// # fn f() -> Result<()> {
+    /// # fn f() -> std::io::Result<()> {
     /// # let mut p = Popen::create(&["cat"], PopenConfig {
     /// #     stdin: Redirection::Pipe, stdout: Redirection::Pipe,
     /// #     ..Default::default()
@@ -575,7 +575,7 @@ impl Popen {
     /// [`read`]: struct.Communicator.html#method.read
     /// [`read_string`]: struct.Communicator.html#method.read_string
     /// [`read_to`]: struct.Communicator.html#method.read_to
-    pub fn communicate<I: AsRef<[u8]>>(&mut self, input: I) -> Result<Communicator<I>> {
+    pub fn communicate<I: AsRef<[u8]>>(&mut self, input: I) -> io::Result<Communicator<I>> {
         if self.stdin.is_none() && !input.as_ref().is_empty() {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
@@ -609,7 +609,7 @@ impl Popen {
     ///
     /// Returns an `Err` if a system call fails in an unpredicted way.
     /// This should not happen in normal usage.
-    pub fn wait(&mut self) -> Result<ExitStatus> {
+    pub fn wait(&mut self) -> io::Result<ExitStatus> {
         self.os_wait()
     }
 
@@ -621,7 +621,7 @@ impl Popen {
     ///
     /// On Unix-like systems, timeout is implemented by calling `waitpid(..., WNOHANG)` in a
     /// loop with adaptive sleep intervals between iterations.
-    pub fn wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
+    pub fn wait_timeout(&mut self, dur: Duration) -> io::Result<Option<ExitStatus>> {
         self.os_wait_timeout(dur)
     }
 
@@ -649,9 +649,9 @@ impl Popen {
 }
 
 trait PopenOs {
-    fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig) -> Result<()>;
-    fn os_wait(&mut self) -> Result<ExitStatus>;
-    fn os_wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>>;
+    fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig) -> io::Result<()>;
+    fn os_wait(&mut self) -> io::Result<ExitStatus>;
+    fn os_wait_timeout(&mut self, dur: Duration) -> io::Result<Option<ExitStatus>>;
     fn os_terminate(&mut self) -> io::Result<()>;
     fn os_kill(&mut self) -> io::Result<()>;
 }
@@ -695,7 +695,7 @@ mod os {
     pub type ExtChildState = ();
 
     impl super::PopenOs for Popen {
-        fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig) -> Result<()> {
+        fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig) -> io::Result<()> {
             let mut exec_fail_pipe = posix::pipe()?;
             set_inheritable(&exec_fail_pipe.0, false)?;
             set_inheritable(&exec_fail_pipe.1, false)?;
@@ -746,14 +746,14 @@ mod os {
             }
         }
 
-        fn os_wait(&mut self) -> Result<ExitStatus> {
+        fn os_wait(&mut self) -> io::Result<ExitStatus> {
             while let Running { .. } = self.child_state {
                 self.waitpid(true)?;
             }
             Ok(self.exit_status().unwrap())
         }
 
-        fn os_wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
+        fn os_wait_timeout(&mut self, dur: Duration) -> io::Result<Option<ExitStatus>> {
             use std::cmp::min;
 
             if let Finished(exit_status) = self.child_state {
@@ -1027,7 +1027,7 @@ mod os {
     pub struct ExtChildState(win32::Handle);
 
     impl super::PopenOs for Popen {
-        fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig) -> Result<()> {
+        fn os_start(&mut self, argv: Vec<OsString>, config: PopenConfig) -> io::Result<()> {
             fn raw(opt: Option<&Arc<File>>) -> Option<RawHandle> {
                 opt.map(|f| f.as_raw_handle())
             }
@@ -1060,7 +1060,7 @@ mod os {
             Ok(())
         }
 
-        fn os_wait(&mut self) -> Result<ExitStatus> {
+        fn os_wait(&mut self) -> io::Result<ExitStatus> {
             self.wait_handle(None)?;
             // wait_handle(None) should always result in Finished state. The only way for it
             // not to would be if WaitForSingleObject returned something other than OBJECT_0.
@@ -1069,7 +1069,7 @@ mod os {
             })
         }
 
-        fn os_wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
+        fn os_wait_timeout(&mut self, dur: Duration) -> io::Result<Option<ExitStatus>> {
             if let Finished(exit_status) = self.child_state {
                 return Ok(Some(exit_status));
             }
@@ -1384,6 +1384,3 @@ fn get_standard_stream(which: StandardStream) -> io::Result<Arc<File>> {
     // That can happen at most once per stream.
     Ok(Arc::clone(lock.get_or_init(|| stream)))
 }
-
-/// Result type for operations in the `subprocess` crate.
-pub type Result<T> = io::Result<T>;

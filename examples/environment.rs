@@ -4,7 +4,7 @@
 
 use subprocess::Exec;
 
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     // Set a single environment variable
     let output = Exec::shell("echo $GREETING")
         .env("GREETING", "Hello from subprocess!")

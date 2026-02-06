@@ -6,7 +6,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use subprocess::{Exec, Redirection};
 
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     let output_path = "/tmp/subprocess_example_output.txt";
     let input_path = "/tmp/subprocess_example_input.txt";
 

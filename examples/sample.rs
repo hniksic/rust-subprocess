@@ -5,7 +5,7 @@
 use std::io::{BufRead, BufReader};
 use subprocess::Exec;
 
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     let stream = Exec::cmd("ls").stream_stdout()?;
     let reader = BufReader::new(stream);
 

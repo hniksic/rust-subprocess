@@ -4,7 +4,7 @@
 
 use subprocess::Exec;
 
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     // Successful exit
     let status = Exec::cmd("true").join()?;
     println!("true: {:?}, success={}", status, status.success());

@@ -5,7 +5,7 @@
 use std::time::Duration;
 use subprocess::{Popen, PopenConfig, Redirection};
 
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     // Using wait_timeout on Popen
     println!("Waiting with timeout...");
 

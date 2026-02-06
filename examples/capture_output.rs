@@ -4,7 +4,7 @@
 
 use subprocess::{Exec, Redirection};
 
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     // Simple capture of stdout
     let output = Exec::cmd("echo")
         .arg("Hello from subprocess!")

@@ -5,7 +5,7 @@
 use std::io::{BufRead, BufReader, Write};
 use subprocess::Exec;
 
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     // Stream stdout line by line
     println!("Reading output line by line:");
     let stream = Exec::shell("printf 'line 1\nline 2\nline 3\n'").stream_stdout()?;

@@ -26,7 +26,7 @@
 //!
 //! ```
 //! # use subprocess::*;
-//! # fn dummy() -> Result<()> {
+//! # fn dummy() -> std::io::Result<()> {
 //! let mut p = Popen::create(&["ps", "x"], PopenConfig {
 //!     stdout: Redirection::Pipe, ..Default::default()
 //! })?;
@@ -48,7 +48,7 @@
 //!
 //! ```no_run
 //! # use subprocess::*;
-//! # fn dummy() -> Result<()> {
+//! # fn dummy() -> std::io::Result<()> {
 //! let dir_checksum = {
 //!     Exec::shell("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
 //! }.capture()?.stdout_str();
@@ -76,7 +76,7 @@ mod tests;
 
 pub use builder::{Capture, Exec, ExecExt, Pipeline};
 pub use communicate::Communicator;
-pub use popen::{_PrivateSeal, ExitStatus, Popen, PopenConfig, Redirection, Result, make_pipe};
+pub use popen::{_PrivateSeal, ExitStatus, Popen, PopenConfig, Redirection, make_pipe};
 
 /// Subprocess extensions for Unix platforms.
 #[cfg(unix)]

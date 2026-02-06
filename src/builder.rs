@@ -36,7 +36,7 @@ mod exec {
 
     use crate::communicate::Communicator;
     use crate::popen::ExitStatus;
-    use crate::popen::{Popen, PopenConfig, Redirection, Result as PopenResult};
+    use crate::popen::{Popen, PopenConfig, Redirection};
 
     use super::Pipeline;
     use super::os::*;
@@ -52,7 +52,7 @@ mod exec {
     ///
     /// ```no_run
     /// # use subprocess::*;
-    /// # fn dummy() -> Result<()> {
+    /// # fn dummy() -> std::io::Result<()> {
     /// # let dirname = "some_dir";
     /// let exit_status = Exec::cmd("umount").arg(dirname).join()?;
     /// # Ok(())
@@ -63,7 +63,7 @@ mod exec {
     ///
     /// ```no_run
     /// # use subprocess::*;
-    /// # fn dummy() -> Result<()> {
+    /// # fn dummy() -> std::io::Result<()> {
     /// Exec::shell("shutdown -h now").join()?;
     /// # Ok(())
     /// # }
@@ -73,7 +73,7 @@ mod exec {
     ///
     /// ```
     /// # use subprocess::*;
-    /// # fn dummy() -> Result<()> {
+    /// # fn dummy() -> std::io::Result<()> {
     /// let stream = Exec::cmd("ls").stream_stdout()?;
     /// // call stream.read_to_string, construct io::BufReader(stream), etc.
     /// # Ok(())
@@ -84,7 +84,7 @@ mod exec {
     ///
     /// ```
     /// # use subprocess::*;
-    /// # fn dummy() -> Result<()> {
+    /// # fn dummy() -> std::io::Result<()> {
     /// let out = Exec::cmd("ls")
     ///   .stdout(Redirection::Pipe)
     ///   .capture()?
@@ -97,7 +97,7 @@ mod exec {
     ///
     /// ```
     /// # use subprocess::*;
-    /// # fn dummy() -> Result<()> {
+    /// # fn dummy() -> std::io::Result<()> {
     /// let out_and_err = Exec::cmd("ls")
     ///   .stdout(Redirection::Pipe)
     ///   .stderr(Redirection::Merge)
@@ -111,7 +111,7 @@ mod exec {
     ///
     /// ```
     /// # use subprocess::*;
-    /// # fn dummy() -> Result<()> {
+    /// # fn dummy() -> std::io::Result<()> {
     /// let out = Exec::cmd("sort")
     ///   .stdin("b\nc\na\n")
     ///   .stdout(Redirection::Pipe)
@@ -349,7 +349,7 @@ mod exec {
         // Terminators
 
         /// Starts the process, returning a `Popen` for the running process.
-        pub fn popen(mut self) -> PopenResult<Popen> {
+        pub fn popen(mut self) -> io::Result<Popen> {
             self.check_no_stdin_data("popen");
             self.args.insert(0, self.command);
             let p = Popen::create(&self.args, self.config)?;
@@ -360,7 +360,7 @@ mod exec {
         ///
         /// This method will wait for as long as necessary for the process to finish.  If a
         /// timeout is needed, use `<...>.detached().popen()?.wait_timeout(...)` instead.
-        pub fn join(self) -> PopenResult<ExitStatus> {
+        pub fn join(self) -> io::Result<ExitStatus> {
             self.check_no_stdin_data("join");
             self.popen()?.wait()
         }
@@ -373,7 +373,7 @@ mod exec {
         ///
         /// When the trait object is dropped, it will wait for the process to finish.  If this
         /// is undesirable, use `detached()`.
-        pub fn stream_stdout(self) -> PopenResult<impl Read> {
+        pub fn stream_stdout(self) -> io::Result<impl Read> {
             self.check_no_stdin_data("stream_stdout");
             let p = self.stdout(Redirection::Pipe).popen()?;
             Ok(ReadOutAdapter(p))
@@ -387,7 +387,7 @@ mod exec {
         ///
         /// When the trait object is dropped, it will wait for the process to finish.  If this
         /// is undesirable, use `detached()`.
-        pub fn stream_stderr(self) -> PopenResult<impl Read> {
+        pub fn stream_stderr(self) -> io::Result<impl Read> {
             self.check_no_stdin_data("stream_stderr");
             let p = self.stderr(Redirection::Pipe).popen()?;
             Ok(ReadErrAdapter(p))
@@ -401,13 +401,13 @@ mod exec {
         ///
         /// When the trait object is dropped, it will wait for the process to finish.  If this
         /// is undesirable, use `detached()`.
-        pub fn stream_stdin(self) -> PopenResult<impl Write> {
+        pub fn stream_stdin(self) -> io::Result<impl Write> {
             self.check_no_stdin_data("stream_stdin");
             let p = self.stdin(Redirection::Pipe).popen()?;
             Ok(WriteAdapter(p))
         }
 
-        fn setup_communicate(mut self) -> PopenResult<(Communicator<Vec<u8>>, Popen)> {
+        fn setup_communicate(mut self) -> io::Result<(Communicator<Vec<u8>>, Popen)> {
             let stdin_data = self.stdin_data.take();
             if let (&Redirection::None, &Redirection::None) =
                 (&self.config.stdout, &self.config.stderr)
@@ -432,7 +432,7 @@ mod exec {
         ///
         /// Unlike `capture()`, this method doesn't wait for the process to finish,
         /// effectively detaching it.
-        pub fn communicate(self) -> PopenResult<Communicator<Vec<u8>>> {
+        pub fn communicate(self) -> io::Result<Communicator<Vec<u8>>> {
             let comm = self.detached().setup_communicate()?.0;
             Ok(comm)
         }
@@ -444,7 +444,7 @@ mod exec {
         ///
         /// This method waits for the process to finish, rather than simply waiting for
         /// its standard streams to close.  If this is undesirable, use `detached()`.
-        pub fn capture(self) -> PopenResult<Capture> {
+        pub fn capture(self) -> io::Result<Capture> {
             let timeout = self.time_limit;
             let (mut comm, mut p) = self.setup_communicate()?;
             if let Some(t) = timeout {
@@ -771,7 +771,7 @@ mod pipeline {
 
     use crate::communicate::Communicator;
     use crate::popen::ExitStatus;
-    use crate::popen::{Popen, Redirection, Result as PopenResult};
+    use crate::popen::{Popen, Redirection};
 
     use super::exec::{Capture, Exec, InputRedirection, OutputRedirection};
 
@@ -792,7 +792,7 @@ mod pipeline {
     ///
     /// ```no_run
     /// # use subprocess::*;
-    /// # fn dummy() -> Result<()> {
+    /// # fn dummy() -> std::io::Result<()> {
     /// let exit_status =
     ///   (Exec::shell("ls *.bak") | Exec::cmd("xargs").arg("rm")).join()?;
     /// # Ok(())
@@ -803,7 +803,7 @@ mod pipeline {
     ///
     /// ```no_run
     /// # use subprocess::*;
-    /// # fn dummy() -> Result<()> {
+    /// # fn dummy() -> std::io::Result<()> {
     /// let dir_checksum = {
     ///     Exec::cmd("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
     /// }.capture()?.stdout_str();
@@ -986,7 +986,7 @@ mod pipeline {
         /// will be waited to finish (but will probably exit immediately due to missing
         /// output), except for the ones for which `detached()` was called.  This is
         /// equivalent to what the shell does.
-        pub fn popen(mut self) -> PopenResult<Vec<Popen>> {
+        pub fn popen(mut self) -> io::Result<Vec<Popen>> {
             self.check_no_stdin_data("popen");
             assert!(self.cmds.len() >= 2);
 
@@ -1023,7 +1023,7 @@ mod pipeline {
 
         /// Starts the pipeline, waits for it to finish, and returns the exit status of the
         /// last command.
-        pub fn join(self) -> PopenResult<ExitStatus> {
+        pub fn join(self) -> io::Result<ExitStatus> {
             self.check_no_stdin_data("join");
             let mut v = self.popen()?;
             // Waiting on a pipeline waits for all commands, but returns the status of the
@@ -1040,7 +1040,7 @@ mod pipeline {
         ///
         /// When the trait object is dropped, it will wait for the pipeline to finish.  If
         /// this is undesirable, use `detached()`.
-        pub fn stream_stdout(self) -> PopenResult<impl Read> {
+        pub fn stream_stdout(self) -> io::Result<impl Read> {
             self.check_no_stdin_data("stream_stdout");
             let v = self.stdout(Redirection::Pipe).popen()?;
             Ok(ReadPipelineAdapter(v))
@@ -1054,13 +1054,13 @@ mod pipeline {
         ///
         /// When the trait object is dropped, it will wait for the process to finish.  If this
         /// is undesirable, use `detached()`.
-        pub fn stream_stdin(self) -> PopenResult<impl Write> {
+        pub fn stream_stdin(self) -> io::Result<impl Write> {
             self.check_no_stdin_data("stream_stdin");
             let v = self.stdin(Redirection::Pipe).popen()?;
             Ok(WritePipelineAdapter(v))
         }
 
-        fn setup_communicate(mut self) -> PopenResult<(Communicator<Vec<u8>>, Vec<Popen>)> {
+        fn setup_communicate(mut self) -> io::Result<(Communicator<Vec<u8>>, Vec<Popen>)> {
             assert!(self.cmds.len() >= 2);
 
             // Parent reads stderr - make_pipe() creates pipes suitable for this
@@ -1087,7 +1087,7 @@ mod pipeline {
         ///
         /// Unlike `capture()`, this method doesn't wait for the pipeline to finish,
         /// effectively detaching it.
-        pub fn communicate(mut self) -> PopenResult<Communicator<Vec<u8>>> {
+        pub fn communicate(mut self) -> io::Result<Communicator<Vec<u8>>> {
             self.cmds = self.cmds.into_iter().map(|cmd| cmd.detached()).collect();
             let comm = self.setup_communicate()?.0;
             Ok(comm)
@@ -1101,7 +1101,7 @@ mod pipeline {
         ///
         /// This method actually waits for the processes to finish, rather than simply
         /// waiting for the output to close.  If this is undesirable, use `detached()`.
-        pub fn capture(self) -> PopenResult<Capture> {
+        pub fn capture(self) -> io::Result<Capture> {
             let (mut comm, mut v) = self.setup_communicate()?;
             let (stdout, stderr) = comm.read()?;
 

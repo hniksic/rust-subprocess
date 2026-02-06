@@ -5,7 +5,7 @@
 use std::time::Duration;
 use subprocess::Exec;
 
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     // Start a detached process - won't be waited on drop
     println!("Starting detached process...");
     let popen = Exec::cmd("sleep").arg("0.1").detached().popen()?;

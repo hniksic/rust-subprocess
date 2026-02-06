@@ -4,7 +4,7 @@
 
 use subprocess::Exec;
 
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     // Run command in a specific directory
     let output = Exec::cmd("pwd").cwd("/tmp").capture()?.stdout_str();
 

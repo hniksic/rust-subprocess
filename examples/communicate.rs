@@ -5,7 +5,7 @@
 use std::time::Duration;
 use subprocess::{Popen, PopenConfig, Redirection};
 
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     // Basic communicate: send input, receive output
     let mut p = Popen::create(
         &["cat"],

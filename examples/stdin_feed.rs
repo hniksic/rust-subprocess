@@ -4,7 +4,7 @@
 
 use subprocess::Exec;
 
-fn main() -> subprocess::Result<()> {
+fn main() -> std::io::Result<()> {
     // Feed string data to sort command
     let input = "banana\napple\ncherry\ndate\n";
     let sorted = Exec::cmd("sort").stdin(input).capture()?.stdout_str();
