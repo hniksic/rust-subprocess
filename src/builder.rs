@@ -36,7 +36,6 @@ mod exec {
     use std::path::Path;
     use std::time::Duration;
 
-    use crate::PopenError;
     use crate::communicate::Communicator;
     use crate::os_common::ExitStatus;
     use crate::popen::{Popen, PopenConfig, Redirection, Result as PopenResult};
@@ -458,7 +457,7 @@ mod exec {
                 exit_status: match timeout {
                     Some(t) => p
                         .wait_timeout(t)?
-                        .ok_or(PopenError::IoError(ErrorKind::TimedOut.into()))?,
+                        .ok_or(io::Error::from(ErrorKind::TimedOut))?,
                     None => p.wait()?,
                 },
             })

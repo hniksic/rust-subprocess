@@ -79,7 +79,7 @@ mod tests;
 pub use builder::{CaptureData, Exec, ExecExt, NullFile, Pipeline};
 pub use communicate::{CommunicateError, Communicator};
 pub use os_common::ExitStatus;
-pub use popen::{Popen, PopenConfig, PopenError, Redirection, Result, make_pipe};
+pub use popen::{Popen, PopenConfig, Redirection, Result, make_pipe};
 
 /// Subprocess extensions for Unix platforms.
 #[cfg(unix)]

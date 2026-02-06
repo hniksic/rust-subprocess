@@ -1,10 +1,8 @@
 use std::env;
-use std::error::Error;
 use std::ffi::{OsStr, OsString};
-use std::fmt;
 use std::fs::File;
 use std::io;
-use std::result;
+use std::io::ErrorKind;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -282,7 +280,7 @@ pub enum Redirection {
     ///
     /// Specifying `Redirection::Merge` for `PopenConfig::stdin` or specifying it for both
     /// `stdout` and `stderr` is invalid and will cause `Popen::create` to return
-    /// `Err(PopenError::LogicError)`.
+    /// `Err` with `io::ErrorKind::InvalidInput`.
     ///
     /// The field in `Popen` corresponding to the stream will be `None`.
     Merge,
@@ -341,7 +339,10 @@ impl Popen {
     /// the `wait` method to obtain its exit status.
     pub fn create(argv: &[impl AsRef<OsStr>], config: PopenConfig) -> Result<Popen> {
         if argv.is_empty() {
-            return Err(PopenError::LogicError("argv must not be empty"));
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "argv must not be empty",
+            ));
         }
         let argv: Vec<OsString> = argv.iter().map(|p| p.as_ref().to_owned()).collect();
         let mut inst = Popen {
@@ -432,7 +433,8 @@ impl Popen {
             Redirection::File(file) => prepare_file(file, &mut child_stdin)?,
             Redirection::SharedFile(file) => prepare_shared_file(file, &mut child_stdin)?,
             Redirection::Merge => {
-                return Err(PopenError::LogicError(
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
                     "Redirection::Merge not valid for stdin",
                 ));
             }
@@ -451,7 +453,8 @@ impl Popen {
             Redirection::SharedFile(file) => prepare_shared_file(file, &mut child_stderr)?,
             Redirection::Merge => {
                 if merge != MergeKind::None {
-                    return Err(PopenError::LogicError(
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidInput,
                         "Redirection::Merge not valid for both stdout and stderr",
                     ));
                 }
@@ -750,7 +753,7 @@ mod os {
                 None => Ok(()),
                 Some(error_buf) => {
                     let error_code = u32::from_le_bytes(error_buf);
-                    Err(io::Error::from_raw_os_error(error_code as i32).into())
+                    Err(io::Error::from_raw_os_error(error_code as i32))
                 }
             }
         }
@@ -1008,8 +1011,9 @@ mod os {
             self.wait_handle(None)?;
             // wait_handle(None) should always result in Finished state. The only way for it
             // not to would be if WaitForSingleObject returned something other than OBJECT_0.
-            self.exit_status()
-                .ok_or(PopenError::LogicError("Failed to obtain exit status"))
+            self.exit_status().ok_or_else(|| {
+                io::Error::other("os_wait: child state is not Finished after WaitForSingleObject")
+            })
         }
 
         fn os_wait_timeout(&mut self, dur: Duration) -> Result<Option<ExitStatus>> {
@@ -1257,49 +1261,5 @@ fn get_standard_stream(which: StandardStream) -> io::Result<Arc<File>> {
     Ok(Arc::clone(lock.get_or_init(|| stream)))
 }
 
-/// Error in [`Popen`] calls.
-///
-/// [`Popen`]: struct.Popen.html
-
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum PopenError {
-    /// An IO system call failed while executing the requested operation.
-    IoError(io::Error),
-    /// A logical error was made, e.g. invalid arguments detected at run-time.
-    LogicError(&'static str),
-}
-
-impl From<io::Error> for PopenError {
-    fn from(err: io::Error) -> PopenError {
-        PopenError::IoError(err)
-    }
-}
-
-impl From<communicate::CommunicateError> for PopenError {
-    fn from(err: communicate::CommunicateError) -> PopenError {
-        PopenError::IoError(err.error)
-    }
-}
-
-impl Error for PopenError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match *self {
-            PopenError::IoError(ref err) => Some(err),
-            PopenError::LogicError(_msg) => None,
-        }
-    }
-}
-
-impl fmt::Display for PopenError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            PopenError::IoError(ref err) => fmt::Display::fmt(err, f),
-            PopenError::LogicError(desc) => f.write_str(desc),
-        }
-    }
-}
-
-/// Result returned by calls in the `subprocess` crate in places where
-/// `::std::io::Result` does not suffice.
-pub type Result<T> = result::Result<T, PopenError>;
+/// Result type for operations in the `subprocess` crate.
+pub type Result<T> = io::Result<T>;

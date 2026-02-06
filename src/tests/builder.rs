@@ -429,18 +429,15 @@ fn pipeline_to_string() {
 
 #[test]
 fn capture_timeout() {
-    use crate::popen::PopenError::IoError;
-
     match Exec::cmd("sleep")
         .args(&["0.5"])
         .time_limit(Duration::from_millis(100))
         .capture()
     {
         Ok(_) => panic!("expected timeout return"),
-        Err(IoError(e)) => match e.kind() {
+        Err(e) => match e.kind() {
             ErrorKind::TimedOut => assert!(true),
             _ => panic!("expected timeout return"),
         },
-        Err(_) => panic!("expected timeout return"),
     }
 }

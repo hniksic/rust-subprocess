@@ -572,6 +572,12 @@ impl Error for CommunicateError {
     }
 }
 
+impl From<CommunicateError> for io::Error {
+    fn from(err: CommunicateError) -> io::Error {
+        err.error
+    }
+}
+
 impl fmt::Display for CommunicateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.error.fmt(f)

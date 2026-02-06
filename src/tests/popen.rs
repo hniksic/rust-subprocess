@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::{ExitStatus, Popen, PopenConfig, PopenError, Redirection};
+use crate::{ExitStatus, Popen, PopenConfig, Redirection};
 
 #[test]
 fn good_cmd() {
@@ -27,8 +27,8 @@ fn bad_cmd() {
 fn reject_empty_argv() {
     let test = Popen::create(&[""; 0], PopenConfig::default());
     assert!(
-        matches!(test, Err(PopenError::LogicError(_))),
-        "didn't get LogicError for empty argv"
+        matches!(&test, Err(e) if e.kind() == io::ErrorKind::InvalidInput),
+        "didn't get InvalidInput for empty argv"
     );
 }
 
@@ -310,7 +310,6 @@ fn cwd() {
 
 #[test]
 fn failed_cwd() {
-    use crate::popen::PopenError::IoError;
     let ret = Popen::create(
         &["anything"],
         PopenConfig {
@@ -320,7 +319,7 @@ fn failed_cwd() {
         },
     );
     let err_num = match ret {
-        Err(IoError(e)) => e.raw_os_error().unwrap_or(-1),
+        Err(e) => e.raw_os_error().unwrap_or(-1),
         _ => panic!("expected error return"),
     };
     assert_eq!(err_num, libc::ENOENT);
@@ -386,7 +385,7 @@ fn merge_on_stdin_rejected() {
         },
     );
     assert!(
-        matches!(result, Err(PopenError::LogicError(_))),
+        matches!(&result, Err(e) if e.kind() == io::ErrorKind::InvalidInput),
         "Merge on stdin should be rejected"
     );
 }
@@ -402,7 +401,7 @@ fn merge_both_stdout_stderr_rejected() {
         },
     );
     assert!(
-        matches!(result, Err(PopenError::LogicError(_))),
+        matches!(&result, Err(e) if e.kind() == io::ErrorKind::InvalidInput),
         "Merge on both stdout and stderr should be rejected"
     );
 }
