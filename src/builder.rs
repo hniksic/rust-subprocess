@@ -178,8 +178,9 @@ mod exec {
         }
 
         /// Extends the argument list with `args`.
-        pub fn args(mut self, args: &[impl AsRef<OsStr>]) -> Exec {
-            self.args.extend(args.iter().map(|x| x.as_ref().to_owned()));
+        pub fn args(mut self, args: impl IntoIterator<Item = impl AsRef<OsStr>>) -> Exec {
+            self.args
+                .extend(args.into_iter().map(|x| x.as_ref().to_owned()));
             self
         }
 
@@ -232,17 +233,20 @@ mod exec {
 
         /// Sets multiple environment variables in the child process.
         ///
-        /// The keys and values of the variables are specified by the slice.  If the same
+        /// The keys and values of the variables are specified by the iterable.  If the same
         /// variable is set more than once, the last value is used.
         ///
         /// Other environment variables are by default inherited from the current process.  If
         /// this is undesirable, call `env_clear` first.
-        pub fn env_extend(mut self, vars: &[(impl AsRef<OsStr>, impl AsRef<OsStr>)]) -> Exec {
+        pub fn env_extend(
+            mut self,
+            vars: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
+        ) -> Exec {
             self.ensure_env();
             {
                 let envvec = self.config.env.as_mut().unwrap();
                 envvec.extend(
-                    vars.iter()
+                    vars.into_iter()
                         .map(|(k, v)| (k.as_ref().to_owned(), v.as_ref().to_owned())),
                 );
             }

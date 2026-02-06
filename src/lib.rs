@@ -79,7 +79,7 @@ mod tests;
 pub use builder::{Capture, Exec, ExecExt, Pipeline};
 pub use communicate::Communicator;
 pub use os_common::ExitStatus;
-pub use popen::{Popen, PopenConfig, Redirection, Result, _PrivateSeal, make_pipe};
+pub use popen::{_PrivateSeal, Popen, PopenConfig, Redirection, Result, make_pipe};
 
 /// Subprocess extensions for Unix platforms.
 #[cfg(unix)]

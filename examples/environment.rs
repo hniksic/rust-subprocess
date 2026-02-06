@@ -15,7 +15,7 @@ fn main() -> subprocess::Result<()> {
 
     // Set multiple environment variables
     let output = Exec::shell("echo $FIRST $SECOND")
-        .env_extend(&[("FIRST", "Hello"), ("SECOND", "World")])
+        .env_extend([("FIRST", "Hello"), ("SECOND", "World")])
         .capture()?
         .stdout_str();
 
