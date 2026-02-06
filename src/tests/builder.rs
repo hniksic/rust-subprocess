@@ -6,12 +6,12 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 
-use crate::{Exec, ExitStatus, Redirection};
+use crate::{Exec, Redirection};
 
 #[test]
 fn exec_join() {
     let status = Exec::cmd("true").join().unwrap();
-    assert_eq!(status, ExitStatus::Exited(0));
+    assert!(status.success());
 }
 
 #[test]
@@ -230,13 +230,13 @@ fn pipeline_capture_error_2() {
 #[test]
 fn pipeline_join() {
     let status = (Exec::cmd("true") | Exec::cmd("true")).join().unwrap();
-    assert_eq!(status, ExitStatus::Exited(0));
+    assert!(status.success());
 
     let status = (Exec::cmd("false") | Exec::cmd("true")).join().unwrap();
-    assert_eq!(status, ExitStatus::Exited(0));
+    assert!(status.success());
 
     let status = (Exec::cmd("true") | Exec::cmd("false")).join().unwrap();
-    assert_eq!(status, ExitStatus::Exited(1));
+    assert_eq!(status.code(), Some(1));
 }
 
 #[test]

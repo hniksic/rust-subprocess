@@ -1,7 +1,8 @@
 use std::ffi::{OsStr, OsString};
 
+use crate::ExitStatus;
 use crate::unix::PopenExt;
-use crate::{ExitStatus, Popen, PopenConfig, Redirection};
+use crate::{Popen, PopenConfig, Redirection};
 
 #[test]
 fn setup_executable() {
@@ -26,7 +27,7 @@ fn err_terminate() {
     let mut p = Popen::create(&["sleep", "5"], PopenConfig::default()).unwrap();
     assert!(p.poll().is_none());
     p.terminate().unwrap();
-    assert_eq!(p.wait().unwrap(), ExitStatus::Signaled(libc::SIGTERM as u8));
+    assert!(p.wait().unwrap().is_killed_by(libc::SIGTERM));
 }
 
 #[test]
@@ -37,14 +38,15 @@ fn waitpid_echild() {
     let wpid = unsafe { libc::waitpid(pid, &mut status, 0) };
     assert_eq!(wpid, pid);
     assert_eq!(status, 0);
-    assert_eq!(p.wait().unwrap(), ExitStatus::Undetermined);
+    let exit = p.wait().unwrap();
+    assert!(exit.code().is_none() && exit.signal().is_none());
 }
 
 #[test]
 fn send_signal() {
     let mut p = Popen::create(&["sleep", "5"], PopenConfig::default()).unwrap();
     p.send_signal(libc::SIGUSR1).unwrap();
-    assert_eq!(p.wait().unwrap(), ExitStatus::Signaled(libc::SIGUSR1 as u8));
+    assert_eq!(p.wait().unwrap().signal(), Some(libc::SIGUSR1));
 }
 
 #[test]
@@ -90,7 +92,7 @@ fn send_signal_group() {
     )
     .unwrap();
     p.send_signal_group(libc::SIGTERM).unwrap();
-    assert_eq!(p.wait().unwrap(), ExitStatus::Signaled(libc::SIGTERM as u8));
+    assert!(p.wait().unwrap().is_killed_by(libc::SIGTERM));
 }
 
 #[test]
@@ -113,12 +115,13 @@ fn kill_process() {
     // kill() sends SIGKILL which cannot be caught
     let mut p = Popen::create(&["sleep", "1000"], PopenConfig::default()).unwrap();
     p.kill().unwrap();
-    assert_eq!(p.wait().unwrap(), ExitStatus::Signaled(libc::SIGKILL as u8));
+    assert!(p.wait().unwrap().is_killed_by(libc::SIGKILL));
 }
 
 #[test]
 fn kill_vs_terminate() {
-    // Demonstrate that terminate (SIGTERM) and kill (SIGKILL) produce different exit statuses
+    // Demonstrate that terminate (SIGTERM) and kill (SIGKILL) produce different exit
+    // statuses
     let mut p1 = Popen::create(&["sleep", "1000"], PopenConfig::default()).unwrap();
     p1.terminate().unwrap();
     let status1 = p1.wait().unwrap();
@@ -127,7 +130,37 @@ fn kill_vs_terminate() {
     p2.kill().unwrap();
     let status2 = p2.wait().unwrap();
 
-    assert_eq!(status1, ExitStatus::Signaled(libc::SIGTERM as u8));
-    assert_eq!(status2, ExitStatus::Signaled(libc::SIGKILL as u8));
+    assert!(status1.is_killed_by(libc::SIGTERM));
+    assert!(status2.is_killed_by(libc::SIGKILL));
     assert_ne!(status1, status2);
+}
+
+#[test]
+fn exit_status_code() {
+    // Unix wait status encoding: exit code is in bits 15..8
+    assert_eq!(ExitStatus::from_raw(0 << 8).code(), Some(0));
+    assert_eq!(ExitStatus::from_raw(1 << 8).code(), Some(1));
+    assert_eq!(ExitStatus::from_raw(42 << 8).code(), Some(42));
+    // Signal death: code() returns None
+    assert_eq!(ExitStatus::from_raw(9).code(), None); // SIGKILL
+}
+
+#[test]
+fn exit_status_signal() {
+    // Signal death: signal in low 7 bits
+    assert_eq!(ExitStatus::from_raw(9).signal(), Some(9)); // SIGKILL
+    assert_eq!(
+        ExitStatus::from_raw(libc::SIGTERM).signal(),
+        Some(libc::SIGTERM)
+    );
+    // Normal exit: signal() returns None
+    assert_eq!(ExitStatus::from_raw(0 << 8).signal(), None);
+    assert_eq!(ExitStatus::from_raw(1 << 8).signal(), None);
+}
+
+#[test]
+fn exit_status_display() {
+    assert_eq!(ExitStatus::from_raw(0 << 8).to_string(), "exit code 0");
+    assert_eq!(ExitStatus::from_raw(1 << 8).to_string(), "exit code 1");
+    assert_eq!(ExitStatus::from_raw(9).to_string(), "signal 9");
 }

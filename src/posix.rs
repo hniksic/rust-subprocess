@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use libc::{c_char, c_int};
 
-use crate::os_common::{ExitStatus, StandardStream};
+use crate::popen::{ExitStatus, StandardStream};
 
 pub use libc::ECHILD;
 
@@ -243,17 +243,7 @@ pub fn waitpid(pid: u32, flags: i32) -> Result<(u32, ExitStatus)> {
             flags as c_int,
         )
     })?;
-    Ok((pid as u32, decode_exit_status(status)))
-}
-
-fn decode_exit_status(status: i32) -> ExitStatus {
-    if libc::WIFEXITED(status) {
-        ExitStatus::Exited(libc::WEXITSTATUS(status) as u32)
-    } else if libc::WIFSIGNALED(status) {
-        ExitStatus::Signaled(libc::WTERMSIG(status) as u8)
-    } else {
-        ExitStatus::Other(status)
-    }
+    Ok((pid as u32, ExitStatus::from_raw(status)))
 }
 
 pub use libc::{SIGKILL, SIGTERM};

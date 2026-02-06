@@ -35,7 +35,7 @@ mod exec {
     use std::time::Duration;
 
     use crate::communicate::Communicator;
-    use crate::os_common::ExitStatus;
+    use crate::popen::ExitStatus;
     use crate::popen::{Popen, PopenConfig, Redirection, Result as PopenResult};
 
     use super::Pipeline;
@@ -770,7 +770,7 @@ mod pipeline {
     use std::sync::Arc;
 
     use crate::communicate::Communicator;
-    use crate::os_common::ExitStatus;
+    use crate::popen::ExitStatus;
     use crate::popen::{Popen, Redirection, Result as PopenResult};
 
     use super::exec::{Capture, Exec, InputRedirection, OutputRedirection};

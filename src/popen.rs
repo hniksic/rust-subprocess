@@ -1,5 +1,6 @@
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::ErrorKind;
@@ -7,7 +8,6 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crate::communicate;
-use crate::os_common::{ExitStatus, StandardStream};
 
 use ChildState::*;
 
@@ -41,7 +41,6 @@ pub use os::make_pipe;
 /// [`create`]: struct.Popen.html#method.create
 /// [`communicate`]: struct.Popen.html#method.communicate
 /// [`detach`]: struct.Popen.html#method.detach
-
 #[derive(Debug)]
 pub struct Popen {
     /// If `stdin` was specified as `Redirection::Pipe`, this will contain a writable `File`
@@ -671,7 +670,7 @@ mod os {
     use std::os::unix::io::AsRawFd;
     use std::time::{Duration, Instant};
 
-    use crate::os_common::ExitStatus;
+    pub use crate::posix::make_standard_stream;
     use crate::unix::PopenExt;
 
     /// Read exactly N bytes, or return None on immediate EOF. Similar to read_exact(),
@@ -865,7 +864,7 @@ mod os {
                 Err(e) if e.raw_os_error() == Some(posix::ECHILD) => {
                     // Someone else has waited for the child (another thread, a signal
                     // handler...). The PID no longer exists and we cannot find its exit status.
-                    self.child_state = Finished(ExitStatus::Undetermined);
+                    self.child_state = Finished(ExitStatus(None));
                 }
                 Err(e) => return Err(e),
             }
@@ -941,6 +940,69 @@ mod os {
             }
         }
     }
+
+    pub type RawExitStatus = i32;
+
+    impl ExitStatus {
+        /// Returns the exit code if the process exited normally.
+        ///
+        /// On Unix, this returns `Some` only if the process exited voluntarily (not
+        /// killed by a signal).
+        pub fn code(self) -> Option<u32> {
+            self.0.and_then(|raw| {
+                if libc::WIFEXITED(raw) {
+                    Some(libc::WEXITSTATUS(raw) as u32)
+                } else {
+                    None
+                }
+            })
+        }
+
+        /// Returns the signal number if the process was killed by a signal.
+        pub fn signal(self) -> Option<i32> {
+            self.0.and_then(|raw| {
+                if libc::WIFSIGNALED(raw) {
+                    Some(libc::WTERMSIG(raw))
+                } else {
+                    None
+                }
+            })
+        }
+    }
+
+    impl fmt::Display for ExitStatus {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self.0 {
+                Some(raw) if libc::WIFEXITED(raw) => {
+                    write!(f, "exit code {}", libc::WEXITSTATUS(raw))
+                }
+                Some(raw) if libc::WIFSIGNALED(raw) => {
+                    write!(f, "signal {}", libc::WTERMSIG(raw))
+                }
+                Some(raw) => {
+                    write!(f, "unrecognized wait status: {} {:#x}", raw, raw)
+                }
+                None => write!(f, "undetermined exit status"),
+            }
+        }
+    }
+
+    impl fmt::Debug for ExitStatus {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self.0 {
+                Some(raw) if libc::WIFEXITED(raw) => {
+                    write!(f, "ExitStatus(Exited({}))", libc::WEXITSTATUS(raw))
+                }
+                Some(raw) if libc::WIFSIGNALED(raw) => {
+                    write!(f, "ExitStatus(Signal({}))", libc::WTERMSIG(raw))
+                }
+                Some(raw) => {
+                    write!(f, "ExitStatus(Unknown({} {:#x}))", raw, raw)
+                }
+                None => write!(f, "ExitStatus(Undetermined)"),
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -958,8 +1020,8 @@ mod os {
     use std::os::windows::io::{AsRawHandle, RawHandle};
     use std::time::Duration;
 
-    use crate::os_common::{ExitStatus, StandardStream};
     use crate::win32;
+    pub use crate::win32::make_standard_stream;
 
     #[derive(Debug)]
     pub struct ExtChildState(win32::Handle);
@@ -1030,7 +1092,7 @@ mod os {
                 if rc == win32::STILL_ACTIVE {
                     return Err(err);
                 }
-                new_child_state = Some(Finished(ExitStatus::Exited(rc)));
+                new_child_state = Some(Finished(ExitStatus::from_raw(rc)));
             }
             if let Some(new_child_state) = new_child_state {
                 self.child_state = new_child_state;
@@ -1087,7 +1149,7 @@ mod os {
                 let event = win32::WaitForSingleObject(handle, timeout)?;
                 if let win32::WaitEvent::OBJECT_0 = event {
                     let exit_code = win32::GetExitCodeProcess(handle)?;
-                    new_child_state = Some(Finished(ExitStatus::Exited(exit_code)));
+                    new_child_state = Some(Finished(ExitStatus::from_raw(exit_code)));
                 }
             }
             if let Some(new_child_state) = new_child_state {
@@ -1220,6 +1282,44 @@ mod os {
     }
 
     pub mod ext {}
+
+    pub type RawExitStatus = u32;
+
+    impl ExitStatus {
+        /// Returns the exit code if the process exited normally.
+        ///
+        /// On Windows, this always returns `Some` for a determined exit status.
+        pub fn code(self) -> Option<u32> {
+            self.0
+        }
+
+        /// Returns the signal number if the process was killed by a signal.
+        ///
+        /// On Windows, this always returns `None`.
+        pub fn signal(self) -> Option<i32> {
+            None
+        }
+    }
+
+    impl fmt::Display for ExitStatus {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self.0 {
+                Some(code) => write!(f, "exit code {}", code),
+                None => write!(f, "undetermined exit status"),
+            }
+        }
+    }
+
+    impl fmt::Debug for ExitStatus {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self.0 {
+                Some(code) => {
+                    write!(f, "ExitStatus(Exited({}))", code)
+                }
+                None => write!(f, "ExitStatus(Undetermined)"),
+            }
+        }
+    }
 }
 
 impl Drop for Popen {
@@ -1235,10 +1335,43 @@ impl Drop for Popen {
     }
 }
 
-#[cfg(unix)]
-use crate::posix::make_standard_stream;
-#[cfg(windows)]
-use crate::win32::make_standard_stream;
+/// Exit status of a process.
+///
+/// This is an opaque type that wraps the platform's native exit status
+/// representation. Use the provided methods to query the exit status.
+///
+/// On Unix, the raw value is the status from `waitpid()`. On Windows,
+/// it is the exit code from `GetExitCodeProcess()`.
+#[derive(Eq, PartialEq, Copy, Clone)]
+pub struct ExitStatus(Option<os::RawExitStatus>);
+
+impl ExitStatus {
+    /// Create an `ExitStatus` from the raw platform value.
+    pub(crate) fn from_raw(raw: os::RawExitStatus) -> ExitStatus {
+        ExitStatus(Some(raw))
+    }
+
+    /// True if the exit status of the process is 0.
+    pub fn success(self) -> bool {
+        self.code() == Some(0)
+    }
+
+    /// True if the subprocess was killed by a signal with the
+    /// specified number.
+    ///
+    /// Always returns `false` on Windows.
+    pub fn is_killed_by(self, signum: i32) -> bool {
+        self.signal() == Some(signum)
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+#[allow(dead_code)]
+pub(crate) enum StandardStream {
+    Input = 0,
+    Output = 1,
+    Error = 2,
+}
 
 fn get_standard_stream(which: StandardStream) -> io::Result<Arc<File>> {
     static STREAMS: [OnceLock<Arc<File>>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
@@ -1246,9 +1379,9 @@ fn get_standard_stream(which: StandardStream) -> io::Result<Arc<File>> {
     if let Some(stream) = lock.get() {
         return Ok(Arc::clone(stream));
     }
-    let stream = make_standard_stream(which)?;
+    let stream = os::make_standard_stream(which)?;
     // in case of another thread getting here first, our `stream` will just be dropped.
-    // That can happen at most once.
+    // That can happen at most once per stream.
     Ok(Arc::clone(lock.get_or_init(|| stream)))
 }
 

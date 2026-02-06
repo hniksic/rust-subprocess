@@ -4,7 +4,7 @@ use std::fs::{self, File};
 use std::io;
 use std::time::Duration;
 
-use crate::{ExitStatus, Popen, PopenConfig, Redirection};
+use crate::{Popen, PopenConfig, Redirection};
 
 #[test]
 fn communicate_input() {
@@ -352,7 +352,7 @@ fn communicate_process_fails() {
     let (out, err) = p.communicate([]).unwrap().read().unwrap();
     assert_eq!(out, b"output\n");
     assert_eq!(err, b"error\n");
-    assert_eq!(p.wait().unwrap(), ExitStatus::Exited(42));
+    assert_eq!(p.wait().unwrap().code(), Some(42));
 }
 
 #[test]

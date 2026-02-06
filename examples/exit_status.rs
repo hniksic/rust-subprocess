@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo run --example exit_status
 
-use subprocess::{Exec, ExitStatus};
+use subprocess::Exec;
 
 fn main() -> subprocess::Result<()> {
     // Successful exit
@@ -15,9 +15,12 @@ fn main() -> subprocess::Result<()> {
 
     // Custom exit code
     let status = Exec::shell("exit 42").join()?;
-    match status {
-        ExitStatus::Exited(code) => println!("exit 42: code={}", code),
-        _ => println!("Unexpected status: {:?}", status),
+    if let Some(code) = status.code() {
+        println!("exit 42: code={}", code);
+    } else if let Some(signal) = status.signal() {
+        println!("exit 42: killed by signal {}", signal);
+    } else {
+        println!("exit 42: undetermined status");
     }
 
     // Check exit status from capture
@@ -28,14 +31,16 @@ fn main() -> subprocess::Result<()> {
         result.success()
     );
 
-    // Pattern matching on exit status
+    // Method-based status checks
     let status = Exec::cmd("ls").arg("/nonexistent").join()?;
-    match status {
-        ExitStatus::Exited(0) => println!("ls succeeded"),
-        ExitStatus::Exited(n) => println!("ls failed with code {}", n),
-        ExitStatus::Signaled(sig) => println!("ls killed by signal {}", sig),
-        ExitStatus::Other(n) => println!("ls: other status {}", n),
-        ExitStatus::Undetermined => println!("ls: status unknown"),
+    if status.success() {
+        println!("ls succeeded");
+    } else if let Some(code) = status.code() {
+        println!("ls failed with code {}", code);
+    } else if let Some(signal) = status.signal() {
+        println!("ls killed by signal {}", signal);
+    } else {
+        println!("ls: status unknown");
     }
 
     Ok(())

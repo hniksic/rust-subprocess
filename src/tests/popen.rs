@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::{ExitStatus, Popen, PopenConfig, Redirection};
+use crate::{Popen, PopenConfig, Redirection};
 
 #[test]
 fn good_cmd() {
@@ -35,7 +35,7 @@ fn reject_empty_argv() {
 #[test]
 fn err_exit() {
     let mut p = Popen::create(&["sh", "-c", "exit 13"], PopenConfig::default()).unwrap();
-    assert_eq!(p.wait().unwrap(), ExitStatus::Exited(13));
+    assert_eq!(p.wait().unwrap().code(), Some(13));
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn write_to_subprocess() {
         .unwrap()
         .write_all(b"foo\nfoo\nbar\n")
         .unwrap();
-    assert_eq!(p.wait().unwrap(), ExitStatus::Exited(0));
+    assert!(p.wait().unwrap().success());
     assert_eq!(fs::read_to_string(tmpname).unwrap(), "foo\nbar\n");
 }
 
@@ -242,7 +242,7 @@ fn wait_timeout() {
     // We sleep for a very long time to avoid flaky failures when we get a slow machine
     // that takes too long to start sleep(1).
     let ret = p.wait_timeout(Duration::from_millis(900)).unwrap();
-    assert_eq!(ret, Some(ExitStatus::Exited(0)));
+    assert!(ret.unwrap().success());
 }
 
 #[test]
@@ -351,9 +351,9 @@ fn poll_running_process() {
 fn poll_finished_process() {
     let mut p = Popen::create(&["true"], PopenConfig::default()).unwrap();
     p.wait().unwrap();
-    assert_eq!(p.poll(), Some(ExitStatus::Exited(0)));
+    assert!(p.poll().unwrap().success());
     // Multiple polls should return the same result
-    assert_eq!(p.poll(), Some(ExitStatus::Exited(0)));
+    assert!(p.poll().unwrap().success());
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn wait_multiple_times() {
     let s1 = p.wait().unwrap();
     let s2 = p.wait().unwrap();
     let s3 = p.wait().unwrap();
-    assert_eq!(s1, ExitStatus::Exited(42));
+    assert_eq!(s1.code(), Some(42));
     assert_eq!(s1, s2);
     assert_eq!(s2, s3);
 }
@@ -491,5 +491,5 @@ fn wait_timeout_already_finished() {
         start.elapsed() < Duration::from_millis(100),
         "wait_timeout on finished process took too long"
     );
-    assert_eq!(result, Some(ExitStatus::Exited(0)));
+    assert!(result.unwrap().success());
 }

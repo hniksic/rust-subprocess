@@ -71,15 +71,12 @@ mod posix;
 #[cfg(windows)]
 mod win32;
 
-mod os_common;
-
 #[cfg(test)]
 mod tests;
 
 pub use builder::{Capture, Exec, ExecExt, Pipeline};
 pub use communicate::Communicator;
-pub use os_common::ExitStatus;
-pub use popen::{_PrivateSeal, Popen, PopenConfig, Redirection, Result, make_pipe};
+pub use popen::{_PrivateSeal, ExitStatus, Popen, PopenConfig, Redirection, Result, make_pipe};
 
 /// Subprocess extensions for Unix platforms.
 #[cfg(unix)]

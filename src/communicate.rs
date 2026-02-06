@@ -170,7 +170,7 @@ mod posix {
 
 #[cfg(windows)]
 mod win32 {
-    use crate::os_common::StandardStream;
+    use crate::popen::StandardStream;
     use crate::win32::{
         PendingRead, PendingWrite, ReadFileOverlapped, WaitForMultipleObjects, WaitResult,
         WriteFileOverlapped,
