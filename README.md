@@ -176,7 +176,7 @@ let mut p = Popen::create(&["cat"], PopenConfig {
 })?;
 
 // communicate() handles the write/read interleaving to avoid deadlock
-let (out, _err) = p.communicate("hello world").read_string()?;
+let (out, _err) = p.communicate("hello world")?.read_string()?;
 assert_eq!(out, "hello world");
 ```
 
@@ -237,7 +237,7 @@ let mut p = Popen::create(&["command", "arg1", "arg2"], PopenConfig {
 })?;
 
 // Read stdout directly
-let (out, err) = p.communicate([]).read_string()?;
+let (out, err) = p.communicate([])?.read_string()?;
 
 // Check if still running
 if let Some(exit_status) = p.poll() {

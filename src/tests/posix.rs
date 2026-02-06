@@ -17,7 +17,7 @@ fn setup_executable() {
         },
     )
     .unwrap();
-    let (out, _err) = p.communicate([]).read_string().unwrap();
+    let (out, _err) = p.communicate([]).unwrap().read_string().unwrap();
     assert_eq!(out, "foobar");
 }
 
@@ -58,7 +58,7 @@ fn env_set_all_1() {
         },
     )
     .unwrap();
-    let (out, _err) = p.communicate([]).read_string().unwrap();
+    let (out, _err) = p.communicate([]).unwrap().read_string().unwrap();
     assert_eq!(out, "");
 }
 
@@ -73,7 +73,7 @@ fn env_set_all_2() {
         },
     )
     .unwrap();
-    let (out, _err) = p.communicate([]).read_string().unwrap();
+    let (out, _err) = p.communicate([]).unwrap().read_string().unwrap();
     assert_eq!(out.trim_end(), "FOO=bar");
 }
 

@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 mod posix {
     use crate::posix;
     use std::cmp::min;
-    use std::collections::VecDeque;
     use std::fs::File;
     use std::io::{self, Read, Write};
     use std::time::Instant;
@@ -55,25 +54,27 @@ mod posix {
     }
 
     #[derive(Debug)]
-    pub struct RawCommunicator {
+    pub struct RawCommunicator<I> {
         stdin: Option<File>,
         stdout: Option<File>,
         stderr: Option<File>,
-        input_data: VecDeque<u8>,
+        input_data: I,
+        input_start: usize,
     }
 
-    impl RawCommunicator {
+    impl<I: AsRef<[u8]>> RawCommunicator<I> {
         pub fn new(
             stdin: Option<File>,
             stdout: Option<File>,
             stderr: Option<File>,
-            input_data: Option<Vec<u8>>,
-        ) -> RawCommunicator {
+            input_data: I,
+        ) -> RawCommunicator<I> {
             RawCommunicator {
                 stdin,
                 stdout,
                 stderr,
-                input_data: VecDeque::from(input_data.unwrap_or_default()),
+                input_data,
+                input_start: 0,
             }
         }
 
@@ -144,23 +145,21 @@ mod posix {
                     return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout"));
                 }
                 if in_ready {
-                    // make_contiguous() is a no-op here: we start from a Vec and only
-                    // drain from the front, so the data never wraps around.
-                    let input = self.input_data.make_contiguous();
-                    let chunk = &input[..min(WRITE_SIZE, input.len())];
+                    let remaining = &self.input_data.as_ref()[self.input_start..];
+                    let chunk = &remaining[..min(WRITE_SIZE, remaining.len())];
                     let n = self.stdin.as_ref().unwrap().write(chunk)?;
-                    self.input_data.drain(..n);
-                    if self.input_data.is_empty() {
+                    self.input_start += n;
+                    if self.input_start >= self.input_data.as_ref().len() {
                         // close stdin when done writing, so the child receives EOF
                         self.stdin.take();
                     }
                 }
                 if out_ready {
-                    RawCommunicator::do_read(&mut stdout_live, outvec, size_limit, total)?;
+                    Self::do_read(&mut stdout_live, outvec, size_limit, total)?;
                 }
                 if err_ready {
                     let total = outvec.len() + errvec.len();
-                    RawCommunicator::do_read(&mut stderr_live, errvec, size_limit, total)?;
+                    Self::do_read(&mut stderr_live, errvec, size_limit, total)?;
                 }
             }
 
@@ -177,7 +176,6 @@ mod win32 {
         WriteFileOverlapped,
     };
     use std::cmp::min;
-    use std::collections::VecDeque;
     use std::fs::File;
     use std::io;
     use std::os::windows::io::AsRawHandle;
@@ -220,16 +218,13 @@ mod win32 {
         }
     }
 
-    /// Start a read operation.
+    /// Start a write operation.
     /// Returns Ok(true) if completed immediately, Ok(false) if pending.
     fn start_write(
         file: &File,
         pending: &mut Option<PendingWrite>,
-        data: &mut VecDeque<u8>,
+        data: &[u8],
     ) -> io::Result<bool> {
-        // make_contiguous() is a no-op: we only drain from the front, so the data never
-        // wraps around.
-        let data = data.make_contiguous();
         let chunk_size = min(BUFFER_SIZE, data.len());
         let new = WriteFileOverlapped(file.as_raw_handle(), &data[..chunk_size])?;
         Ok(pending.insert(new).is_ready())
@@ -254,30 +249,25 @@ mod win32 {
         Ok(data.is_empty())
     }
 
-    fn complete_write(mut pending: PendingWrite, source: &mut VecDeque<u8>) -> io::Result<()> {
-        let nwritten = pending.complete()? as usize;
-        source.drain(..nwritten);
-        Ok(())
-    }
-
     #[derive(Debug)]
-    pub struct RawCommunicator {
+    pub struct RawCommunicator<I> {
         stdin: Option<File>,
         stdout: Option<File>,
         stderr: Option<File>,
         stdin_pending: Option<PendingWrite>,
         stdout_pending: Option<PendingRead>,
         stderr_pending: Option<PendingRead>,
-        input_data: VecDeque<u8>,
+        input_data: I,
+        input_start: usize,
     }
 
-    impl RawCommunicator {
+    impl<I: AsRef<[u8]>> RawCommunicator<I> {
         pub fn new(
             stdin: Option<File>,
             stdout: Option<File>,
             stderr: Option<File>,
-            input_data: Option<Vec<u8>>,
-        ) -> RawCommunicator {
+            input_data: I,
+        ) -> RawCommunicator<I> {
             RawCommunicator {
                 stdin,
                 stdout,
@@ -285,7 +275,8 @@ mod win32 {
                 stdin_pending: None,
                 stdout_pending: None,
                 stderr_pending: None,
-                input_data: VecDeque::from(input_data.unwrap_or_default()),
+                input_data,
+                input_start: 0,
             }
         }
 
@@ -339,7 +330,8 @@ mod win32 {
                 if let Some(ref stdin) = self.stdin
                     && self.stdin_pending.is_none()
                 {
-                    in_ready = start_write(stdin, &mut self.stdin_pending, &mut self.input_data)?;
+                    let remaining = &self.input_data.as_ref()[self.input_start..];
+                    in_ready = start_write(stdin, &mut self.stdin_pending, remaining)?;
                 }
                 let read_size = size_limit
                     .map(|l| l.saturating_sub(total))
@@ -372,8 +364,9 @@ mod win32 {
 
                 // Complete operations and process data
                 if in_ready {
-                    complete_write(self.stdin_pending.take().unwrap(), &mut self.input_data)?;
-                    if self.input_data.is_empty() {
+                    let nwritten = self.stdin_pending.take().unwrap().complete()? as usize;
+                    self.input_start += nwritten;
+                    if self.input_start >= self.input_data.as_ref().len() {
                         // close stdin when done writing, so the child receives EOF
                         self.stdin.take();
                     }
@@ -411,19 +404,19 @@ use win32::RawCommunicator;
 /// [`read_string`]: #method.read_string
 #[must_use]
 #[derive(Debug)]
-pub struct Communicator {
-    inner: RawCommunicator,
+pub struct Communicator<I> {
+    inner: RawCommunicator<I>,
     size_limit: Option<usize>,
     time_limit: Option<Duration>,
 }
 
-impl Communicator {
-    fn new(
+impl<I: AsRef<[u8]>> Communicator<I> {
+    pub(crate) fn new(
         stdin: Option<File>,
         stdout: Option<File>,
         stderr: Option<File>,
-        input_data: Option<Vec<u8>>,
-    ) -> Communicator {
+        input_data: I,
+    ) -> Communicator<I> {
         Communicator {
             inner: RawCommunicator::new(stdin, stdout, stderr, input_data),
             size_limit: None,
@@ -457,11 +450,6 @@ impl Communicator {
     /// finish.  If such a wait is undesirable, it can be prevented by waiting explicitly
     /// using `wait()`, by detaching the process using `detach()`, or by terminating it with
     /// `terminate()`.
-    ///
-    /// # Panics
-    ///
-    /// If `input_data` is provided and `stdin` was not redirected to a pipe.  Also, if
-    /// `input_data` is not provided and `stdin` was redirected to a pipe.
     ///
     /// # Errors
     ///
@@ -518,11 +506,6 @@ impl Communicator {
     /// using `wait()`, by detaching the process using `detach()`, or by terminating it with
     /// `terminate()`.
     ///
-    /// # Panics
-    ///
-    /// If `input_data` is provided and `stdin` was not redirected to a pipe.  Also, if
-    /// `input_data` is not provided and `stdin` was redirected to a pipe.
-    ///
     /// # Errors
     ///
     /// * `Err(io::Error)` if a system call fails.  In case of timeout, the error kind will
@@ -547,13 +530,13 @@ impl Communicator {
     ///
     /// On Windows, when capturing both stdout and stderr, the limit is approximate
     /// and may be exceeded by several kilobytes.
-    pub fn limit_size(mut self, size: usize) -> Communicator {
+    pub fn limit_size(mut self, size: usize) -> Communicator<I> {
         self.size_limit = Some(size);
         self
     }
 
     /// Limit the amount of time the next `read()` will spend reading from the subprocess.
-    pub fn limit_time(mut self, time: Duration) -> Communicator {
+    pub fn limit_time(mut self, time: Duration) -> Communicator<I> {
         self.time_limit = Some(time);
         self
     }
@@ -565,19 +548,4 @@ fn from_utf8_lossy(v: Vec<u8>) -> String {
         Ok(s) => s,
         Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
     }
-}
-
-pub fn communicate(
-    stdin: Option<File>,
-    stdout: Option<File>,
-    stderr: Option<File>,
-    input_data: Option<Vec<u8>>,
-) -> Communicator {
-    if stdin.is_some() && input_data.is_none() {
-        panic!("must provide input to redirected stdin");
-    }
-    if stdin.is_none() && input_data.is_some() {
-        panic!("cannot provide input to non-redirected stdin");
-    }
-    Communicator::new(stdin, stdout, stderr, input_data)
 }

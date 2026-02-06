@@ -32,7 +32,7 @@
 //! })?;
 //!
 //! // Obtain the output from the standard streams.
-//! let (out, err) = p.communicate([]).read_string()?;
+//! let (out, err) = p.communicate([])?.read_string()?;
 //!
 //! if let Some(exit_status) = p.poll() {
 //!     // the process has finished

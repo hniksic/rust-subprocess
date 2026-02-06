@@ -171,7 +171,7 @@ fn merge_err_to_out_pipe() {
         },
     )
     .unwrap();
-    let (out, err) = p.communicate([]).read().unwrap();
+    let (out, err) = p.communicate([]).unwrap().read().unwrap();
     assert_eq!(out, b"foo\nbar\n");
     assert!(err.is_empty());
     assert!(p.wait().unwrap().success());
@@ -188,7 +188,7 @@ fn merge_out_to_err_pipe() {
         },
     )
     .unwrap();
-    let (out, err) = p.communicate([]).read().unwrap();
+    let (out, err) = p.communicate([]).unwrap().read().unwrap();
     assert!(out.is_empty());
     assert_eq!(err, b"foo\nbar\n");
     assert!(p.wait().unwrap().success());
@@ -230,7 +230,7 @@ fn simple_pipe() {
         },
     )
     .unwrap();
-    let (wcout, _) = c2.communicate([]).read_string().unwrap();
+    let (wcout, _) = c2.communicate([]).unwrap().read_string().unwrap();
     assert_eq!(wcout.trim(), "3");
 }
 

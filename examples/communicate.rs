@@ -16,7 +16,7 @@ fn main() -> subprocess::Result<()> {
         },
     )?;
 
-    let (stdout, _stderr) = p.communicate("Hello, cat!").read_string()?;
+    let (stdout, _stderr) = p.communicate("Hello, cat!")?.read_string()?;
     println!("cat said: {}", stdout);
     p.wait()?;
 
@@ -32,7 +32,7 @@ fn main() -> subprocess::Result<()> {
     )?;
 
     let result = p
-        .communicate("data with timeout")
+        .communicate("data with timeout")?
         .limit_time(Duration::from_secs(5))
         .read();
 
@@ -53,7 +53,7 @@ fn main() -> subprocess::Result<()> {
     )?;
 
     let result = p
-        .communicate([])
+        .communicate([])?
         .limit_size(100) // Only read first 100 bytes
         .read();
 

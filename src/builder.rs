@@ -403,7 +403,7 @@ mod exec {
             Ok(WriteAdapter(p))
         }
 
-        fn setup_communicate(mut self) -> PopenResult<(Communicator, Popen)> {
+        fn setup_communicate(mut self) -> PopenResult<(Communicator<Vec<u8>>, Popen)> {
             let stdin_data = self.stdin_data.take();
             if let (&Redirection::None, &Redirection::None) =
                 (&self.config.stdout, &self.config.stderr)
@@ -412,20 +412,23 @@ mod exec {
             }
             let mut p = self.popen()?;
 
-            Ok((p.communicate(stdin_data.unwrap_or_default()), p))
+            let comm = Communicator::new(
+                p.stdin.take(),
+                p.stdout.take(),
+                p.stderr.take(),
+                stdin_data.unwrap_or_default(),
+            );
+            Ok((comm, p))
         }
 
         /// Starts the process and returns a `Communicator` handle.
         ///
-        /// This is a lower-level API that offers more choice in how communication is
-        /// performed, such as read size limit and timeout, equivalent to
-        /// [`Popen::communicate`].
+        /// Compared to `capture()`, this offers more choice in how communication is
+        /// performed, such as read size limit and timeout.
         ///
         /// Unlike `capture()`, this method doesn't wait for the process to finish,
         /// effectively detaching it.
-        ///
-        /// [`Popen::communicate`]: struct.Popen.html#method.communicate
-        pub fn communicate(self) -> PopenResult<Communicator> {
+        pub fn communicate(self) -> PopenResult<Communicator<Vec<u8>>> {
             let comm = self.detached().setup_communicate()?.0;
             Ok(comm)
         }
@@ -435,9 +438,8 @@ mod exec {
         /// The return value provides the standard output and standard error as bytes or
         /// optionally strings, as well as the exit status.
         ///
-        /// Unlike `Popen::communicate`, this method actually waits for the process to finish,
-        /// rather than simply waiting for its standard streams to close.  If this is
-        /// undesirable, use `detached()`.
+        /// This method waits for the process to finish, rather than simply waiting for
+        /// its standard streams to close.  If this is undesirable, use `detached()`.
         pub fn capture(self) -> PopenResult<Capture> {
             let timeout = self.time_limit;
             let (mut comm, mut p) = self.setup_communicate()?;
@@ -763,7 +765,7 @@ mod pipeline {
     use std::ops::BitOr;
     use std::sync::Arc;
 
-    use crate::communicate::{self, Communicator};
+    use crate::communicate::Communicator;
     use crate::os_common::ExitStatus;
     use crate::popen::{Popen, Redirection, Result as PopenResult};
 
@@ -993,10 +995,10 @@ mod pipeline {
                     .collect();
             }
 
-            let first_cmd = self.cmds.drain(..1).next().unwrap();
+            let first_cmd = self.cmds.remove(0);
             self.cmds.insert(0, first_cmd.stdin(self.stdin));
 
-            let last_cmd = self.cmds.drain(self.cmds.len() - 1..).next().unwrap();
+            let last_cmd = self.cmds.remove(self.cmds.len() - 1);
             self.cmds.push(last_cmd.stdout(self.stdout));
 
             let mut ret = Vec::<Popen>::new();
@@ -1054,7 +1056,7 @@ mod pipeline {
             Ok(WritePipelineAdapter(v))
         }
 
-        fn setup_communicate(mut self) -> PopenResult<(Communicator, Vec<Popen>)> {
+        fn setup_communicate(mut self) -> PopenResult<(Communicator<Vec<u8>>, Vec<Popen>)> {
             assert!(self.cmds.len() >= 2);
 
             // Parent reads stderr - make_pipe() creates pipes suitable for this
@@ -1065,26 +1067,23 @@ mod pipeline {
             let mut v = self.stdout(Redirection::Pipe).popen()?;
             let vlen = v.len();
 
-            let comm = communicate::communicate(
+            let comm = Communicator::new(
                 v[0].stdin.take(),
                 v[vlen - 1].stdout.take(),
                 Some(err_read),
-                stdin_data,
+                stdin_data.unwrap_or_default(),
             );
             Ok((comm, v))
         }
 
         /// Starts the pipeline and returns a `Communicator` handle.
         ///
-        /// This is a lower-level API that offers more choice in how communication is
-        /// performed, such as read size limit and timeout, equivalent to
-        /// [`Popen::communicate`].
+        /// Compared to `capture()`, this offers more choice in how communication is
+        /// performed, such as read size limit and timeout.
         ///
         /// Unlike `capture()`, this method doesn't wait for the pipeline to finish,
         /// effectively detaching it.
-        ///
-        /// [`Popen::communicate`]: struct.Popen.html#method.communicate
-        pub fn communicate(mut self) -> PopenResult<Communicator> {
+        pub fn communicate(mut self) -> PopenResult<Communicator<Vec<u8>>> {
             self.cmds = self.cmds.into_iter().map(|cmd| cmd.detached()).collect();
             let comm = self.setup_communicate()?.0;
             Ok(comm)
@@ -1096,9 +1095,8 @@ mod pipeline {
         /// standard error of all commands, and the exit status of the last command.  The
         /// captured outputs can be accessed as bytes or strings.
         ///
-        /// Unlike `Popen::communicate`, this method actually waits for the processes to
-        /// finish, rather than simply waiting for the output to close.  If this is
-        /// undesirable, use `detached()`.
+        /// This method actually waits for the processes to finish, rather than simply
+        /// waiting for the output to close.  If this is undesirable, use `detached()`.
         pub fn capture(self) -> PopenResult<Capture> {
             let (mut comm, mut v) = self.setup_communicate()?;
             let (stdout, stderr) = comm.read()?;

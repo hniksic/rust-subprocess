@@ -538,8 +538,7 @@ impl Popen {
     ///
     /// The communicate writes `input` to the subprocess's stdin (then closes it) while
     /// simultaneously reading stdout and stderr until end-of-file.  The actual I/O is
-    /// deferred until you call [`read`], [`read_string`], or [`read_to`] on the returned
-    /// handle.
+    /// deferred until you call a reading method on the returned handle.
     ///
     /// The simultaneous reading and writing avoids deadlock that would occur if the
     /// subprocess produces output while waiting for more input.
@@ -554,38 +553,36 @@ impl Popen {
     /// #     ..Default::default()
     /// # })?;
     /// // Exchange bytes:
-    /// let (out, err) = p.communicate(b"hello").read()?;
+    /// let (out, err) = p.communicate(b"hello")?.read()?;
     /// // Exchange strings:
-    /// let (out, err) = p.communicate("hello").read_string()?;
+    /// let (out, err) = p.communicate("hello")?.read_string()?;
     /// // No input (just capture output):
-    /// let (out, err) = p.communicate([]).read()?;
+    /// let (out, err) = p.communicate([])?.read()?;
     /// # Ok(())
     /// # }
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// If `input` is non-empty and `stdin` was not redirected to a pipe.
+    /// Returns `Err` if `input` is non-empty and `stdin` was not redirected to a pipe.
     ///
     /// [`Communicator`]: struct.Communicator.html
     /// [`read`]: struct.Communicator.html#method.read
     /// [`read_string`]: struct.Communicator.html#method.read_string
     /// [`read_to`]: struct.Communicator.html#method.read_to
-    pub fn communicate(&mut self, input: impl AsRef<[u8]>) -> Communicator {
-        let input_data = if self.stdin.is_some() {
-            Some(input.as_ref().to_vec())
-        } else {
-            if !input.as_ref().is_empty() {
-                panic!("cannot provide input to non-redirected stdin");
-            }
-            None
-        };
-        communicate::communicate(
+    pub fn communicate<I: AsRef<[u8]>>(&mut self, input: I) -> Result<Communicator<I>> {
+        if self.stdin.is_none() && !input.as_ref().is_empty() {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "cannot provide input to non-redirected stdin",
+            ));
+        }
+        Ok(Communicator::new(
             self.stdin.take(),
             self.stdout.take(),
             self.stderr.take(),
-            input_data,
-        )
+            input,
+        ))
     }
 
     /// Check whether the process is still running, without blocking or errors.

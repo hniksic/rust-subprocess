@@ -20,7 +20,7 @@ fn setup_executable() {
         },
     )
     .unwrap();
-    let (out, _err) = p.communicate([]).read_string().unwrap();
+    let (out, _err) = p.communicate([]).unwrap().read_string().unwrap();
     assert_eq!(out.trim(), "foobar");
 }
 
