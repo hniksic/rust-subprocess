@@ -19,10 +19,9 @@ fn communicate_input() {
         },
     )
     .unwrap();
-    assert!(matches!(
-        p.communicate_bytes(Some(b"hello world")),
-        Ok((None, None)),
-    ));
+    let (out, err) = p.communicate_bytes(Some(b"hello world")).unwrap();
+    assert!(out.is_empty());
+    assert!(err.is_empty());
     assert!(p.wait().unwrap().success());
     assert_eq!(fs::read_to_string(&tmpname).unwrap(), "hello world");
 }
@@ -38,14 +37,9 @@ fn communicate_output() {
         },
     )
     .unwrap();
-    assert!(matches!(
-        p.communicate_bytes(None),
-        Ok((Some(out), Some(err))) if {
-            assert_eq!(out, b"foo\n");
-            assert_eq!(err, b"bar\n");
-            true
-        }
-    ));
+    let (out, err) = p.communicate_bytes(None).unwrap();
+    assert_eq!(out, b"foo\n");
+    assert_eq!(err, b"bar\n");
     assert!(p.wait().unwrap().success());
 }
 
@@ -61,14 +55,9 @@ fn communicate_input_output() {
         },
     )
     .unwrap();
-    assert!(matches!(
-        p.communicate_bytes(Some(b"hello world")),
-        Ok((Some(out), Some(err))) if {
-            assert_eq!(out, b"hello world");
-            assert_eq!(err, b"foo\n");
-            true
-        }
-    ));
+    let (out, err) = p.communicate_bytes(Some(b"hello world")).unwrap();
+    assert_eq!(out, b"hello world");
+    assert_eq!(err, b"foo\n");
     assert!(p.wait().unwrap().success());
 }
 
@@ -85,14 +74,9 @@ fn communicate_input_output_long() {
     )
     .unwrap();
     let input = [65u8; 1_000_000];
-    assert!(matches!(
-        p.communicate_bytes(Some(&input)),
-        Ok((Some(out), Some(err))) if {
-            assert_eq!(&out[..], &input[..]);
-            assert_eq!(&err[..], &[32u8; 100_000][..]);
-            true
-        }
-    ));
+    let (out, err) = p.communicate_bytes(Some(&input)).unwrap();
+    assert_eq!(&out[..], &input[..]);
+    assert_eq!(&err[..], &[32u8; 100_000][..]);
     assert!(p.wait().unwrap().success());
 }
 
@@ -107,17 +91,15 @@ fn communicate_timeout() {
         },
     )
     .unwrap();
-    match p
+    let mut out = vec![];
+    let mut err = vec![];
+    let result = p
         .communicate_start(None)
         .limit_time(Duration::from_millis(100))
-        .read()
-    {
-        Err(e) => {
-            assert_eq!(e.kind(), io::ErrorKind::TimedOut);
-            assert_eq!(e.capture, (Some(b"foo".to_vec()), Some(vec![])));
-        }
-        other => panic!("unexpected result {:?}", other),
-    }
+        .read_to(&mut out, &mut err);
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+    assert_eq!(out, b"foo");
+    assert_eq!(err, vec![]);
     p.kill().unwrap();
 }
 
@@ -133,15 +115,15 @@ fn communicate_size_limit_small() {
     )
     .unwrap();
     let mut comm = p.communicate_start(None).limit_size(2);
-    assert_eq!(comm.read().unwrap(), (Some(vec![32; 2]), Some(vec![])));
-    assert_eq!(comm.read().unwrap(), (Some(vec![32; 2]), Some(vec![])));
-    assert_eq!(comm.read().unwrap(), (Some(vec![b'a']), Some(vec![])));
+    assert_eq!(comm.read().unwrap(), (vec![32; 2], vec![]));
+    assert_eq!(comm.read().unwrap(), (vec![32; 2], vec![]));
+    assert_eq!(comm.read().unwrap(), (vec![b'a'], vec![]));
     p.kill().unwrap();
 }
 
-fn check_vec(v: Option<Vec<u8>>, size: usize, content: u8) {
-    assert_eq!(v.as_ref().unwrap().len(), size);
-    assert!(v.as_ref().unwrap().iter().all(|&c| c == content));
+fn check_vec(v: &[u8], size: usize, content: u8) {
+    assert_eq!(v.len(), size);
+    assert!(v.iter().all(|&c| c == content));
 }
 
 #[test]
@@ -158,14 +140,14 @@ fn communicate_size_limit_large() {
     let mut comm = p.communicate_start(None).limit_size(10_000);
 
     let (out, err) = comm.read().unwrap();
-    check_vec(out, 10_000, 32);
-    assert_eq!(err, Some(vec![]));
+    check_vec(&out, 10_000, 32);
+    assert_eq!(err, vec![]);
 
     let (out, err) = comm.read().unwrap();
-    check_vec(out, 10_000, 32);
-    assert_eq!(err, Some(vec![]));
+    check_vec(&out, 10_000, 32);
+    assert_eq!(err, vec![]);
 
-    assert_eq!(comm.read().unwrap(), (Some(vec![b'a']), Some(vec![])));
+    assert_eq!(comm.read().unwrap(), (vec![b'a'], vec![]));
     p.kill().unwrap();
 }
 
@@ -184,26 +166,26 @@ fn communicate_size_limit_different_sizes() {
 
     let mut comm = comm.limit_size(100);
     let (out, err) = comm.read().unwrap();
-    check_vec(out, 100, 32);
-    assert_eq!(err, Some(vec![]));
+    check_vec(&out, 100, 32);
+    assert_eq!(err, vec![]);
 
     let mut comm = comm.limit_size(1_000);
     let (out, err) = comm.read().unwrap();
-    check_vec(out, 1_000, 32);
-    assert_eq!(err, Some(vec![]));
+    check_vec(&out, 1_000, 32);
+    assert_eq!(err, vec![]);
 
     let mut comm = comm.limit_size(10_000);
     let (out, err) = comm.read().unwrap();
-    check_vec(out, 10_000, 32);
-    assert_eq!(err, Some(vec![]));
+    check_vec(&out, 10_000, 32);
+    assert_eq!(err, vec![]);
 
     let mut comm = comm.limit_size(8_900);
     let (out, err) = comm.read().unwrap();
-    check_vec(out, 8_900, 32);
-    assert_eq!(err, Some(vec![]));
+    check_vec(&out, 8_900, 32);
+    assert_eq!(err, vec![]);
 
-    assert_eq!(comm.read().unwrap(), (Some(vec![b'a']), Some(vec![])));
-    assert_eq!(comm.read().unwrap(), (Some(vec![]), Some(vec![])));
+    assert_eq!(comm.read().unwrap(), (vec![b'a'], vec![]));
+    assert_eq!(comm.read().unwrap(), (vec![], vec![]));
     p.kill().unwrap();
 }
 
@@ -219,8 +201,8 @@ fn communicate_stdout_only() {
     )
     .unwrap();
     let (out, err) = p.communicate_bytes(None).unwrap();
-    assert_eq!(out, Some(b"hello\n".to_vec()));
-    assert_eq!(err, None);
+    assert_eq!(out, b"hello\n");
+    assert!(err.is_empty());
     assert!(p.wait().unwrap().success());
 }
 
@@ -236,8 +218,8 @@ fn communicate_stderr_only() {
     )
     .unwrap();
     let (out, err) = p.communicate_bytes(None).unwrap();
-    assert_eq!(out, None);
-    assert_eq!(err, Some(b"error\n".to_vec()));
+    assert!(out.is_empty());
+    assert_eq!(err, b"error\n");
     assert!(p.wait().unwrap().success());
 }
 
@@ -254,8 +236,8 @@ fn communicate_stdin_only() {
     )
     .unwrap();
     let (out, err) = p.communicate_bytes(Some(b"test data")).unwrap();
-    assert_eq!(out, None);
-    assert_eq!(err, None);
+    assert!(out.is_empty());
+    assert!(err.is_empty());
     assert!(p.wait().unwrap().success());
 }
 
@@ -272,8 +254,8 @@ fn communicate_empty_input() {
     )
     .unwrap();
     let (out, err) = p.communicate_bytes(Some(b"")).unwrap();
-    assert_eq!(out, Some(vec![]));
-    assert_eq!(err, None);
+    assert!(out.is_empty());
+    assert!(err.is_empty());
     assert!(p.wait().unwrap().success());
 }
 
@@ -290,8 +272,8 @@ fn communicate_empty_output() {
     )
     .unwrap();
     let (out, err) = p.communicate_bytes(None).unwrap();
-    assert_eq!(out, Some(vec![]));
-    assert_eq!(err, Some(vec![]));
+    assert!(out.is_empty());
+    assert!(err.is_empty());
     assert!(p.wait().unwrap().success());
 }
 
@@ -308,8 +290,7 @@ fn communicate_large_stderr() {
     )
     .unwrap();
     let (out, err) = p.communicate_bytes(None).unwrap();
-    assert_eq!(out, Some(vec![]));
-    let err = err.unwrap();
+    assert!(out.is_empty());
     assert_eq!(err.len(), 50000);
     assert!(err.iter().all(|&c| c == b' ' || c == b'x'));
     assert!(p.wait().unwrap().success());
@@ -332,8 +313,8 @@ fn communicate_interleaved_output() {
     )
     .unwrap();
     let (out, err) = p.communicate_bytes(None).unwrap();
-    assert_eq!(out.unwrap(), b"out1\nout2\n");
-    assert_eq!(err.unwrap(), b"err1\nerr2\n");
+    assert_eq!(out, b"out1\nout2\n");
+    assert_eq!(err, b"err1\nerr2\n");
     assert!(p.wait().unwrap().success());
 }
 
@@ -350,8 +331,8 @@ fn communicate_quick_exit() {
     )
     .unwrap();
     let (out, err) = p.communicate_bytes(None).unwrap();
-    assert_eq!(out, Some(vec![]));
-    assert_eq!(err, Some(vec![]));
+    assert!(out.is_empty());
+    assert!(err.is_empty());
     assert!(p.wait().unwrap().success());
 }
 
@@ -368,8 +349,8 @@ fn communicate_process_fails() {
     )
     .unwrap();
     let (out, err) = p.communicate_bytes(None).unwrap();
-    assert_eq!(out, Some(b"output\n".to_vec()));
-    assert_eq!(err, Some(b"error\n".to_vec()));
+    assert_eq!(out, b"output\n");
+    assert_eq!(err, b"error\n");
     assert_eq!(p.wait().unwrap(), ExitStatus::Exited(42));
 }
 
@@ -387,13 +368,13 @@ fn communicate_size_limit_zero() {
     .unwrap();
     let mut comm = p.communicate_start(None).limit_size(0);
     let (out, err) = comm.read().unwrap();
-    assert_eq!(out, Some(vec![]));
-    assert_eq!(err, Some(vec![]));
+    assert!(out.is_empty());
+    assert!(err.is_empty());
     // Continue reading without limit to get the rest
     let mut comm = comm.limit_size(100);
     let (out, err) = comm.read().unwrap();
-    assert_eq!(out, Some(b"data".to_vec()));
-    assert_eq!(err, Some(vec![]));
+    assert_eq!(out, b"data");
+    assert_eq!(err, vec![]);
     p.kill().unwrap();
 }
 
@@ -412,7 +393,7 @@ fn communicate_size_limit_stderr() {
     let mut comm = p.communicate_start(None).limit_size(4);
     let (out, err) = comm.read().unwrap();
     // Should get approximately 4 bytes total across both streams
-    let total = out.as_ref().map_or(0, |v| v.len()) + err.as_ref().map_or(0, |v| v.len());
+    let total = out.len() + err.len();
     assert!(total <= 6, "got {} bytes, expected <= 6", total); // allow some slack
     p.kill().unwrap();
 }
@@ -453,18 +434,18 @@ fn communicate_multiple_reads_after_eof() {
     .unwrap();
     let mut comm = p.communicate_start(None);
     let (out, err) = comm.read().unwrap();
-    assert_eq!(out, Some(b"hello".to_vec()));
-    assert_eq!(err, Some(vec![]));
+    assert_eq!(out, b"hello");
+    assert!(err.is_empty());
 
     // Subsequent reads should return empty
     let (out, err) = comm.read().unwrap();
-    assert_eq!(out, Some(vec![]));
-    assert_eq!(err, Some(vec![]));
+    assert!(out.is_empty());
+    assert!(err.is_empty());
 
     // And again
     let (out, err) = comm.read().unwrap();
-    assert_eq!(out, Some(vec![]));
-    assert_eq!(err, Some(vec![]));
+    assert!(out.is_empty());
+    assert!(err.is_empty());
 
     assert!(p.wait().unwrap().success());
 }
@@ -484,7 +465,7 @@ fn communicate_large_bidirectional() {
     // 500KB of data - larger than typical pipe buffer (64KB on Linux)
     let input: Vec<u8> = (0..500_000).map(|i| (i % 256) as u8).collect();
     let (out, _) = p.communicate_bytes(Some(&input)).unwrap();
-    assert_eq!(out.unwrap(), input);
+    assert_eq!(out, input);
     assert!(p.wait().unwrap().success());
 }
 
@@ -503,20 +484,20 @@ fn communicate_partial_read_continue() {
 
     let mut comm = p.communicate_start(None).limit_size(3);
     let (out1, _) = comm.read().unwrap();
-    assert_eq!(out1.as_ref().unwrap().len(), 3);
+    assert_eq!(out1.len(), 3);
 
     let mut comm = comm.limit_size(3);
     let (out2, _) = comm.read().unwrap();
-    assert_eq!(out2.as_ref().unwrap().len(), 3);
+    assert_eq!(out2.len(), 3);
 
     // Read the rest
     let mut comm = comm.limit_size(100);
     let (out3, _) = comm.read().unwrap();
 
     // Combine all reads
-    let mut combined = out1.unwrap();
-    combined.extend(out2.unwrap());
-    combined.extend(out3.unwrap());
+    let mut combined = out1;
+    combined.extend(out2);
+    combined.extend(out3);
     assert_eq!(combined, b"abcdefghij");
 
     p.kill().unwrap();
@@ -527,8 +508,8 @@ fn communicate_no_streams() {
     // No pipes at all - should work fine
     let mut p = Popen::create(&["true"], PopenConfig::default()).unwrap();
     let (out, err) = p.communicate_bytes(None).unwrap();
-    assert_eq!(out, None);
-    assert_eq!(err, None);
+    assert!(out.is_empty());
+    assert!(err.is_empty());
     assert!(p.wait().unwrap().success());
 }
 
@@ -544,7 +525,6 @@ fn communicate_very_long_lines() {
     )
     .unwrap();
     let (out, _) = p.communicate_bytes(None).unwrap();
-    let out = out.unwrap();
     assert_eq!(out.len(), 100_000);
     assert!(out.ends_with(b"x"));
     assert!(p.wait().unwrap().success());
@@ -566,18 +546,21 @@ fn communicate_timeout_with_partial_and_continue() {
     let mut comm = p
         .communicate_start(None)
         .limit_time(Duration::from_millis(100));
-    let result = comm.read();
+    let mut out = vec![];
+    let mut err = vec![];
+    let result = comm.read_to(&mut out, &mut err);
     assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
     // Should have captured "first"
-    assert_eq!(err.capture.0, Some(b"first".to_vec()));
+    assert_eq!(out, b"first");
 
     // Continue reading with longer timeout
     let mut comm = comm.limit_time(Duration::from_secs(2));
-    let (out, _) = comm.read().unwrap();
+    let mut out2 = vec![];
+    let mut err2 = vec![];
+    comm.read_to(&mut out2, &mut err2).unwrap();
     // Should get "second"
-    assert_eq!(out, Some(b"second".to_vec()));
+    assert_eq!(out2, b"second");
 
     assert!(p.wait().unwrap().success());
 }

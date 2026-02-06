@@ -22,7 +22,7 @@ fn null_file() {
         .popen()
         .unwrap();
     let (out, _) = p.communicate(None).unwrap();
-    assert_eq!(out.unwrap(), "");
+    assert_eq!(out, "");
 }
 
 #[test]
@@ -57,13 +57,13 @@ fn stream_stdin() {
 #[test]
 fn communicate_out() {
     let mut comm = Exec::cmd("printf").arg("foo").communicate().unwrap();
-    assert_eq!(comm.read().unwrap(), (Some(b"foo".to_vec()), None));
+    assert_eq!(comm.read().unwrap(), (b"foo".to_vec(), vec![]));
 }
 
 #[test]
 fn communicate_in_out() {
     let mut comm = Exec::cmd("cat").stdin("foo").communicate().unwrap();
-    assert_eq!(comm.read().unwrap(), (Some(b"foo".to_vec()), None));
+    assert_eq!(comm.read().unwrap(), (b"foo".to_vec(), vec![]));
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn pipeline_open() {
         .popen()
         .unwrap();
     let (output, _) = processes[1].communicate(None).unwrap();
-    assert_eq!(output.unwrap().trim(), "2");
+    assert_eq!(output.trim(), "2");
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn pipeline_communicate_out() {
     let mut comm = pipe1.communicate().unwrap();
     assert_eq!(
         comm.read().unwrap(),
-        (Some(b"bar\nfoo\nfoo\n".to_vec().to_crlf()), Some(vec![]))
+        (b"bar\nfoo\nfoo\n".to_vec().to_crlf(), vec![])
     );
 }
 
@@ -179,7 +179,7 @@ fn pipeline_communicate_in_out() {
     let pipe1 = Exec::cmd("grep").arg("foo") | Exec::cmd("sort");
     let mut comm = pipe1.stdin("foobar\nbaz\nfoo\n").communicate().unwrap();
     let (out, _err) = comm.read().unwrap();
-    assert_eq!(out, Some(b"foo\nfoobar\n".to_vec().to_crlf()));
+    assert_eq!(out, b"foo\nfoobar\n".to_vec().to_crlf());
 }
 
 #[test]

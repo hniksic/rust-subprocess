@@ -18,7 +18,7 @@ fn setup_executable() {
     )
     .unwrap();
     let (out, _err) = p.communicate(None).unwrap();
-    assert_eq!(out.unwrap(), "foobar");
+    assert_eq!(out, "foobar");
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn env_set_all_1() {
     )
     .unwrap();
     let (out, _err) = p.communicate(None).unwrap();
-    assert_eq!(out.unwrap(), "");
+    assert_eq!(out, "");
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn env_set_all_2() {
     )
     .unwrap();
     let (out, _err) = p.communicate(None).unwrap();
-    assert_eq!(out.unwrap().trim_end(), "FOO=bar");
+    assert_eq!(out.trim_end(), "FOO=bar");
 }
 
 #[test]

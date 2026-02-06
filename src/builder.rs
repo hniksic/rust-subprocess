@@ -450,10 +450,10 @@ mod exec {
                 comm = comm.limit_time(t);
             }
 
-            let (maybe_out, maybe_err) = comm.read()?;
+            let (stdout, stderr) = comm.read()?;
             Ok(CaptureData {
-                stdout: maybe_out.unwrap_or_else(Vec::new),
-                stderr: maybe_err.unwrap_or_else(Vec::new),
+                stdout,
+                stderr,
                 exit_status: match timeout {
                     Some(t) => p
                         .wait_timeout(t)?
@@ -1130,16 +1130,14 @@ mod pipeline {
         /// undesirable, use `detached()`.
         pub fn capture(self) -> PopenResult<CaptureData> {
             let (mut comm, mut v) = self.setup_communicate()?;
-            let (out, err) = comm.read()?;
-            let out = out.unwrap_or_else(Vec::new);
-            let err = err.unwrap();
+            let (stdout, stderr) = comm.read()?;
 
             let vlen = v.len();
             let status = v[vlen - 1].wait()?;
 
             Ok(CaptureData {
-                stdout: out,
-                stderr: err,
+                stdout,
+                stderr,
                 exit_status: status,
             })
         }

@@ -1,7 +1,5 @@
-use std::error::Error;
-use std::fmt;
 use std::fs::File;
-use std::io::{self, ErrorKind};
+use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
@@ -433,12 +431,72 @@ impl Communicator {
         }
     }
 
+    /// Communicate with the subprocess, writing captured data to the provided writers.
+    ///
+    /// This will write input data to the subprocess's standard input and simultaneously read
+    /// its standard output and error, writing any captured data to the provided writers.
+    /// Data is written to the writers regardless of whether the read succeeds or fails,
+    /// so the caller retains partial data on error.
+    ///
+    /// By default `read_to()` will read all data until end-of-file.
+    ///
+    /// If `limit_time` has been called, the method will read for no more than the specified
+    /// duration.  In case of timeout, an error of kind `io::ErrorKind::TimedOut` is returned.
+    /// Communication may be resumed after the timeout by calling `read_to()` again.
+    ///
+    /// If `limit_size` has been called, it will limit the allocation done by this method.  If
+    /// the subprocess provides more data than the limit specifies, `read_to()` will
+    /// successfully return as much data as specified by the limit.  (It might internally read
+    /// a bit more from the subprocess, but the data will remain available for future reads.)
+    /// Subsequent data can be retrieved by calling `read_to()` again, which can be repeated
+    /// until `read_to()` writes no data, which marks EOF.
+    ///
+    /// Note that this method does not wait for the subprocess to finish, only to close its
+    /// output/error streams.  It is rare but possible for the program to continue running
+    /// after having closed the streams, in which case `Popen::Drop` will wait for it to
+    /// finish.  If such a wait is undesirable, it can be prevented by waiting explicitly
+    /// using `wait()`, by detaching the process using `detach()`, or by terminating it with
+    /// `terminate()`.
+    ///
+    /// # Panics
+    ///
+    /// If `input_data` is provided and `stdin` was not redirected to a pipe.  Also, if
+    /// `input_data` is not provided and `stdin` was redirected to a pipe.
+    ///
+    /// # Errors
+    ///
+    /// * `Err(io::Error)` if a system call fails.  In case of timeout, the error kind will
+    ///   be `ErrorKind::TimedOut`.
+    pub fn read_to(&mut self, mut stdout: impl Write, mut stderr: impl Write) -> io::Result<()> {
+        let deadline = self.time_limit.map(|timeout| Instant::now() + timeout);
+        let mut outvec = None;
+        let mut errvec = None;
+
+        let result = self
+            .inner
+            .read(deadline, self.size_limit, &mut outvec, &mut errvec);
+
+        let mut flush = Ok(());
+        if let Some(out) = outvec
+            && let Err(e) = stdout.write_all(&out)
+        {
+            flush = Err(e);
+        }
+        if let Some(err) = errvec
+            && let Err(e) = stderr.write_all(&err)
+            && flush.is_ok()
+        {
+            flush = Err(e);
+        }
+        result.and(flush)
+    }
+
     /// Communicate with the subprocess, return the contents of its standard output and error.
     ///
     /// This will write input data to the subprocess's standard input and simultaneously read
     /// its standard output and error.  The output and error contents are returned as a pair
-    /// of `Option<Vec>`.  The `None` options correspond to streams not specified as
-    /// `Redirection::Pipe` when creating the subprocess.
+    /// of `Vec<u8>`.  An empty `Vec` means the stream was not redirected to a pipe, or that
+    /// no data was produced.
     ///
     /// By default `read()` will read all data until end-of-file.
     ///
@@ -467,37 +525,22 @@ impl Communicator {
     ///
     /// # Errors
     ///
-    /// * `Err(CommunicateError)` if a system call fails.  In case of timeout, the underlying
-    ///   error kind will be `ErrorKind::TimedOut`.
-    ///
-    /// Regardless of the nature of the error, the content prior to the error can be retrieved
-    /// using the [`capture`] attribute of the error.
-    ///
-    /// [`capture`]: struct.CommunicateError.html#structfield.capture
-    pub fn read(&mut self) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), CommunicateError> {
-        let deadline = self.time_limit.map(|timeout| Instant::now() + timeout);
-        let mut outvec = None;
-        let mut errvec = None;
-
-        match self
-            .inner
-            .read(deadline, self.size_limit, &mut outvec, &mut errvec)
-        {
-            Ok(()) => Ok((outvec, errvec)),
-            Err(error) => Err(CommunicateError {
-                error,
-                capture: (outvec, errvec),
-            }),
-        }
+    /// * `Err(io::Error)` if a system call fails.  In case of timeout, the error kind will
+    ///   be `ErrorKind::TimedOut`.
+    pub fn read(&mut self) -> io::Result<(Vec<u8>, Vec<u8>)> {
+        let mut out = vec![];
+        let mut err = vec![];
+        self.read_to(&mut out, &mut err)?;
+        Ok((out, err))
     }
 
     /// Return the subprocess's output and error contents as strings.
     ///
     /// Like `read()`, but returns strings instead of byte vectors.  Invalid UTF-8 sequences,
     /// if found, are replaced with the `U+FFFD` Unicode replacement character.
-    pub fn read_string(&mut self) -> Result<(Option<String>, Option<String>), CommunicateError> {
-        let (o, e) = self.read()?;
-        Ok((o.map(from_utf8_lossy), e.map(from_utf8_lossy)))
+    pub fn read_string(&mut self) -> io::Result<(String, String)> {
+        let (out, err) = self.read()?;
+        Ok((from_utf8_lossy(out), from_utf8_lossy(err)))
     }
 
     /// Limit the amount of data the next `read()` will read from the subprocess.
@@ -541,45 +584,4 @@ pub fn communicate(
         );
     }
     Communicator::new(stdin, stdout, stderr, input_data)
-}
-
-/// Error during communication.
-///
-/// It holds the underlying `io::Error` in the `error` field, and also provides the data
-/// captured before the error was encountered in the `capture` field.
-///
-/// The error description and cause are taken from the underlying IO error.
-#[derive(Debug)]
-pub struct CommunicateError {
-    /// The underlying `io::Error`.
-    pub error: io::Error,
-    /// The data captured before the error was encountered.
-    pub capture: (Option<Vec<u8>>, Option<Vec<u8>>),
-}
-
-impl CommunicateError {
-    /// Returns the corresponding IO `ErrorKind` for this error.
-    ///
-    /// Equivalent to `self.error.kind()`.
-    pub fn kind(&self) -> ErrorKind {
-        self.error.kind()
-    }
-}
-
-impl Error for CommunicateError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        self.error.source()
-    }
-}
-
-impl From<CommunicateError> for io::Error {
-    fn from(err: CommunicateError) -> io::Error {
-        err.error
-    }
-}
-
-impl fmt::Display for CommunicateError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.error.fmt(f)
-    }
 }

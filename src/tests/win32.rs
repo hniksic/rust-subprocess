@@ -21,7 +21,7 @@ fn setup_executable() {
     )
     .unwrap();
     let (out, _err) = p.communicate(None).unwrap();
-    assert_eq!(out.unwrap().trim(), "foobar");
+    assert_eq!(out.trim(), "foobar");
 }
 
 #[test]

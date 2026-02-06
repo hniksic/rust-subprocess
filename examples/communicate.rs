@@ -17,7 +17,7 @@ fn main() -> subprocess::Result<()> {
     )?;
 
     let (stdout, _stderr) = p.communicate(Some("Hello, cat!"))?;
-    println!("cat said: {}", stdout.unwrap());
+    println!("cat said: {}", stdout);
     p.wait()?;
 
     // Communicate with timeout using Communicator
@@ -37,8 +37,8 @@ fn main() -> subprocess::Result<()> {
         .read();
 
     match result {
-        Ok((stdout, _)) => println!("Got: {}", String::from_utf8_lossy(&stdout.unwrap())),
-        Err(e) => println!("Error: {}", e.error),
+        Ok((stdout, _)) => println!("Got: {}", String::from_utf8_lossy(&stdout)),
+        Err(e) => println!("Error: {}", e),
     }
     p.wait()?;
 
@@ -59,10 +59,9 @@ fn main() -> subprocess::Result<()> {
 
     match result {
         Ok((stdout, _)) => {
-            let data = stdout.unwrap();
-            println!("Read {} bytes: {:?}...", data.len(), &data[..20]);
+            println!("Read {} bytes: {:?}...", stdout.len(), &stdout[..20]);
         }
-        Err(e) => println!("Error: {}", e.error),
+        Err(e) => println!("Error: {}", e),
     }
     p.terminate()?;
     p.wait()?;

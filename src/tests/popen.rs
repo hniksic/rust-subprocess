@@ -171,13 +171,9 @@ fn merge_err_to_out_pipe() {
         },
     )
     .unwrap();
-    assert!(matches!(
-        p.communicate_bytes(None),
-        Ok((Some(out), None)) if {
-            assert_eq!(out, b"foo\nbar\n");
-            true
-        }
-    ));
+    let (out, err) = p.communicate_bytes(None).unwrap();
+    assert_eq!(out, b"foo\nbar\n");
+    assert!(err.is_empty());
     assert!(p.wait().unwrap().success());
 }
 
@@ -192,13 +188,9 @@ fn merge_out_to_err_pipe() {
         },
     )
     .unwrap();
-    assert!(matches!(
-        p.communicate_bytes(None),
-        Ok((None, Some(err))) if {
-            assert_eq!(err, b"foo\nbar\n");
-            true
-        }
-    ));
+    let (out, err) = p.communicate_bytes(None).unwrap();
+    assert!(out.is_empty());
+    assert_eq!(err, b"foo\nbar\n");
     assert!(p.wait().unwrap().success());
 }
 
@@ -239,7 +231,7 @@ fn simple_pipe() {
     )
     .unwrap();
     let (wcout, _) = c2.communicate(None).unwrap();
-    assert_eq!(wcout.unwrap().trim(), "3");
+    assert_eq!(wcout.trim(), "3");
 }
 
 #[test]

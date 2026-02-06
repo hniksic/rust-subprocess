@@ -527,11 +527,12 @@ impl Popen {
     /// because the parent blocks on writing while the child blocks on having its output read.)
     ///
     /// Unlike [`communicate_bytes`], the `Communicator` allows timeout, size limits, and
-    /// access to partial output on error.
+    /// access to partial output on error (via [`read_to`]).
     ///
     /// [`Communicator`]: struct.Communicator.html
     /// [`read`]: struct.Communicator.html#method.read
     /// [`read_string`]: struct.Communicator.html#method.read_string
+    /// [`read_to`]: struct.Communicator.html#method.read_to
     /// [`communicate_bytes`]: #method.communicate_bytes
     pub fn communicate_start(&mut self, input_data: Option<Vec<u8>>) -> Communicator {
         communicate::communicate(
@@ -546,7 +547,8 @@ impl Popen {
     ///
     /// Writes `input_data` to the subprocess's stdin and closes it, while simultaneously
     /// reading stdout and stderr until end-of-file.  Returns the captured output as a pair of
-    /// `Option<Vec<u8>>`, where `None` indicates a stream not redirected to `Pipe`.
+    /// `Vec<u8>`.  An empty `Vec` means the stream was not redirected to a pipe, or that no
+    /// data was produced.
     ///
     /// The simultaneous reading and writing avoids deadlock when the subprocess produces
     /// output before consuming all input.
@@ -574,10 +576,9 @@ impl Popen {
     pub fn communicate_bytes(
         &mut self,
         input_data: Option<&[u8]>,
-    ) -> io::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+    ) -> io::Result<(Vec<u8>, Vec<u8>)> {
         self.communicate_start(input_data.map(|i| i.to_vec()))
             .read()
-            .map_err(|e| e.error)
     }
 
     /// Feed the subprocess with data and capture its output as string.
@@ -595,13 +596,9 @@ impl Popen {
     /// * `Err(::std::io::Error)` if a system call fails
     ///
     /// [`communicate_bytes`]: struct.Popen.html#method.communicate_bytes
-    pub fn communicate(
-        &mut self,
-        input_data: Option<&str>,
-    ) -> io::Result<(Option<String>, Option<String>)> {
+    pub fn communicate(&mut self, input_data: Option<&str>) -> io::Result<(String, String)> {
         self.communicate_start(input_data.map(|s| s.as_bytes().to_vec()))
             .read_string()
-            .map_err(|e| e.error)
     }
 
     /// Check whether the process is still running, without blocking or errors.
