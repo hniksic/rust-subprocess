@@ -71,6 +71,12 @@ enum ChildState {
     Finished(ExitStatus),
 }
 
+/// Unconstructible type used to seal [`PopenConfig`] against exhaustive construction
+/// outside the crate.
+#[doc(hidden)]
+#[derive(Debug, Copy, Clone)]
+pub struct _PrivateSeal(());
+
 /// Options for [`Popen::create`].
 ///
 /// When constructing `PopenConfig`, always use the [`Default`] trait, such as:
@@ -95,7 +101,6 @@ enum ChildState {
 /// [`Popen::create`]: struct.Popen.html#method.create
 /// [`Exec`]: struct.Exec.html
 /// [`Default`]: https://doc.rust-lang.org/core/default/trait.Default.html
-
 #[derive(Debug)]
 pub struct PopenConfig {
     /// How to configure the executed program's standard input.
@@ -175,11 +180,12 @@ pub struct PopenConfig {
     #[cfg(unix)]
     pub setpgid: bool,
 
-    // Add this field to force construction using ..Default::default() for backward
-    // compatibility.  Unfortunately we can't mark this non-public because then
-    // ..Default::default() wouldn't work either.
+    // Force construction using ..Default::default(), ensuring forward compatibility when
+    // new fields are added.  The _PrivateSeal type has a private inner field, so it
+    // cannot be constructed outside the crate, but ..Default::default() can fill it in by
+    // moving it from the default PopenConfig.
     #[doc(hidden)]
-    pub _use_default_to_construct: (),
+    pub _seal: _PrivateSeal,
 }
 
 impl PopenConfig {
@@ -208,7 +214,7 @@ impl PopenConfig {
             setgid: self.setgid,
             #[cfg(unix)]
             setpgid: self.setpgid,
-            _use_default_to_construct: (),
+            _seal: _PrivateSeal(()),
         })
     }
 
@@ -239,7 +245,7 @@ impl Default for PopenConfig {
             setgid: None,
             #[cfg(unix)]
             setpgid: false,
-            _use_default_to_construct: (),
+            _seal: _PrivateSeal(()),
         }
     }
 }
