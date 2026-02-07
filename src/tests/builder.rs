@@ -854,23 +854,21 @@ fn pipeline_start_stdin_data_capture() {
 #[test]
 fn pipeline_cwd() {
     let tmpdir = TempDir::new().unwrap();
-    let dir = tmpdir.path().canonicalize().unwrap();
-    let c = (Exec::cmd("pwd") | Exec::cmd("cat"))
-        .cwd(&dir)
+    (Exec::cmd("touch").arg("here") | Exec::cmd("cat"))
+        .cwd(tmpdir.path())
         .capture()
         .unwrap();
-    assert_eq!(c.stdout_str().trim(), dir.to_str().unwrap());
+    assert!(tmpdir.path().join("here").exists());
 }
 
 #[test]
 fn pipeline_cwd_from_iter() {
     let tmpdir = TempDir::new().unwrap();
-    let dir = tmpdir.path().canonicalize().unwrap();
-    let pipeline: Pipeline = vec![Exec::cmd("pwd"), Exec::cmd("cat")]
+    let pipeline: Pipeline = vec![Exec::cmd("touch").arg("here"), Exec::cmd("cat")]
         .into_iter()
         .collect();
-    let c = pipeline.cwd(&dir).capture().unwrap();
-    assert_eq!(c.stdout_str().trim(), dir.to_str().unwrap());
+    pipeline.cwd(tmpdir.path()).capture().unwrap();
+    assert!(tmpdir.path().join("here").exists());
 }
 
 #[test]
