@@ -120,7 +120,7 @@ pub struct Exec {
     #[cfg(unix)]
     setgid: Option<u32>,
     #[cfg(unix)]
-    setpgid: bool,
+    setpgid: Option<u32>,
     #[cfg(windows)]
     creation_flags: u32,
 }
@@ -153,7 +153,7 @@ impl Exec {
             #[cfg(unix)]
             setgid: None,
             #[cfg(unix)]
-            setpgid: false,
+            setpgid: None,
             #[cfg(windows)]
             creation_flags: 0,
         }
@@ -530,6 +530,16 @@ impl Exec {
     pub(crate) fn stdout_is_set(&self) -> bool {
         !matches!(self.stdout_redirect, Redirection::None)
     }
+
+    #[cfg(unix)]
+    pub(crate) fn setpgid_is_set(&self) -> bool {
+        self.setpgid.is_some()
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn set_pgid_value(&mut self, pgid: u32) {
+        self.setpgid = Some(pgid);
+    }
 }
 
 impl Exec {
@@ -719,8 +729,8 @@ impl Started {
 
     /// Captures the output and waits for the process(es) to finish.
     ///
-    /// Only streams that were redirected to a pipe will produce data;
-    /// non-piped streams will result in empty bytes in `Capture`.
+    /// Only streams that were redirected to a pipe will produce data; non-piped streams
+    /// will result in empty bytes in `Capture`.
     pub fn capture(mut self) -> io::Result<Capture> {
         let (stdout, stderr) = {
             let mut comm = self.communicate();
@@ -742,8 +752,8 @@ impl Started {
 
     /// Like [`capture`](Self::capture), but with a timeout.
     ///
-    /// Returns an error of kind `ErrorKind::TimedOut` if the processes
-    /// don't finish within the given duration.
+    /// Returns an error of kind `ErrorKind::TimedOut` if the processes don't finish
+    /// within the given duration.
     pub fn capture_timeout(mut self, timeout: Duration) -> io::Result<Capture> {
         let deadline = Instant::now() + timeout;
         let (stdout, stderr) = {
@@ -835,8 +845,7 @@ impl Capture {
         self.exit_status.success()
     }
 
-    /// Returns `self` if the exit status is successful, or an error
-    /// otherwise.
+    /// Returns `self` if the exit status is successful, or an error otherwise.
     pub fn check(self) -> io::Result<Self> {
         if self.success() {
             Ok(self)
@@ -942,6 +951,7 @@ impl OutputRedirection for File {
 #[cfg(unix)]
 pub mod unix {
     use super::{Exec, Started};
+    use crate::pipeline::Pipeline;
     use crate::unix::ProcessExt;
     use std::io;
 
@@ -952,12 +962,14 @@ pub mod unix {
         /// Delegates to [`ProcessExt::send_signal`] on each process.
         fn send_signal(&self, signal: i32) -> io::Result<()>;
 
-        /// Send the specified signal to the process group of each process
-        /// in the pipeline.
+        /// Send the specified signal to the process group of the first
+        /// process.
         ///
-        /// Delegates to [`ProcessExt::send_signal_group`] on each process.
-        /// For this to work correctly, the processes should have been
-        /// started with [`ExecExt::setpgid`].
+        /// When used with [`PipelineExt::setpgid`], all pipeline
+        /// processes share the first process's group, so signaling
+        /// it reaches the entire pipeline. For a single process
+        /// started with [`ExecExt::setpgid`], this signals its
+        /// group.
         fn send_signal_group(&self, signal: i32) -> io::Result<()>;
     }
 
@@ -970,7 +982,7 @@ pub mod unix {
         }
 
         fn send_signal_group(&self, signal: i32) -> io::Result<()> {
-            for p in &self.processes {
+            if let Some(p) = self.processes.first() {
                 p.send_signal_group(signal)?;
             }
             Ok(())
@@ -997,11 +1009,17 @@ pub mod unix {
 
         /// Put the subprocess into its own process group.
         ///
-        /// This calls `setpgid(0, 0)` before execing the child process,
-        /// making it the leader of a new process group. Use with
-        /// [`ProcessExt::send_signal_group`] to signal the entire group.
+        /// This calls `setpgid(0, 0)` before execing the child
+        /// process, making it the leader of a new process group.
+        /// Useful for a single process that spawns children, allowing
+        /// them all to be signaled as a group with
+        /// [`ProcessExt::send_signal_group`].
+        ///
+        /// For pipelines, use [`PipelineExt::setpgid`] instead, which
+        /// puts all pipeline processes into a shared group.
         ///
         /// [`ProcessExt::send_signal_group`]: crate::unix::ProcessExt::send_signal_group
+        /// [`PipelineExt::setpgid`]: PipelineExt::setpgid
         fn setpgid(self) -> Self;
     }
 
@@ -1017,7 +1035,28 @@ pub mod unix {
         }
 
         fn setpgid(mut self) -> Exec {
-            self.setpgid = true;
+            self.setpgid = Some(0);
+            self
+        }
+    }
+
+    /// Unix-specific extension methods for [`Pipeline`].
+    pub trait PipelineExt {
+        /// Put all pipeline processes into a shared process group.
+        ///
+        /// The first process becomes the group leader (via
+        /// `setpgid(0, 0)`) and subsequent processes join its group.
+        /// This allows signaling the entire pipeline as a unit using
+        /// [`StartedExt::send_signal_group`].
+        ///
+        /// For single processes that spawn children, use
+        /// [`ExecExt::setpgid`] instead.
+        fn setpgid(self) -> Self;
+    }
+
+    impl PipelineExt for Pipeline {
+        fn setpgid(mut self) -> Pipeline {
+            self.set_setpgid(true);
             self
         }
     }

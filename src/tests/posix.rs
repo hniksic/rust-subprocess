@@ -1,4 +1,4 @@
-use crate::unix::{ProcessExt, StartedExt};
+use crate::unix::{PipelineExt, ProcessExt, StartedExt};
 use crate::{Exec, ExecExt, ExitStatus, Redirection};
 
 #[test]
@@ -197,4 +197,32 @@ fn started_send_signal_group() {
     handle.send_signal_group(libc::SIGKILL).unwrap();
     let status = handle.processes[0].wait().unwrap();
     assert!(status.is_killed_by(libc::SIGKILL) || status.is_killed_by(libc::SIGTERM));
+}
+
+// --- Pipeline setpgid tests ---
+
+#[test]
+fn pipeline_setpgid() {
+    // Spawn a pipeline with setpgid, signal the group, verify all
+    // processes die.
+    let handle = (Exec::cmd("sleep").arg("100") | Exec::cmd("sleep").arg("100"))
+        .setpgid()
+        .start()
+        .unwrap();
+    assert_eq!(handle.processes.len(), 2);
+    handle.send_signal_group(libc::SIGTERM).unwrap();
+    for p in &handle.processes {
+        let status = p.wait().unwrap();
+        assert!(status.is_killed_by(libc::SIGTERM));
+    }
+}
+
+#[test]
+fn pipeline_setpgid_rejects_exec_setpgid() {
+    // Using Exec::setpgid() inside a pipeline should return an error.
+    let result = (Exec::cmd("true").setpgid() | Exec::cmd("true")).start();
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(err.to_string().contains("setpgid"));
 }

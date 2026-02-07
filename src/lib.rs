@@ -67,6 +67,8 @@ pub use communicate::Communicator;
 #[cfg(unix)]
 pub use exec::unix::ExecExt;
 #[cfg(unix)]
+pub use exec::unix::PipelineExt;
+#[cfg(unix)]
 pub use exec::unix::StartedExt;
 #[cfg(windows)]
 pub use exec::windows::ExecExt;
@@ -78,6 +80,7 @@ pub use process::Process;
 /// Subprocess extensions for Unix platforms.
 #[cfg(unix)]
 pub mod unix {
+    pub use super::exec::unix::PipelineExt;
     pub use super::exec::unix::StartedExt;
     pub use super::process::ProcessExt;
 }

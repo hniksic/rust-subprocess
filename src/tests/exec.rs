@@ -35,7 +35,7 @@ fn reject_empty_argv() {
         #[cfg(unix)]
         None,
         #[cfg(unix)]
-        false,
+        None,
         #[cfg(windows)]
         0,
     );
@@ -80,7 +80,7 @@ fn merge_on_stdin_rejected() {
         #[cfg(unix)]
         None,
         #[cfg(unix)]
-        false,
+        None,
         #[cfg(windows)]
         0,
     );

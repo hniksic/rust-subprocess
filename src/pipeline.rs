@@ -60,6 +60,8 @@ pub struct Pipeline {
     check_success: bool,
     detached: bool,
     cwd: Option<OsString>,
+    #[cfg(unix)]
+    setpgid: bool,
 }
 
 impl Default for Pipeline {
@@ -86,6 +88,8 @@ impl Pipeline {
             check_success: false,
             detached: false,
             cwd: None,
+            #[cfg(unix)]
+            setpgid: false,
         }
     }
 
@@ -206,6 +210,11 @@ impl Pipeline {
         self
     }
 
+    #[cfg(unix)]
+    pub(crate) fn set_setpgid(&mut self, value: bool) {
+        self.setpgid = value;
+    }
+
     fn check_no_stdin_data(&self, meth: &str) {
         if self.stdin_data.is_some() {
             panic!("{} called with input data specified", meth);
@@ -275,6 +284,16 @@ impl Pipeline {
             ));
         }
 
+        #[cfg(unix)]
+        if self.execs.iter().any(|e| e.setpgid_is_set()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "setpgid on individual commands in a pipeline is not \
+                 supported; use Pipeline::setpgid() to put the pipeline \
+                 in a process group",
+            ));
+        }
+
         let stderr = self.setup_stderr()?;
 
         if let Some(dir) = &self.cwd {
@@ -295,6 +314,8 @@ impl Pipeline {
         let mut pipeline_stdin = None;
         let mut pipeline_stdout = None;
         let mut prev_stdout: Option<File> = None;
+        #[cfg(unix)]
+        let mut first_pid: u32 = 0;
 
         for (idx, mut runner) in self.execs.into_iter().enumerate() {
             if let Some(prev_out) = prev_stdout.take() {
@@ -303,9 +324,25 @@ impl Pipeline {
             if idx != cnt - 1 {
                 runner = runner.stdout(Redirection::Pipe);
             }
+            #[cfg(unix)]
+            if self.setpgid {
+                // No race condition: spawn() uses an exec-fail pipe,
+                // so it blocks until the child has called setpgid and
+                // exec'd. By the time we fork the second child, the
+                // first child's group already exists.
+                if idx == 0 {
+                    runner.set_pgid_value(0);
+                } else {
+                    runner.set_pgid_value(first_pid);
+                }
+            }
             let result = runner.spawn()?;
             if idx == 0 {
                 pipeline_stdin = result.stdin;
+                #[cfg(unix)]
+                if self.setpgid {
+                    first_pid = result.process.pid();
+                }
             }
             if idx == cnt - 1 {
                 pipeline_stdout = result.stdout;
@@ -457,6 +494,8 @@ impl Pipeline {
             check_success: self.check_success,
             detached: self.detached,
             cwd: self.cwd.clone(),
+            #[cfg(unix)]
+            setpgid: self.setpgid,
         })
     }
 }
@@ -518,6 +557,8 @@ impl FromIterator<Exec> for Pipeline {
             check_success: false,
             detached: false,
             cwd: None,
+            #[cfg(unix)]
+            setpgid: false,
         }
     }
 }

@@ -112,7 +112,7 @@ pub(crate) fn spawn(
     cwd: Option<&OsStr>,
     #[cfg(unix)] setuid: Option<u32>,
     #[cfg(unix)] setgid: Option<u32>,
-    #[cfg(unix)] setpgid: bool,
+    #[cfg(unix)] setpgid: Option<u32>,
     #[cfg(windows)] creation_flags: u32,
 ) -> io::Result<SpawnResult> {
     if argv.is_empty() {
@@ -370,7 +370,7 @@ pub(crate) mod os {
         cwd: Option<&OsStr>,
         setuid: Option<u32>,
         setgid: Option<u32>,
-        setpgid: bool,
+        setpgid: Option<u32>,
     ) -> io::Result<Process> {
         let mut exec_fail_pipe = posix::pipe()?;
         set_inheritable(&exec_fail_pipe.0, false)?;
@@ -441,7 +441,7 @@ pub(crate) mod os {
         cwd: Option<&OsStr>,
         setuid: Option<u32>,
         setgid: Option<u32>,
-        setpgid: bool,
+        setpgid: Option<u32>,
     ) -> io::Result<()> {
         if let Some(cwd) = cwd {
             std::env::set_current_dir(cwd)?;
@@ -459,8 +459,8 @@ pub(crate) mod os {
         if let Some(uid) = setuid {
             posix::setuid(uid)?;
         }
-        if setpgid {
-            posix::setpgid(0, 0)?;
+        if let Some(pgid) = setpgid {
+            posix::setpgid(0, pgid)?;
         }
         just_exec()?;
         unreachable!();
