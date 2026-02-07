@@ -431,7 +431,7 @@ fn pipeline_to_string() {
 fn capture_timeout() {
     match Exec::cmd("sleep")
         .args(&["0.5"])
-        .time_limit(Duration::from_millis(100))
+        .capture_timeout(Duration::from_millis(100))
         .capture()
     {
         Ok(_) => panic!("expected timeout return"),

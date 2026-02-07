@@ -32,7 +32,7 @@ mod exec {
     use std::io::{self, Read, Write};
     use std::ops::BitOr;
     use std::path::Path;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use crate::communicate::Communicator;
     use crate::popen::ExitStatus;
@@ -128,7 +128,7 @@ mod exec {
     pub struct Exec {
         command: OsString,
         args: Vec<OsString>,
-        time_limit: Option<Duration>,
+        capture_timeout: Option<Duration>,
         config: PopenConfig,
         stdin_data: Option<Vec<u8>>,
     }
@@ -147,7 +147,7 @@ mod exec {
             Exec {
                 command: command.as_ref().to_owned(),
                 args: vec![],
-                time_limit: None,
+                capture_timeout: None,
                 config: PopenConfig::default(),
                 stdin_data: None,
             }
@@ -193,10 +193,13 @@ mod exec {
             self
         }
 
-        /// Limit the amount of time the next `read()` will spend reading from the
-        /// subprocess.
-        pub fn time_limit(mut self, time: Duration) -> Exec {
-            self.time_limit = Some(time);
+        /// Set the timeout for `capture()` and `communicate()`.
+        ///
+        /// If set, `capture()` will return an error of kind `ErrorKind::TimedOut` if the
+        /// subprocess does not finish within the given duration.  For `communicate()`,
+        /// the timeout is forwarded to the returned `Communicator`.
+        pub fn capture_timeout(mut self, time: Duration) -> Exec {
+            self.capture_timeout = Some(time);
             self
         }
 
@@ -394,6 +397,7 @@ mod exec {
 
         fn setup_communicate(mut self) -> io::Result<(Communicator<Vec<u8>>, Popen)> {
             let stdin_data = self.stdin_data.take();
+            let timeout = self.capture_timeout;
             if let (&Redirection::None, &Redirection::None) =
                 (&self.config.stdout, &self.config.stderr)
             {
@@ -401,12 +405,15 @@ mod exec {
             }
             let mut p = self.popen()?;
 
-            let comm = Communicator::new(
+            let mut comm = Communicator::new(
                 p.stdin.take(),
                 p.stdout.take(),
                 p.stderr.take(),
                 stdin_data.unwrap_or_default(),
             );
+            if let Some(t) = timeout {
+                comm = comm.limit_time(t);
+            }
             Ok((comm, p))
         }
 
@@ -430,17 +437,16 @@ mod exec {
         /// This method waits for the process to finish, rather than simply waiting for
         /// its standard streams to close.  If this is undesirable, use `detached()`.
         pub fn capture(self) -> io::Result<Capture> {
-            let timeout = self.time_limit;
+            let deadline = self.capture_timeout.map(|t| Instant::now() + t);
             let (mut comm, mut p) = self.setup_communicate()?;
-            if let Some(t) = timeout {
-                comm = comm.limit_time(t);
-            }
 
             let (stdout, stderr) = comm.read()?;
+            let remaining =
+                deadline.map(|d| d.saturating_duration_since(Instant::now()));
             Ok(Capture {
                 stdout,
                 stderr,
-                exit_status: match timeout {
+                exit_status: match remaining {
                     Some(t) => p
                         .wait_timeout(t)?
                         .ok_or(io::Error::from(ErrorKind::TimedOut))?,
@@ -515,7 +521,7 @@ mod exec {
             Ok(Exec {
                 command: self.command.clone(),
                 args: self.args.clone(),
-                time_limit: self.time_limit,
+                capture_timeout: self.capture_timeout,
                 config: self.config.try_clone()?,
                 stdin_data: self.stdin_data.clone(),
             })
