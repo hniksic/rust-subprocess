@@ -947,25 +947,15 @@ mod os {
         ///
         /// On Unix, this returns `Some` only if the process exited voluntarily (not
         /// killed by a signal).
-        pub fn code(self) -> Option<u32> {
-            self.0.and_then(|raw| {
-                if libc::WIFEXITED(raw) {
-                    Some(libc::WEXITSTATUS(raw) as u32)
-                } else {
-                    None
-                }
-            })
+        pub fn code(&self) -> Option<u32> {
+            let raw = self.0?;
+            libc::WIFEXITED(raw).then(|| libc::WEXITSTATUS(raw) as u32)
         }
 
         /// Returns the signal number if the process was killed by a signal.
-        pub fn signal(self) -> Option<i32> {
-            self.0.and_then(|raw| {
-                if libc::WIFSIGNALED(raw) {
-                    Some(libc::WTERMSIG(raw))
-                } else {
-                    None
-                }
-            })
+        pub fn signal(&self) -> Option<i32> {
+            let raw = self.0?;
+            libc::WIFSIGNALED(raw).then(|| libc::WTERMSIG(raw))
         }
     }
 
@@ -1288,14 +1278,14 @@ mod os {
         /// Returns the exit code if the process exited normally.
         ///
         /// On Windows, this always returns `Some` for a determined exit status.
-        pub fn code(self) -> Option<u32> {
+        pub fn code(&self) -> Option<u32> {
             self.0
         }
 
         /// Returns the signal number if the process was killed by a signal.
         ///
         /// On Windows, this always returns `None`.
-        pub fn signal(self) -> Option<i32> {
+        pub fn signal(&self) -> Option<i32> {
             None
         }
     }
@@ -1336,11 +1326,11 @@ impl Drop for Popen {
 
 /// Exit status of a process.
 ///
-/// This is an opaque type that wraps the platform's native exit status
-/// representation. Use the provided methods to query the exit status.
+/// This is an opaque type that wraps the platform's native exit status representation.
+/// Use the provided methods to query the exit status.
 ///
-/// On Unix, the raw value is the status from `waitpid()`. On Windows,
-/// it is the exit code from `GetExitCodeProcess()`.
+/// On Unix, the raw value is the status from `waitpid()`. On Windows, it is the exit code
+/// from `GetExitCodeProcess()`.
 #[derive(Eq, PartialEq, Copy, Clone)]
 pub struct ExitStatus(Option<os::RawExitStatus>);
 
@@ -1351,15 +1341,14 @@ impl ExitStatus {
     }
 
     /// True if the exit status of the process is 0.
-    pub fn success(self) -> bool {
+    pub fn success(&self) -> bool {
         self.code() == Some(0)
     }
 
-    /// True if the subprocess was killed by a signal with the
-    /// specified number.
+    /// True if the subprocess was killed by a signal with the specified number.
     ///
     /// Always returns `false` on Windows.
-    pub fn is_killed_by(self, signum: i32) -> bool {
+    pub fn is_killed_by(&self, signum: i32) -> bool {
         self.signal() == Some(signum)
     }
 }
