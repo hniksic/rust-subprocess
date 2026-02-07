@@ -308,17 +308,19 @@ fn pipeline_invalid_2() {
 }
 
 #[test]
-#[should_panic(expected = "stdin of the first command is already redirected")]
 fn pipeline_rejects_first_cmd_stdin() {
     let first = Exec::cmd("cat").stdin(Redirection::Pipe);
-    let _pipeline = first | Exec::cmd("wc");
+    let err = (first | Exec::cmd("wc")).start().unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    assert!(err.to_string().contains("stdin of the first command"));
 }
 
 #[test]
-#[should_panic(expected = "stdout of the last command is already redirected")]
 fn pipeline_rejects_last_cmd_stdout() {
     let last = Exec::cmd("wc").stdout(Redirection::Null);
-    let _pipeline = Exec::cmd("echo") | last;
+    let err = (Exec::cmd("echo") | last).start().unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    assert!(err.to_string().contains("stdout of the last command"));
 }
 
 #[test]
@@ -856,7 +858,83 @@ fn pipeline_cwd() {
 fn pipeline_cwd_from_iter() {
     let tmpdir = TempDir::new().unwrap();
     let dir = tmpdir.path().canonicalize().unwrap();
-    let pipeline: Pipeline = vec![Exec::cmd("pwd"), Exec::cmd("cat")].into_iter().collect();
+    let pipeline: Pipeline = vec![Exec::cmd("pwd"), Exec::cmd("cat")]
+        .into_iter()
+        .collect();
     let c = pipeline.cwd(&dir).capture().unwrap();
     assert_eq!(c.stdout_str().trim(), dir.to_str().unwrap());
+}
+
+#[test]
+fn pipeline_empty_capture() {
+    let c = Pipeline::new().capture().unwrap();
+    assert!(c.success());
+    assert_eq!(c.stdout_str(), "");
+    assert_eq!(c.stderr_str(), "");
+}
+
+#[test]
+fn pipeline_empty_join() {
+    let status = Pipeline::new().join().unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn pipeline_single_command_capture() {
+    let c = Pipeline::new()
+        .pipe(Exec::cmd("printf").arg("hello"))
+        .capture()
+        .unwrap();
+    assert!(c.success());
+    assert_eq!(c.stdout_str(), "hello");
+}
+
+#[test]
+fn pipeline_single_command_join() {
+    let status = Pipeline::new().pipe(Exec::cmd("true")).join().unwrap();
+    assert!(status.success());
+
+    let status = Pipeline::new().pipe(Exec::cmd("false")).join().unwrap();
+    assert!(!status.success());
+}
+
+#[test]
+fn pipeline_builder_two_commands() {
+    let c = Pipeline::new()
+        .pipe(Exec::cmd("echo").arg("foo\nbar"))
+        .pipe(Exec::cmd("wc").arg("-l"))
+        .capture()
+        .unwrap();
+    assert_eq!(c.stdout_str().trim(), "2");
+}
+
+#[test]
+fn pipeline_from_iter_empty() {
+    let pipeline: Pipeline = vec![].into_iter().collect();
+    let c = pipeline.capture().unwrap();
+    assert!(c.success());
+    assert_eq!(c.stdout_str(), "");
+}
+
+#[test]
+fn pipeline_from_iter_single() {
+    let pipeline: Pipeline = vec![Exec::cmd("printf").arg("hi")].into_iter().collect();
+    let c = pipeline.capture().unwrap();
+    assert_eq!(c.stdout_str(), "hi");
+}
+
+#[test]
+fn pipeline_single_command_with_stdin_data() {
+    let c = Pipeline::new()
+        .pipe(Exec::cmd("cat"))
+        .stdin("hello")
+        .capture()
+        .unwrap();
+    assert_eq!(c.stdout_str(), "hello");
+}
+
+#[test]
+fn pipeline_default() {
+    let c = Pipeline::default().capture().unwrap();
+    assert!(c.success());
 }

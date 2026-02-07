@@ -551,7 +551,7 @@ mod exec {
 
         /// Create a `Pipeline` from `self` and `rhs`.
         fn bitor(self, rhs: Exec) -> Pipeline {
-            Pipeline::new(self, rhs)
+            Pipeline::new().pipe(self).pipe(rhs)
         }
     }
 
@@ -614,7 +614,9 @@ mod exec {
         pub fn join(mut self) -> io::Result<ExitStatus> {
             let deadline = self.timeout.map(|t| Instant::now() + t);
             self.communicate().read()?;
-            let last = self.started.last_mut().unwrap();
+            let Some(last) = self.started.last_mut() else {
+                return Ok(ExitStatus::from_raw(0));
+            };
             match deadline {
                 Some(d) => last
                     .wait_timeout(d.saturating_duration_since(Instant::now()))?
@@ -637,18 +639,22 @@ mod exec {
                 comm.read()?
             };
 
+            let Some(last) = self.started.last_mut() else {
+                return Ok(Capture {
+                    stdout,
+                    stderr,
+                    exit_status: ExitStatus::from_raw(0),
+                });
+            };
             let remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
             Ok(Capture {
                 stdout,
                 stderr,
                 exit_status: match remaining {
-                    Some(t) => self
-                        .started
-                        .last_mut()
-                        .unwrap()
+                    Some(t) => last
                         .wait_timeout(t)?
                         .ok_or(io::Error::from(ErrorKind::TimedOut))?,
-                    None => self.started.last_mut().unwrap().wait()?,
+                    None => last.wait()?,
                 },
             })
         }
@@ -897,6 +903,7 @@ mod exec {
 mod pipeline {
     use std::ffi::OsString;
     use std::fmt;
+    use std::fs::File;
     use std::io::{self, Read, Write};
     use std::ops::BitOr;
     use std::path::Path;
@@ -963,30 +970,23 @@ mod pipeline {
         cwd: Option<OsString>,
     }
 
+    impl Default for Pipeline {
+        fn default() -> Pipeline {
+            Pipeline::new()
+        }
+    }
+
     impl Pipeline {
-        /// Creates a new pipeline by combining two commands.
+        /// Creates a new empty pipeline.
         ///
-        /// Equivalent to `cmd1 | cmd2`.
+        /// Use [`pipe`](Self::pipe) to add commands to the pipeline, or the `|` operator
+        /// to combine `Exec` instances.
         ///
-        /// # Panics
-        ///
-        /// Panics if `cmd1` has stdin redirected or `cmd2` has stdout redirected.
-        /// Use `Pipeline::stdin()` and `Pipeline::stdout()` to redirect the pipeline's streams.
-        pub fn new(cmd1: Exec, cmd2: Exec) -> Pipeline {
-            if cmd1.stdin_is_set() {
-                panic!(
-                    "stdin of the first command is already redirected; \
-                     use Pipeline::stdin() to redirect pipeline input"
-                );
-            }
-            if cmd2.stdout_is_set() {
-                panic!(
-                    "stdout of the last command is already redirected; \
-                     use Pipeline::stdout() to redirect pipeline output"
-                );
-            }
+        /// An empty pipeline's `join()` returns success and `capture()` returns empty
+        /// output. A single-command pipeline behaves like the command run on its own.
+        pub fn new() -> Pipeline {
             Pipeline {
-                execs: vec![cmd1, cmd2],
+                execs: vec![],
                 stdin: Redirection::None,
                 stdout: Redirection::None,
                 stderr: Redirection::None,
@@ -995,6 +995,28 @@ mod pipeline {
                 detached: false,
                 cwd: None,
             }
+        }
+
+        /// Appends a command to the pipeline.
+        ///
+        /// This is the builder-style equivalent of the `|` operator.
+        ///
+        /// # Example
+        ///
+        /// ```no_run
+        /// # use subprocess::*;
+        /// # fn dummy() -> std::io::Result<()> {
+        /// let output = Pipeline::new()
+        ///     .pipe(Exec::cmd("echo").arg("hello world"))
+        ///     .pipe(Exec::cmd("wc").arg("-w"))
+        ///     .capture()?
+        ///     .stdout_str();
+        /// # Ok(())
+        /// # }
+        /// ```
+        pub fn pipe(mut self, cmd: Exec) -> Pipeline {
+            self.execs.push(cmd);
+            self
         }
 
         /// Specifies how to set up the standard input of the first command in the pipeline.
@@ -1103,6 +1125,28 @@ mod pipeline {
             }
         }
 
+        /// Convert pipeline-level stderr redirection into a per-command form, applying it
+        /// to all commands. Returns the read end of the pipe if stderr was set to Pipe.
+        fn setup_stderr(&mut self) -> io::Result<Option<File>> {
+            let (redirection, stderr_read) = match std::mem::replace(&mut self.stderr, Redirection::None) {
+                Redirection::None => return Ok(None),
+                Redirection::Pipe => {
+                    let (stderr_read, stderr_write) = crate::popen::make_pipe()?;
+                    (Redirection::SharedFile(Arc::new(stderr_write)), Some(stderr_read))
+                }
+                Redirection::File(f) => (Redirection::SharedFile(Arc::new(f)), None),
+                other => (other, None),
+            };
+            // unwrap(): after the above conversion, redirection to apply to each cmd is
+            // SharedFile, Merge, or Null, all of which are infallible to clone.
+            self.execs = self
+                .execs
+                .drain(..)
+                .map(|cmd| cmd.stderr(redirection.try_clone().unwrap()))
+                .collect();
+            Ok(stderr_read)
+        }
+
         // Terminators:
 
         /// Starts all commands in the pipeline and returns a [`Started`] with the
@@ -1114,57 +1158,37 @@ mod pipeline {
         /// missing output), except for the ones for which `detached()` was called.  This
         /// is equivalent to what the shell does.
         pub fn start(mut self) -> io::Result<Started> {
-            assert!(self.execs.len() >= 2);
-
-            let mut err_read_opt = None;
-            match self.stderr {
-                Redirection::None => {}
-                Redirection::Pipe => {
-                    let (err_read, err_write) = crate::popen::make_pipe()?;
-                    err_read_opt = Some(err_read);
-                    let shared = Arc::new(err_write);
-                    self.execs = self
-                        .execs
-                        .into_iter()
-                        .map(|cmd| cmd.stderr(Redirection::SharedFile(Arc::clone(&shared))))
-                        .collect();
-                }
-                Redirection::Merge => {
-                    self.execs = self
-                        .execs
-                        .into_iter()
-                        .map(|cmd| cmd.stderr(Redirection::Merge))
-                        .collect();
-                }
-                Redirection::File(f) => {
-                    let shared = Arc::new(f);
-                    self.execs = self
-                        .execs
-                        .into_iter()
-                        .map(|cmd| cmd.stderr(Redirection::SharedFile(Arc::clone(&shared))))
-                        .collect();
-                }
-                Redirection::SharedFile(ref arc) => {
-                    let arc = Arc::clone(arc);
-                    self.execs = self
-                        .execs
-                        .into_iter()
-                        .map(|cmd| cmd.stderr(Redirection::SharedFile(Arc::clone(&arc))))
-                        .collect();
-                }
-                Redirection::Null => {
-                    self.execs = self
-                        .execs
-                        .into_iter()
-                        .map(|cmd| cmd.stderr(Redirection::Null))
-                        .collect();
-                }
+            if self.execs.is_empty() {
+                return Ok(Started {
+                    stdin: None,
+                    stdout: None,
+                    stderr: None,
+                    stdin_data: vec![],
+                    timeout: self.timeout,
+                    started: vec![],
+                });
             }
+
+            if self.execs.first().unwrap().stdin_is_set() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "stdin of the first command is already redirected; \
+                     use Pipeline::stdin() to redirect pipeline input",
+                ));
+            }
+            if self.execs.last().unwrap().stdout_is_set() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "stdout of the last command is already redirected; \
+                     use Pipeline::stdout() to redirect pipeline output",
+                ));
+            }
+
+            let stderr = self.setup_stderr()?;
 
             if let Some(dir) = &self.cwd {
                 self.execs = self.execs.into_iter().map(|cmd| cmd.cwd(dir)).collect();
             }
-
             if self.detached {
                 self.execs = self.execs.into_iter().map(|cmd| cmd.detached()).collect();
             }
@@ -1194,7 +1218,7 @@ mod pipeline {
             Ok(Started {
                 stdin,
                 stdout,
-                stderr: err_read_opt,
+                stderr,
                 stdin_data: self.stdin_data.unwrap_or_default(),
                 timeout: self.timeout,
                 started: ret,
@@ -1351,39 +1375,22 @@ mod pipeline {
         type Output = Pipeline;
 
         /// Append a command to the pipeline and return a new pipeline.
-        ///
-        /// # Panics
-        ///
-        /// Panics if the new command has stdout redirected.
-        fn bitor(mut self, rhs: Exec) -> Pipeline {
-            if rhs.stdout_is_set() {
-                panic!(
-                    "stdout of the last command is already redirected; \
-                     use Pipeline::stdout() to redirect pipeline output"
-                );
-            }
-            self.execs.push(rhs);
-            self
+        fn bitor(self, rhs: Exec) -> Pipeline {
+            self.pipe(rhs)
         }
     }
 
     impl BitOr for Pipeline {
         type Output = Pipeline;
 
-        /// Append a pipeline to the pipeline and return a new pipeline.
+        /// Append the commands from `rhs` to this pipeline.
         ///
-        /// # Panics
-        ///
-        /// Panics if the last command of `rhs` has stdout redirected.
+        /// Other pipeline-level settings (cwd, stdout, etc.) from `rhs` are dropped -
+        /// only its commands are taken.
         fn bitor(mut self, rhs: Pipeline) -> Pipeline {
-            if rhs.execs.last().unwrap().stdout_is_set() {
-                panic!(
-                    "stdout of the last command is already redirected; \
-                     use Pipeline::stdout() to redirect pipeline output"
-                );
+            for exec in rhs.execs {
+                self = self.pipe(exec);
             }
-            self.execs.extend(rhs.execs);
-            self.stdout = rhs.stdout;
             self
         }
     }
@@ -1391,15 +1398,10 @@ mod pipeline {
     impl FromIterator<Exec> for Pipeline {
         /// Creates a pipeline from an iterator of commands.
         ///
-        /// # Panics
-        ///
-        /// Panics if:
-        /// - The iterator yields fewer than two commands.
-        /// - The first command has stdin redirected.
-        /// - The last command has stdout redirected.
-        ///
-        /// Use `Pipeline::stdin()` and `Pipeline::stdout()` to redirect the pipeline's
-        /// streams.
+        /// The iterator may yield any number of commands, including zero or one.
+        /// An empty pipeline returns success on `join()` and empty output on
+        /// `capture()`. A single-command pipeline behaves like running that
+        /// command directly.
         ///
         /// # Example
         ///
@@ -1417,26 +1419,8 @@ mod pipeline {
         /// assert_eq!(output, "TEST\n");
         /// ```
         fn from_iter<I: IntoIterator<Item = Exec>>(iter: I) -> Self {
-            let execs: Vec<_> = iter.into_iter().collect();
-
-            if execs.len() < 2 {
-                panic!("pipeline requires at least two commands")
-            }
-            if execs.first().unwrap().stdin_is_set() {
-                panic!(
-                    "stdin of the first command is already redirected; \
-                     use Pipeline::stdin() to redirect pipeline input"
-                );
-            }
-            if execs.last().unwrap().stdout_is_set() {
-                panic!(
-                    "stdout of the last command is already redirected; \
-                     use Pipeline::stdout() to redirect pipeline output"
-                );
-            }
-
             Pipeline {
-                execs,
+                execs: iter.into_iter().collect(),
                 stdin: Redirection::None,
                 stdout: Redirection::None,
                 stderr: Redirection::None,
