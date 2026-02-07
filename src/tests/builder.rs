@@ -569,3 +569,242 @@ fn pipeline_stderr_all_pipe_start() {
     assert!(stderr.contains("err1"), "stderr: {:?}", stderr);
     assert!(stderr.contains("err2"), "stderr: {:?}", stderr);
 }
+
+#[test]
+fn exec_capture_no_auto_stdout_when_stderr_set() {
+    // Exec::capture() only auto-pipes stdout when BOTH stdout and stderr are None.
+    // Setting stderr(Pipe) means the joint check (None, None) fails, so stdout is
+    // NOT auto-piped - output goes to the parent's stdout (inherited).
+    let c = Exec::cmd("sh")
+        .args(&["-c", "echo out; echo err >&2"])
+        .stderr(Redirection::Pipe)
+        .capture()
+        .unwrap();
+    assert_eq!(c.stderr_str().trim(), "err");
+    assert_eq!(c.stdout_str(), "");
+}
+
+#[test]
+fn pipeline_capture_preserves_stderr_merge() {
+    // Pipeline::capture() auto-sets stdout and stderr independently.
+    // stderr_all(Merge) is not None, so auto-stderr is skipped.
+    // stdout is None, so it IS auto-piped.
+    // Result: both stdout and stderr content end up in captured stdout.
+    let c = { Exec::cmd("sh").arg("-c").arg("echo err >&2; echo out") | Exec::cmd("cat") }
+        .stderr_all(Redirection::Merge)
+        .capture()
+        .unwrap();
+    assert!(
+        c.stdout_str().contains("out"),
+        "stdout should contain 'out', got: {:?}",
+        c.stdout_str()
+    );
+    assert!(
+        c.stdout_str().contains("err"),
+        "stdout should contain 'err' (merged), got: {:?}",
+        c.stdout_str()
+    );
+    assert_eq!(c.stderr_str(), "");
+}
+
+#[test]
+fn pipeline_start_capture_no_pipes() {
+    // start() does no auto-setup, so without explicit pipes, capture() gets
+    // nothing - process output goes to the parent's stdout (inherited).
+    let c = { Exec::cmd("echo").arg("hello") | Exec::cmd("cat") }
+        .start()
+        .unwrap()
+        .capture()
+        .unwrap();
+    assert_eq!(c.stdout_str(), "");
+    assert_eq!(c.stderr_str(), "");
+}
+
+#[test]
+fn pipeline_start_capture_stdout_only() {
+    // With start(), only explicitly set pipes produce data.  Here stdout is
+    // piped but stderr is not, so stderr is empty.  Compare to
+    // pipeline.capture() which would auto-set stderr_all(Pipe).
+    let c = { Exec::cmd("sh").arg("-c").arg("echo out; echo err >&2") | Exec::cmd("cat") }
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap()
+        .capture()
+        .unwrap();
+    assert!(
+        c.stdout_str().contains("out"),
+        "stdout should contain 'out', got: {:?}",
+        c.stdout_str()
+    );
+    assert_eq!(c.stderr_str(), "");
+}
+
+#[test]
+fn exec_communicate_no_auto_stdout_when_stderr_set() {
+    // Same joint-check logic as capture: Exec::communicate() only auto-pipes
+    // stdout when both stdout and stderr are None.  With stderr(Pipe), only
+    // stderr is piped.
+    let mut comm = Exec::cmd("sh")
+        .args(&["-c", "echo out; echo err >&2"])
+        .stderr(Redirection::Pipe)
+        .communicate()
+        .unwrap();
+    let (stdout, stderr) = comm.read().unwrap();
+    assert_eq!(stdout, b"");
+    assert_eq!(String::from_utf8_lossy(&stderr).trim(), "err");
+}
+
+#[test]
+fn pipeline_communicate_auto_pipes() {
+    // Pipeline::communicate() auto-sets both stdout and stderr Pipe
+    // independently (when they are None).
+    let mut comm = { Exec::cmd("echo").arg("foo") | Exec::cmd("cat") }
+        .communicate()
+        .unwrap();
+    let (stdout, _stderr) = comm.read().unwrap();
+    assert_eq!(String::from_utf8_lossy(&stdout).trim(), "foo");
+}
+
+#[test]
+fn pipeline_start_communicate_needs_explicit_pipes() {
+    // start() doesn't auto-set pipes - you must configure them explicitly.
+    // Here we set stdout(Pipe) and verify the communicator reads from it.
+    let mut handle = { Exec::cmd("echo").arg("foo") | Exec::cmd("cat") }
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let mut comm = handle.communicate();
+    let (stdout, stderr) = comm.read().unwrap();
+    assert_eq!(String::from_utf8_lossy(&stdout).trim(), "foo");
+    assert_eq!(stderr, b"");
+}
+
+#[test]
+fn exec_timeout_join_timed_out() {
+    let result = Exec::cmd("sleep")
+        .arg("0.5")
+        .timeout(Duration::from_millis(100))
+        .join();
+    assert_eq!(result.unwrap_err().kind(), ErrorKind::TimedOut);
+}
+
+#[test]
+fn exec_timeout_join_succeeds() {
+    let status = Exec::cmd("true")
+        .timeout(Duration::from_secs(5))
+        .join()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn exec_timeout_communicate_timed_out() {
+    let result = Exec::cmd("sleep")
+        .arg("0.5")
+        .timeout(Duration::from_millis(100))
+        .communicate()
+        .unwrap()
+        .read();
+    assert_eq!(result.unwrap_err().kind(), ErrorKind::TimedOut);
+}
+
+#[test]
+fn pipeline_timeout_join_timed_out() {
+    let result = (Exec::cmd("sleep").arg("0.5") | Exec::cmd("cat"))
+        .timeout(Duration::from_millis(100))
+        .join();
+    assert_eq!(result.unwrap_err().kind(), ErrorKind::TimedOut);
+}
+
+#[test]
+fn exec_start_stdin_write() {
+    let mut handle = Exec::cmd("cat")
+        .stdin(Redirection::Pipe)
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap();
+    handle
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"hello world")
+        .unwrap();
+    handle.stdin.take(); // close stdin to let cat finish
+    let output = io::read_to_string(handle.stdout.take().unwrap()).unwrap();
+    assert_eq!(output, "hello world");
+}
+
+#[test]
+fn exec_start_stderr() {
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "echo err-output >&2"])
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let stderr = io::read_to_string(handle.stderr.take().unwrap()).unwrap();
+    assert_eq!(stderr.trim(), "err-output");
+}
+
+#[test]
+fn exec_start_join() {
+    let status = Exec::cmd("true").start().unwrap().join().unwrap();
+    assert!(status.success());
+
+    let status = Exec::cmd("false").start().unwrap().join().unwrap();
+    assert!(!status.success());
+}
+
+#[test]
+fn exec_start_stdin_data_capture() {
+    // stdin_data set via .stdin("data") is moved into Started and correctly
+    // fed through communicate in the capture path.
+    let c = Exec::cmd("cat")
+        .stdin("hello from stdin_data")
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap()
+        .capture()
+        .unwrap();
+    assert_eq!(c.stdout_str(), "hello from stdin_data");
+}
+
+#[test]
+fn pipeline_start_join() {
+    let status = { Exec::cmd("echo").arg("hi") | Exec::cmd("cat") }
+        .start()
+        .unwrap()
+        .join()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn pipeline_start_stdin_write() {
+    let mut handle = { Exec::cmd("cat") | Exec::cmd("cat") }
+        .stdin(Redirection::Pipe)
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap();
+    handle
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"piped data")
+        .unwrap();
+    handle.stdin.take(); // close stdin
+    let output = io::read_to_string(handle.stdout.take().unwrap()).unwrap();
+    assert_eq!(output, "piped data");
+}
+
+#[test]
+fn pipeline_start_stdin_data_capture() {
+    // stdin_data flows through pipeline's start+capture path.
+    let c = { Exec::cmd("cat") | Exec::cmd("cat") }
+        .stdin("hello from pipeline")
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap()
+        .capture()
+        .unwrap();
+    assert_eq!(c.stdout_str(), "hello from pipeline");
+}
