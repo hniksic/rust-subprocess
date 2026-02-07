@@ -304,8 +304,7 @@ fn reject_input_data_popen() {
 }
 
 #[test]
-#[should_panic]
-fn reject_input_data_join() {
+fn join_with_input_data() {
     Exec::cmd("true").stdin("xxx").join().unwrap();
 }
 

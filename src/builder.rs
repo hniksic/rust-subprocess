@@ -328,6 +328,11 @@ mod exec {
         /// Prefer [`start`](Self::start) for access to the running process and its
         /// pipes, or higher-level terminators like [`join`](Self::join),
         /// [`capture`](Self::capture), and [`communicate`](Self::communicate).
+        ///
+        /// # Panics
+        ///
+        /// Panics if input data was specified with [`stdin`](Self::stdin).  Use
+        /// [`start`](Self::start) or a higher-level terminator instead.
         pub fn popen(self) -> io::Result<Popen> {
             self.check_no_stdin_data("popen");
             let mut args = self.args;
@@ -337,10 +342,15 @@ mod exec {
 
         /// Starts the process, waits for it to finish, and returns the exit status.
         ///
-        /// This method will wait for as long as necessary for the process to finish.  If a
-        /// timeout is needed, use `<...>.detached().popen()?.wait_timeout(...)` instead.
+        /// This method will wait for as long as necessary for the process to finish.
+        /// Use [`timeout`](Self::timeout) to limit the wait time; if the process
+        /// doesn't finish in time, an error of kind `ErrorKind::TimedOut` is returned.
+        ///
+        /// Note: on timeout, dropping the subprocess will still wait for it to
+        /// exit. If the process might not exit on its own after its pipes are
+        /// closed, also use [`detached`](Self::detached) to prevent the drop
+        /// from blocking.
         pub fn join(self) -> io::Result<ExitStatus> {
-            self.check_no_stdin_data("join");
             self.start()?.join()
         }
 
@@ -368,6 +378,12 @@ mod exec {
         ///
         /// When the trait object is dropped, it will wait for the process to finish.  If this
         /// is undesirable, use `detached()`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if input data was specified with [`stdin`](Self::stdin).  Use
+        /// [`capture`](Self::capture) or [`communicate`](Self::communicate) to both
+        /// feed input and read output.
         pub fn stream_stdout(self) -> io::Result<impl Read> {
             self.check_no_stdin_data("stream_stdout");
             Ok(ReadAdapter(self.stdout(Redirection::Pipe).start()?))
@@ -381,6 +397,12 @@ mod exec {
         ///
         /// When the trait object is dropped, it will wait for the process to finish.  If this
         /// is undesirable, use `detached()`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if input data was specified with [`stdin`](Self::stdin).  Use
+        /// [`capture`](Self::capture) or [`communicate`](Self::communicate) to both
+        /// feed input and read output.
         pub fn stream_stderr(self) -> io::Result<impl Read> {
             self.check_no_stdin_data("stream_stderr");
             Ok(ReadErrAdapter(self.stderr(Redirection::Pipe).start()?))
@@ -394,6 +416,10 @@ mod exec {
         ///
         /// When the trait object is dropped, it will wait for the process to finish.  If this
         /// is undesirable, use `detached()`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if input data was specified with [`stdin`](Self::stdin).
         pub fn stream_stdin(self) -> io::Result<impl Write> {
             self.check_no_stdin_data("stream_stdin");
             Ok(WriteAdapter(self.stdin(Redirection::Pipe).start()?))
@@ -574,13 +600,12 @@ mod exec {
         /// If `timeout` was set, returns an error of kind `ErrorKind::TimedOut` if the
         /// process does not finish in time.
         pub fn join(mut self) -> io::Result<ExitStatus> {
-            self.stdin.take();
-            self.stdout.take();
-            self.stderr.take();
+            let deadline = self.timeout.map(|t| Instant::now() + t);
+            self.communicate().read()?;
             let last = self.started.last_mut().unwrap();
-            match self.timeout {
-                Some(t) => last
-                    .wait_timeout(t)?
+            match deadline {
+                Some(d) => last
+                    .wait_timeout(d.saturating_duration_since(Instant::now()))?
                     .ok_or(io::Error::from(ErrorKind::TimedOut)),
                 None => last.wait(),
             }
@@ -1133,10 +1158,19 @@ mod pipeline {
             })
         }
 
-        /// Starts the pipeline, waits for it to finish, and returns the exit status of
-        /// the last command.
+        /// Starts the pipeline, waits for it to finish, and returns the exit status
+        /// of the last command.
+        ///
+        /// This method will wait for as long as necessary for the pipeline to
+        /// finish. Use [`timeout`](Self::timeout) to limit the wait time; if the
+        /// pipeline doesn't finish in time, an error of kind `ErrorKind::TimedOut`
+        /// is returned.
+        ///
+        /// Note: on timeout, dropping the subprocesses will still wait for them
+        /// to exit. If the processes might not exit on their own after their
+        /// pipes are closed, also use [`detached`](Self::detached) to prevent
+        /// the drop from blocking.
         pub fn join(self) -> io::Result<ExitStatus> {
-            self.check_no_stdin_data("join");
             self.start()?.join()
         }
 
@@ -1148,6 +1182,12 @@ mod pipeline {
         ///
         /// When the trait object is dropped, it will wait for the pipeline to finish.  If
         /// this is undesirable, use `detached()`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if input data was specified with [`stdin`](Self::stdin).  Use
+        /// [`capture`](Self::capture) or [`communicate`](Self::communicate) to both
+        /// feed input and read output.
         pub fn stream_stdout(self) -> io::Result<impl Read> {
             self.check_no_stdin_data("stream_stdout");
             let handle = self.stdout(Redirection::Pipe).start()?;
@@ -1162,6 +1202,10 @@ mod pipeline {
         ///
         /// When the trait object is dropped, it will wait for the process to finish.  If this
         /// is undesirable, use `detached()`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if input data was specified with [`stdin`](Self::stdin).
         pub fn stream_stdin(self) -> io::Result<impl Write> {
             self.check_no_stdin_data("stream_stdin");
             let handle = self.stdin(Redirection::Pipe).start()?;
