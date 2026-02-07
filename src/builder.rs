@@ -270,9 +270,9 @@ mod exec {
         ///
         /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-        /// * a `Vec<u8>` or `&str`, which will set up a `Redirection::Pipe` for stdin,
-        ///   making sure that `capture` feeds that data into the standard input of the
-        ///   subprocess.
+        /// * a `Vec<u8>`, `&str`, or `&[u8]`, which will set up a `Redirection::Pipe`
+        ///   for stdin, making sure that `capture` feeds that data into the standard
+        ///   input of the subprocess.
         ///
         /// [`Redirection`]: enum.Redirection.html
         pub fn stdin(mut self, stdin: impl InputRedirection) -> Exec {
@@ -784,6 +784,20 @@ mod exec {
         }
     }
 
+    impl sealed::InputRedirectionSealed for &[u8] {}
+    impl InputRedirection for &[u8] {
+        fn into_input_redirection(self) -> InputRedirectionKind {
+            InputRedirectionKind::FeedData(self.to_vec())
+        }
+    }
+
+    impl<const N: usize> sealed::InputRedirectionSealed for &[u8; N] {}
+    impl<const N: usize> InputRedirection for &[u8; N] {
+        fn into_input_redirection(self) -> InputRedirectionKind {
+            InputRedirectionKind::FeedData(self.to_vec())
+        }
+    }
+
     impl sealed::OutputRedirectionSealed for Redirection {}
     impl OutputRedirection for Redirection {
         fn into_output_redirection(self) -> Redirection {
@@ -1025,9 +1039,9 @@ mod pipeline {
         ///
         /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-        /// * a `Vec<u8>` or `&str`, which will set up a `Redirection::Pipe` for stdin,
-        ///   making sure that `capture` feeds that data into the standard input of the
-        ///   subprocess.
+        /// * a `Vec<u8>`, `&str`, or `&[u8]`, which will set up a `Redirection::Pipe`
+        ///   for stdin, making sure that `capture` feeds that data into the standard
+        ///   input of the subprocess.
         ///
         /// [`Redirection`]: enum.Redirection.html
         pub fn stdin(mut self, stdin: impl InputRedirection) -> Pipeline {

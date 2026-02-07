@@ -96,6 +96,14 @@ fn capture_out_with_input_data2() {
 }
 
 #[test]
+fn capture_out_with_input_data_bytes() {
+    let c = Exec::cmd("cat").stdin(b"foo" as &[u8]).capture().unwrap();
+    assert_eq!(c.stdout_str(), "foo");
+    let c = Exec::cmd("cat").stdin(b"bar").capture().unwrap();
+    assert_eq!(c.stdout_str(), "bar");
+}
+
+#[test]
 fn exec_shell() {
     let stream = Exec::shell("printf foo").stream_stdout().unwrap();
     assert_eq!(io::read_to_string(stream).unwrap(), "foo");
