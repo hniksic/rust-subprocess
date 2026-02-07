@@ -443,6 +443,17 @@ fn capture_timeout() {
 }
 
 #[test]
+fn pipeline_capture_timeout() {
+    match (Exec::cmd("sleep").arg("0.5") | Exec::cmd("cat"))
+        .capture_timeout(Duration::from_millis(100))
+        .capture()
+    {
+        Ok(_) => panic!("expected timeout return"),
+        Err(e) => assert_eq!(e.kind(), ErrorKind::TimedOut),
+    }
+}
+
+#[test]
 fn pipeline_stderr_all_merge() {
     // stderr_all(Merge) redirects each command's stderr to its stdout,
     // so stderr output flows through the pipeline into captured stdout.

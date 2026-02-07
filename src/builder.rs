@@ -785,9 +785,10 @@ mod exec {
 mod pipeline {
     use std::fmt;
     use std::fs::File;
-    use std::io::{self, Read, Write};
+    use std::io::{self, ErrorKind, Read, Write};
     use std::ops::BitOr;
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     use crate::communicate::Communicator;
     use crate::popen::ExitStatus;
@@ -841,6 +842,7 @@ mod pipeline {
         stdout: Redirection,
         stderr: Redirection,
         stdin_data: Option<Vec<u8>>,
+        capture_timeout: Option<Duration>,
     }
 
     impl Pipeline {
@@ -871,6 +873,7 @@ mod pipeline {
                 stdout: Redirection::None,
                 stderr: Redirection::None,
                 stdin_data: None,
+                capture_timeout: None,
             }
         }
 
@@ -942,6 +945,16 @@ mod pipeline {
         /// [`Redirection`]: enum.Redirection.html
         pub fn stderr_all(mut self, stderr: impl OutputRedirection) -> Pipeline {
             self.stderr = stderr.into_output_redirection();
+            self
+        }
+
+        /// Set the timeout for `capture()` and `communicate()`.
+        ///
+        /// If set, `capture()` will return an error of kind `ErrorKind::TimedOut` if the
+        /// pipeline does not finish within the given duration.  For `communicate()`, the
+        /// timeout is forwarded to the returned `Communicator`.
+        pub fn capture_timeout(mut self, time: Duration) -> Pipeline {
+            self.capture_timeout = Some(time);
             self
         }
 
@@ -1083,15 +1096,19 @@ mod pipeline {
             };
 
             let stdin_data = self.stdin_data.take();
+            let timeout = self.capture_timeout;
             let mut v = self.stdout(Redirection::Pipe).popen()?;
             let vlen = v.len();
 
-            let comm = Communicator::new(
+            let mut comm = Communicator::new(
                 v[0].stdin.take(),
                 v[vlen - 1].stdout.take(),
                 err_read,
                 stdin_data.unwrap_or_default(),
             );
+            if let Some(t) = timeout {
+                comm = comm.limit_time(t);
+            }
             Ok((comm, v))
         }
 
@@ -1117,16 +1134,21 @@ mod pipeline {
         /// This method actually waits for the processes to finish, rather than simply
         /// waiting for the output to close.  If this is undesirable, use `detached()`.
         pub fn capture(self) -> io::Result<Capture> {
+            let deadline = self.capture_timeout.map(|t| Instant::now() + t);
             let (mut comm, mut v) = self.setup_communicate()?;
             let (stdout, stderr) = comm.read()?;
 
             let vlen = v.len();
-            let status = v[vlen - 1].wait()?;
-
+            let remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
             Ok(Capture {
                 stdout,
                 stderr,
-                exit_status: status,
+                exit_status: match remaining {
+                    Some(t) => v[vlen - 1]
+                        .wait_timeout(t)?
+                        .ok_or(io::Error::from(ErrorKind::TimedOut))?,
+                    None => v[vlen - 1].wait()?,
+                },
             })
         }
     }
@@ -1148,6 +1170,7 @@ mod pipeline {
                 stdout: self.stdout.try_clone()?,
                 stderr: self.stderr.try_clone()?,
                 stdin_data: self.stdin_data.clone(),
+                capture_timeout: self.capture_timeout,
             })
         }
     }
@@ -1246,6 +1269,7 @@ mod pipeline {
                 stdout: Redirection::None,
                 stderr: Redirection::None,
                 stdin_data: None,
+                capture_timeout: None,
             }
         }
     }
