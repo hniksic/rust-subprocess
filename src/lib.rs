@@ -1,15 +1,15 @@
 //! Execution of and interaction with external processes and pipelines.
 //!
-//! The entry points to the crate are the [`Popen`] struct and the [`Exec`] builder.  `Popen`
-//! is the interface to a running child process, inspired by Python's [`subprocess.Popen`].
-//! `Exec` provides a builder-pattern API with convenient methods for streaming and capturing
-//! of output, as well as combining `Popen` instances into pipelines.
+//! The main entry points to the crate are the [`Exec`] and [`Pipeline`] builders.
+//! They provide a builder-pattern API with convenient methods for streaming and capturing
+//! of output, as well as combining commands into pipelines.
 //!
 //! Compared to `std::process`, the crate provides these additional features:
 //!
-//! * The *communicate* [family of methods](Popen::communicate) for deadlock-free
-//!   capturing of subprocess output/error, while simultaneously feeding data to its standard
-//!   input.  Capturing supports optional timeout and read size limit.
+//! * The *capture* and *communicate* [family of methods](Exec::communicate) for
+//!   deadlock-free capturing of subprocess output/error, while simultaneously feeding
+//!   data to its standard input.  Capturing supports optional timeout and read size
+//!   limit.
 //!
 //! * Connecting multiple commands into OS-level [pipelines](Pipeline).
 //!
@@ -55,8 +55,6 @@
 //! # Ok(())
 //! # }
 //! ```
-//!
-//! [`subprocess.Popen`]: https://docs.python.org/3/library/subprocess.html#subprocess.Popen
 
 #![warn(missing_debug_implementations, missing_docs)]
 #![allow(clippy::type_complexity)]

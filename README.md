@@ -25,13 +25,17 @@ library is fine for simple use cases, but it doesn't cover common scenarios such
 * **Shell-style pipelines** - `subprocess` lets you create pipelines using the `|` operator:
   `Exec::cmd("find") | Exec::cmd("grep") | Exec::cmd("wc")`.
 
-* **Merging stdout and stderr** - shell-style `2>&1` redirection is directly supported with
+* **Flexible redirections** - shell-style `2>&1` is supported with
   [`Redirection::Merge`](https://docs.rs/subprocess/latest/subprocess/enum.Redirection.html#variant.Merge),
-  which has no equivalent in `std::process::Stdio`.
+  and `>/dev/null` with
+  [`Redirection::Null`](https://docs.rs/subprocess/latest/subprocess/enum.Redirection.html#variant.Null).
 
 * **Waiting with a timeout** - `std::process::Child` offers either blocking `wait()` or
-  non-blocking `try_wait()`, but nothing in-between.  `subprocess` provides
-  [`wait_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Popen.html#method.wait_timeout).
+  non-blocking `try_wait()`, but nothing in-between.  `subprocess` provides timeout
+  variants of its methods, such as
+  [`join_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Started.html#method.join_timeout)
+  and
+  [`capture_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Started.html#method.capture_timeout).
 
 * **Sending signals** (Unix) - `std::process::Child::kill()` only sends `SIGKILL`.
   `subprocess` lets you [send any
@@ -50,7 +54,7 @@ library is fine for simple use cases, but it doesn't cover common scenarios such
 | Need | std::process | subprocess |
 |------|-------------|------------|
 | Wait with timeout | Loop with `try_wait()` + sleep | `wait_timeout(duration)` |
-| Write stdin while reading stdout | Manual threading or async | `communicate()` handles it |
+| Write stdin while reading stdout | Manual threading or async | `capture()` handles it |
 | Pipelines | Manual pipe setup | `cmd1 \| cmd2 \| cmd3` |
 | Merge stderr into stdout | Not supported | `Redirection::Merge` |
 | Send SIGTERM (Unix) | Only `kill()` (SIGKILL) | `send_signal(SIGTERM)` |
@@ -58,17 +62,18 @@ library is fine for simple use cases, but it doesn't cover common scenarios such
 
 ## API Overview
 
-The API has two levels:
+The API has two layers:
 
-* **High-level:** The
-  [`Exec`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html) builder provides a
-  convenient interface for spawning processes and pipelines, with methods like `join()`,
-  `capture()`, `stream_stdout()`, etc.
+* **[`Exec`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html) /
+  [`Pipeline`](https://docs.rs/subprocess/latest/subprocess/struct.Pipeline.html)** -
+  builder-pattern API for configuring processes and pipelines.  Convenience methods like
+  `join()` and `capture()` configure, start, and collect results in one call.
 
-* **Low-level:** The
-  [`Popen`](https://docs.rs/subprocess/latest/subprocess/struct.Popen.html) struct offers
-  direct control over the process lifecycle.  `Exec` creates `Popen` instances which can then
-  be manipulated directly.
+* **[`Started`](https://docs.rs/subprocess/latest/subprocess/struct.Started.html)** - handle
+  for a running process or pipeline, returned by `start()`.  Provides timeout-aware methods
+  like `join_timeout()` and `capture_timeout()`, as well as `communicate()`.
+  [`Capture`](https://docs.rs/subprocess/latest/subprocess/struct.Capture.html) is
+  returned by `capture()` and holds the collected stdout, stderr, and exit status. 
 
 ## Examples
 
@@ -80,8 +85,8 @@ Execute a command and wait for it to complete:
 Exec::cmd("umount").arg(dirname).checked().join()?;
 ```
 
-`join()` starts the command and waits for it to finish. `checked()` ensures error in case
-of non-zero exit status, analogous to reqwest's `error_for_status()`.
+`join()` starts the command and waits for it to finish, returning the exit
+status. `checked()` ensures error is returned for non-zero exit status.
 
 To prevent quoting issues and shell injection attacks, `subprocess` doesn't spawn a shell
 unless explicitly requested.  To execute a command through the OS shell, use
@@ -96,13 +101,13 @@ Exec::shell("shutdown -h now").join()?;
 Capture the stdout and stderr of a command, and print the stdout:
 
 ```rust
-let out = Exec::cmd("ls").stdout(Redirection::Pipe).capture()?.stdout_str();
+let rustver = Exec::shell("rustc --version").capture()?.stdout_str();
 ```
 
-Capture both stdout and stderr merged together:
+Capture stdout and stderr merged together:
 
 ```rust
-let out_and_err = Exec::cmd("ls")
+let out_and_err = Exec::cmd("cargo").arg("check")
   .stderr(Redirection::Merge)  // 2>&1
   .capture()?
   .stdout_str();
@@ -110,14 +115,15 @@ let out_and_err = Exec::cmd("ls")
 
 ### Feeding input
 
-Provide input data and capture output:
+`capture()` can simultaneously feed data to stdin and read stdout/stderr, avoiding the
+deadlock that would result from doing these sequentially:
 
 ```rust
-let out = Exec::cmd("sort")
-  .stdin("b\nc\na\n")
-  .capture()?
-  .stdout_str();
-assert_eq!(out, "a\nb\nc\n");
+let lines = Exec::cmd("sqlite3")
+    .arg(db_path)
+    .stdin("SELECT name FROM users WHERE active = 1;")
+    .capture()?
+    .stdout_str();
 ```
 
 ### Streaming
@@ -134,19 +140,36 @@ let stream = Exec::cmd("find").arg("/").stream_stdout()?;
 Create pipelines using the `|` operator:
 
 ```rust
-let pipeline = Exec::shell("ls *.bak") | Exec::cmd("xargs").arg("rm");
-let exit_status = pipeline.join()?;
+let dir_checksum = (Exec::shell("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum"))
+    .capture()?
+    .stdout_str();
 ```
 
-Capture the output of a pipeline:
+Pipeline supports the same methods for interacting with the subprocess as with a single
+started command.
+
+### Timeouts
+
+Capture with timeout:
 
 ```rust
-let dir_checksum = {
-    Exec::shell("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
-}.capture()?.stdout_str();
+let response = Exec::cmd("curl").arg("-s").arg(url)
+    .start()?
+    .capture_timeout(Duration::from_secs(10))?
+    .stdout_str();
 ```
 
-### Waiting with timeout
+`communicate()` can be used for more sophisticated control over timeouts, such as reading
+with a time or size limit:
+
+```rust
+let mut comm = Exec::cmd("ping").arg("example.com").detached().communicate()?;
+let (out, _) = comm
+    .limit_time(Duration::from_secs(5))
+    .read_string()?;
+```
+
+### Termination
 
 Give the process some time to run, then terminate if needed:
 
@@ -159,64 +182,6 @@ match started.wait_timeout(Duration::from_secs(1)) {
         started.wait()?;
     }
     Err(e) => return Err(e),
-}
-```
-
-### Communicating with deadlock prevention
-
-When you need to pipe some (or a lot of) data to stdin and read stdout/stderr:
-
-```rust
-// communicate() handles the write/read interleaving to avoid deadlock
-let mut comm = Exec::cmd("cat").stdin("hello world").communicate()?;
-let (out, _err) = comm.read_string()?;
-assert_eq!(out, "hello world");
-```
-
-With a timeout:
-
-```rust
-let mut comm = Exec::cmd("slow-program")
-    .stdin("input")
-    .communicate()?;
-match comm.limit_time(Duration::from_secs(5)).read_string() {
-    Ok((stdout, stderr)) => println!("got: {:?}", stdout),
-    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => println!("timed out"),
-    Err(e) => return Err(e.into()),
-}
-```
-
-### Sending signals (Unix)
-
-Send a signal other than SIGKILL:
-
-```rust
-use subprocess::unix::PopenExt;
-
-let mut p = Exec::cmd("sleep").arg("100").popen()?;
-p.send_signal(libc::SIGTERM)?;  // graceful termination
-p.wait()?;
-```
-
-### Low-level Popen interface
-
-For full control over the process lifecycle:
-
-```rust
-let mut p = Popen::create(&["command", "arg1", "arg2"], PopenConfig {
-    stdout: Redirection::Pipe,
-    ..Default::default()
-})?;
-
-// Read stdout directly
-let (out, err) = p.communicate([])?.read_string()?;
-
-// Check if still running
-if let Some(exit_status) = p.poll() {
-    println!("finished: {:?}", exit_status);
-} else {
-    println!("still running, terminating");
-    p.terminate()?;
 }
 ```
 

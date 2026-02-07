@@ -71,10 +71,7 @@ use os::*;
 /// ```
 /// # use subprocess::*;
 /// # fn dummy() -> std::io::Result<()> {
-/// let out = Exec::cmd("ls")
-///   .stdout(Redirection::Pipe)
-///   .capture()?
-///   .stdout_str();
+/// let out = Exec::cmd("ls").capture()?.stdout_str();
 /// # Ok(())
 /// # }
 /// ```
@@ -85,7 +82,6 @@ use os::*;
 /// # use subprocess::*;
 /// # fn dummy() -> std::io::Result<()> {
 /// let out_and_err = Exec::cmd("ls")
-///   .stdout(Redirection::Pipe)
 ///   .stderr(Redirection::Merge)
 ///   .capture()?
 ///   .stdout_str();
@@ -100,7 +96,6 @@ use os::*;
 /// # fn dummy() -> std::io::Result<()> {
 /// let out = Exec::cmd("sort")
 ///   .stdin("b\nc\na\n")
-///   .stdout(Redirection::Pipe)
 ///   .capture()?
 ///   .stdout_str();
 /// assert!(out == "a\nb\nc\n");
