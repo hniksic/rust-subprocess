@@ -102,13 +102,45 @@ fn exec_shell() {
 }
 
 #[test]
-fn pipeline_open() {
-    let mut processes = { Exec::cmd("echo").arg("foo\nbar") | Exec::cmd("wc").arg("-l") }
+fn exec_start() {
+    let mut handle = Exec::cmd("echo")
+        .arg("hello")
         .stdout(Redirection::Pipe)
-        .popen()
+        .start()
         .unwrap();
-    let (output, _) = processes[1].communicate([]).unwrap().read_string().unwrap();
+    let output = io::read_to_string(handle.stdout.take().unwrap()).unwrap();
+    assert!(output.contains("hello"));
+}
+
+#[test]
+fn exec_start_capture() {
+    let c = Exec::cmd("echo")
+        .arg("hello")
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap()
+        .capture()
+        .unwrap();
+    assert!(c.stdout_str().contains("hello"));
+}
+
+#[test]
+fn pipeline_start() {
+    let mut handle = { Exec::cmd("echo").arg("foo\nbar") | Exec::cmd("wc").arg("-l") }
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let output = io::read_to_string(handle.stdout.take().unwrap()).unwrap();
     assert_eq!(output.trim(), "2");
+}
+
+#[test]
+fn pipeline_start_popens_accessible() {
+    let mut handle = { Exec::cmd("echo").arg("foo") | Exec::cmd("cat") }
+        .start()
+        .unwrap();
+    let status = handle.started.last_mut().unwrap().wait().unwrap();
+    assert!(status.success());
 }
 
 #[test]
@@ -520,10 +552,20 @@ fn pipeline_stderr_all_pipe_capture() {
 }
 
 #[test]
-fn pipeline_stderr_all_pipe_popen_errors() {
-    // Pipe without capture/communicate is not supported.
-    let result = (Exec::cmd("true") | Exec::cmd("true"))
-        .stderr_all(Redirection::Pipe)
-        .popen();
-    assert_eq!(result.unwrap_err().kind(), ErrorKind::InvalidInput);
+fn pipeline_stderr_all_pipe_start() {
+    // stderr(Pipe) with start() provides the shared stderr read end.
+    let mut handle = {
+        Exec::cmd("sh").arg("-c").arg("echo err1 >&2; echo out1")
+            | Exec::cmd("sh").arg("-c").arg("cat; echo err2 >&2")
+    }
+    .stdout(Redirection::Pipe)
+    .stderr_all(Redirection::Pipe)
+    .start()
+    .unwrap();
+
+    let stdout = io::read_to_string(handle.stdout.take().unwrap()).unwrap();
+    let stderr = io::read_to_string(handle.stderr.take().unwrap()).unwrap();
+    assert!(stdout.contains("out1"), "stdout: {:?}", stdout);
+    assert!(stderr.contains("err1"), "stderr: {:?}", stderr);
+    assert!(stderr.contains("err2"), "stderr: {:?}", stderr);
 }

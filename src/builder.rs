@@ -12,7 +12,7 @@ mod os {
 pub use exec::unix::ExecExt;
 #[cfg(windows)]
 pub use exec::windows::ExecExt;
-pub use exec::{Capture, Exec, InputRedirection, OutputRedirection};
+pub use exec::{Capture, Exec, InputRedirection, OutputRedirection, Started};
 pub use pipeline::Pipeline;
 
 /// Windows-specific process creation constants and extensions.
@@ -336,12 +336,16 @@ mod exec {
 
         // Terminators
 
-        /// Starts the process, returning a `Popen` for the running process.
-        pub fn popen(mut self) -> io::Result<Popen> {
+        /// Starts the process and returns the low-level `Popen` handle.
+        ///
+        /// Prefer [`start`](Self::start) for access to the running process and its
+        /// pipes, or higher-level terminators like [`join`](Self::join),
+        /// [`capture`](Self::capture), and [`communicate`](Self::communicate).
+        pub fn popen(self) -> io::Result<Popen> {
             self.check_no_stdin_data("popen");
-            self.args.insert(0, self.command);
-            let p = Popen::create(&self.args, self.config)?;
-            Ok(p)
+            let mut args = self.args;
+            args.insert(0, self.command);
+            Popen::create(&args, self.config)
         }
 
         /// Starts the process, waits for it to finish, and returns the exit status.
@@ -350,7 +354,23 @@ mod exec {
         /// timeout is needed, use `<...>.detached().popen()?.wait_timeout(...)` instead.
         pub fn join(self) -> io::Result<ExitStatus> {
             self.check_no_stdin_data("join");
-            self.popen()?.wait()
+            self.start()?.join()
+        }
+
+        /// Starts the process and returns a `Started` handle with the running process
+        /// and its pipe ends.
+        pub fn start(mut self) -> io::Result<Started> {
+            let stdin_data = self.stdin_data.take().unwrap_or_default();
+            let capture_timeout = self.capture_timeout;
+            let mut p = self.popen()?;
+            Ok(Started {
+                stdin: p.stdin.take(),
+                stdout: p.stdout.take(),
+                stderr: p.stderr.take(),
+                stdin_data,
+                capture_timeout,
+                started: vec![p],
+            })
         }
 
         /// Starts the process and returns a value implementing the `Read` trait that reads from
@@ -363,8 +383,7 @@ mod exec {
         /// is undesirable, use `detached()`.
         pub fn stream_stdout(self) -> io::Result<impl Read> {
             self.check_no_stdin_data("stream_stdout");
-            let p = self.stdout(Redirection::Pipe).popen()?;
-            Ok(ReadOutAdapter(p))
+            Ok(ReadAdapter(self.stdout(Redirection::Pipe).start()?))
         }
 
         /// Starts the process and returns a value implementing the `Read` trait that reads from
@@ -377,8 +396,7 @@ mod exec {
         /// is undesirable, use `detached()`.
         pub fn stream_stderr(self) -> io::Result<impl Read> {
             self.check_no_stdin_data("stream_stderr");
-            let p = self.stderr(Redirection::Pipe).popen()?;
-            Ok(ReadErrAdapter(p))
+            Ok(ReadErrAdapter(self.stderr(Redirection::Pipe).start()?))
         }
 
         /// Starts the process and returns a value implementing the `Write` trait that writes to
@@ -391,30 +409,7 @@ mod exec {
         /// is undesirable, use `detached()`.
         pub fn stream_stdin(self) -> io::Result<impl Write> {
             self.check_no_stdin_data("stream_stdin");
-            let p = self.stdin(Redirection::Pipe).popen()?;
-            Ok(WriteAdapter(p))
-        }
-
-        fn setup_communicate(mut self) -> io::Result<(Communicator<Vec<u8>>, Popen)> {
-            let stdin_data = self.stdin_data.take();
-            let timeout = self.capture_timeout;
-            if let (&Redirection::None, &Redirection::None) =
-                (&self.config.stdout, &self.config.stderr)
-            {
-                self = self.stdout(Redirection::Pipe);
-            }
-            let mut p = self.popen()?;
-
-            let mut comm = Communicator::new(
-                p.stdin.take(),
-                p.stdout.take(),
-                p.stderr.take(),
-                stdin_data.unwrap_or_default(),
-            );
-            if let Some(t) = timeout {
-                comm = comm.limit_time(t);
-            }
-            Ok((comm, p))
+            Ok(WriteAdapter(self.stdin(Redirection::Pipe).start()?))
         }
 
         /// Starts the process and returns a `Communicator` handle.
@@ -425,8 +420,16 @@ mod exec {
         /// Unlike `capture()`, this method doesn't wait for the process to finish,
         /// effectively detaching it.
         pub fn communicate(self) -> io::Result<Communicator<Vec<u8>>> {
-            let comm = self.detached().setup_communicate()?.0;
-            Ok(comm)
+            if let (&Redirection::None, &Redirection::None) =
+                (&self.config.stdout, &self.config.stderr)
+            {
+                return Ok(self
+                    .detached()
+                    .stdout(Redirection::Pipe)
+                    .start()?
+                    .communicate());
+            }
+            Ok(self.detached().start()?.communicate())
         }
 
         /// Starts the process, collects its output, and waits for it to finish.
@@ -437,21 +440,12 @@ mod exec {
         /// This method waits for the process to finish, rather than simply waiting for
         /// its standard streams to close.  If this is undesirable, use `detached()`.
         pub fn capture(self) -> io::Result<Capture> {
-            let deadline = self.capture_timeout.map(|t| Instant::now() + t);
-            let (mut comm, mut p) = self.setup_communicate()?;
-
-            let (stdout, stderr) = comm.read()?;
-            let remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
-            Ok(Capture {
-                stdout,
-                stderr,
-                exit_status: match remaining {
-                    Some(t) => p
-                        .wait_timeout(t)?
-                        .ok_or(io::Error::from(ErrorKind::TimedOut))?,
-                    None => p.wait()?,
-                },
-            })
+            if let (&Redirection::None, &Redirection::None) =
+                (&self.config.stdout, &self.config.stderr)
+            {
+                return self.stdout(Redirection::Pipe).start()?.capture();
+            }
+            self.start()?.capture()
         }
 
         // used for Debug impl
@@ -542,17 +536,102 @@ mod exec {
         }
     }
 
+    /// A started process or pipeline, consisting of running processes and their pipe
+    /// ends.
+    ///
+    /// Created by [`Exec::start`] or [`Pipeline::start`].
     #[derive(Debug)]
-    struct ReadOutAdapter(Popen);
+    pub struct Started {
+        // Pipe fields are declared before `started` so that they are dropped first,
+        // allowing children to receive EOF and exit before `Popen::drop` waits on them.
+        /// Write end of the first process's stdin pipe, if stdin was `Pipe`.
+        pub stdin: Option<File>,
+        /// Read end of the last process's stdout pipe, if stdout was `Pipe`.
+        pub stdout: Option<File>,
+        /// Read end of the shared stderr pipe, if stderr was `Pipe`.
+        pub stderr: Option<File>,
+        /// Data to feed to the first process's stdin, set by [`Exec::stdin`] or
+        /// [`Pipeline::stdin`].
+        pub stdin_data: Vec<u8>,
+        /// Timeout for [`communicate`](Self::communicate) and [`capture`](Self::capture).
+        pub capture_timeout: Option<Duration>,
+        /// Started processes, in pipeline order.
+        pub started: Vec<Popen>,
+    }
 
-    impl Read for ReadOutAdapter {
+    impl Started {
+        /// Creates a [`Communicator`] from the pipe ends.
+        ///
+        /// The communicator takes ownership of `stdin`, `stdout`, and `stderr`, leaving
+        /// them as `None`.  Only streams that were redirected to a pipe will be
+        /// available to the communicator.
+        ///
+        /// If `capture_timeout` was set, the communicator will have a corresponding
+        /// time limit.
+        pub fn communicate(&mut self) -> Communicator<Vec<u8>> {
+            let mut comm = Communicator::new(
+                self.stdin.take(),
+                self.stdout.take(),
+                self.stderr.take(),
+                std::mem::take(&mut self.stdin_data),
+            );
+            if let Some(t) = self.capture_timeout {
+                comm = comm.limit_time(t);
+            }
+            comm
+        }
+
+        /// Closes the pipe ends, waits for the process(es) to finish, and returns the
+        /// exit status of the last process.
+        pub fn join(mut self) -> io::Result<ExitStatus> {
+            self.stdin.take();
+            self.stdout.take();
+            self.stderr.take();
+            self.started.last_mut().unwrap().wait()
+        }
+
+        /// Captures the output and waits for the process(es) to finish.
+        ///
+        /// Only streams that were redirected to a pipe will produce data; non-piped
+        /// streams will result in empty bytes in `Capture`.
+        ///
+        /// If `capture_timeout` was set, both communication and waiting are limited to
+        /// that duration.
+        pub fn capture(mut self) -> io::Result<Capture> {
+            let deadline = self.capture_timeout.map(|t| Instant::now() + t);
+            let (stdout, stderr) = {
+                let mut comm = self.communicate();
+                comm.read()?
+            };
+
+            let remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
+            Ok(Capture {
+                stdout,
+                stderr,
+                exit_status: match remaining {
+                    Some(t) => self
+                        .started
+                        .last_mut()
+                        .unwrap()
+                        .wait_timeout(t)?
+                        .ok_or(io::Error::from(ErrorKind::TimedOut))?,
+                    None => self.started.last_mut().unwrap().wait()?,
+                },
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    pub(super) struct ReadAdapter(pub(super) Started);
+
+    impl Read for ReadAdapter {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             self.0.stdout.as_mut().unwrap().read(buf)
         }
     }
 
     #[derive(Debug)]
-    struct ReadErrAdapter(Popen);
+    pub(super) struct ReadErrAdapter(pub(super) Started);
 
     impl Read for ReadErrAdapter {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -561,7 +640,7 @@ mod exec {
     }
 
     #[derive(Debug)]
-    struct WriteAdapter(Popen);
+    pub(super) struct WriteAdapter(pub(super) Started);
 
     impl Write for WriteAdapter {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -784,17 +863,19 @@ mod exec {
 
 mod pipeline {
     use std::fmt;
-    use std::fs::File;
-    use std::io::{self, ErrorKind, Read, Write};
+    use std::io::{self, Read, Write};
     use std::ops::BitOr;
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use crate::communicate::Communicator;
     use crate::popen::ExitStatus;
     use crate::popen::{Popen, Redirection};
 
-    use super::exec::{Capture, Exec, InputRedirection, InputRedirectionKind, OutputRedirection};
+    use super::exec::{
+        Capture, Exec, InputRedirection, InputRedirectionKind, OutputRedirection, ReadAdapter,
+        Started, WriteAdapter,
+    };
 
     /// A builder for multiple [`Popen`] instances connected via pipes.
     ///
@@ -939,8 +1020,8 @@ mod pipeline {
         /// redirects stderr of the last command.  This method is equivalent to `(cmd1 |
         /// cmd2) 2>file`, but without the overhead of a subshell.
         ///
-        /// If you pass `Redirection::Pipe`, you must use `capture()` or `communicate()`
-        /// to start the pipeline - using `popen()` will result in an error.
+        /// If you pass `Redirection::Pipe`, the shared stderr read end
+        /// will be available via [`Started::stderr`].
         ///
         /// [`Redirection`]: enum.Redirection.html
         pub fn stderr_all(mut self, stderr: impl OutputRedirection) -> Pipeline {
@@ -966,25 +1047,29 @@ mod pipeline {
 
         // Terminators:
 
-        /// Starts all commands in the pipeline, and returns a `Vec<Popen>` whose members
-        /// correspond to running commands.
+        /// Starts all commands in the pipeline and returns a [`Started`] with the
+        /// running processes and their pipe ends.
         ///
-        /// If some command fails to start, the remaining commands will not be started, and
-        /// the appropriate error will be returned.  The commands that have already started
-        /// will be waited to finish (but will probably exit immediately due to missing
-        /// output), except for the ones for which `detached()` was called.  This is
-        /// equivalent to what the shell does.
-        pub fn popen(mut self) -> io::Result<Vec<Popen>> {
-            self.check_no_stdin_data("popen");
+        /// If some command fails to start, the remaining commands will not be started,
+        /// and the appropriate error will be returned.  The commands that have already
+        /// started will be waited to finish (but will probably exit immediately due to
+        /// missing output), except for the ones for which `detached()` was called.  This
+        /// is equivalent to what the shell does.
+        pub fn start(mut self) -> io::Result<Started> {
             assert!(self.execs.len() >= 2);
 
+            let mut err_read_opt = None;
             match self.stderr {
                 Redirection::None => {}
                 Redirection::Pipe => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "use capture() or communicate() to capture stderr from a pipeline",
-                    ));
+                    let (err_read, err_write) = crate::popen::make_pipe()?;
+                    err_read_opt = Some(err_read);
+                    let shared = Arc::new(err_write);
+                    self.execs = self
+                        .execs
+                        .into_iter()
+                        .map(|cmd| cmd.stderr(Redirection::SharedFile(Arc::clone(&shared))))
+                        .collect();
                 }
                 Redirection::Merge => {
                     self.execs = self
@@ -1037,18 +1122,24 @@ mod pipeline {
                 }
                 ret.push(runner.popen()?);
             }
-            Ok(ret)
+
+            let stdin = ret.first_mut().and_then(|p| p.stdin.take());
+            let stdout = ret.last_mut().and_then(|p| p.stdout.take());
+            Ok(Started {
+                stdin,
+                stdout,
+                stderr: err_read_opt,
+                stdin_data: self.stdin_data.unwrap_or_default(),
+                capture_timeout: self.capture_timeout,
+                started: ret,
+            })
         }
 
-        /// Starts the pipeline, waits for it to finish, and returns the exit status of the
-        /// last command.
+        /// Starts the pipeline, waits for it to finish, and returns the exit status of
+        /// the last command.
         pub fn join(self) -> io::Result<ExitStatus> {
             self.check_no_stdin_data("join");
-            let mut v = self.popen()?;
-            // Waiting on a pipeline waits for all commands, but returns the status of the
-            // last one.  This is how the shells do it.  If the caller needs more precise
-            // control over which status is returned, they can call popen().
-            v.last_mut().unwrap().wait()
+            self.start()?.join()
         }
 
         /// Starts the pipeline and returns a value implementing the `Read` trait that reads
@@ -1061,8 +1152,8 @@ mod pipeline {
         /// this is undesirable, use `detached()`.
         pub fn stream_stdout(self) -> io::Result<impl Read> {
             self.check_no_stdin_data("stream_stdout");
-            let v = self.stdout(Redirection::Pipe).popen()?;
-            Ok(ReadPipelineAdapter(v))
+            let handle = self.stdout(Redirection::Pipe).start()?;
+            Ok(ReadAdapter(handle))
         }
 
         /// Starts the pipeline and returns a value implementing the `Write` trait that writes
@@ -1075,85 +1166,54 @@ mod pipeline {
         /// is undesirable, use `detached()`.
         pub fn stream_stdin(self) -> io::Result<impl Write> {
             self.check_no_stdin_data("stream_stdin");
-            let v = self.stdin(Redirection::Pipe).popen()?;
-            Ok(WritePipelineAdapter(v))
-        }
-
-        fn setup_communicate(mut self) -> io::Result<(Communicator<Vec<u8>>, Vec<Popen>)> {
-            assert!(self.execs.len() >= 2);
-
-            // Set up stderr capture based on the user's stderr_all() choice.
-            // None and Pipe both want a pipe for capture (None is the
-            // default/backward-compat case).  Other variants direct stderr
-            // elsewhere, so we don't capture it.
-            let err_read = match self.stderr {
-                Redirection::None | Redirection::Pipe => {
-                    let (err_read, err_write) = crate::popen::make_pipe()?;
-                    self.stderr = Redirection::SharedFile(Arc::new(err_write));
-                    Some(err_read)
-                }
-                _ => None,
-            };
-
-            let stdin_data = self.stdin_data.take();
-            let timeout = self.capture_timeout;
-            let mut v = self.stdout(Redirection::Pipe).popen()?;
-            let vlen = v.len();
-
-            let mut comm = Communicator::new(
-                v[0].stdin.take(),
-                v[vlen - 1].stdout.take(),
-                err_read,
-                stdin_data.unwrap_or_default(),
-            );
-            if let Some(t) = timeout {
-                comm = comm.limit_time(t);
-            }
-            Ok((comm, v))
+            let handle = self.stdin(Redirection::Pipe).start()?;
+            Ok(WriteAdapter(handle))
         }
 
         /// Starts the pipeline and returns a `Communicator` handle.
         ///
-        /// Compared to `capture()`, this offers more choice in how communication is
-        /// performed, such as read size limit and timeout.
+        /// Unless already configured, stdout and stderr are redirected to pipes so they
+        /// can be read from the communicator. If you need different redirection
+        /// (e.g. `stderr_all(Merge)`), set it up before calling this method and it will
+        /// be preserved.
         ///
-        /// Unlike `capture()`, this method doesn't wait for the pipeline to finish,
-        /// effectively detaching it.
+        /// Compared to `capture()`, this offers more choice in how communication is
+        /// performed, such as read size limit and timeout.  Unlike `capture()`, this
+        /// method doesn't wait for the pipeline to finish, effectively detaching it.
         pub fn communicate(mut self) -> io::Result<Communicator<Vec<u8>>> {
             self.execs = self.execs.into_iter().map(|cmd| cmd.detached()).collect();
-            let comm = self.setup_communicate()?.0;
-            Ok(comm)
+            let setup_stdout = matches!(self.stdout, Redirection::None);
+            let setup_stderr = matches!(self.stderr, Redirection::None);
+            if setup_stdout {
+                self = self.stdout(Redirection::Pipe);
+            }
+            if setup_stderr {
+                self = self.stderr_all(Redirection::Pipe);
+            }
+            Ok(self.start()?.communicate())
         }
 
-        /// Starts the pipeline, collects its output, and waits for all commands to finish.
+        /// Starts the pipeline, collects its standard output and error, and waits for all
+        /// commands to finish.
         ///
-        /// The return value provides the standard output of the last command, the combined
-        /// standard error of all commands, and the exit status of the last command.  The
-        /// captured outputs can be accessed as bytes or strings.
+        /// Unless already configured, stdout and stderr are redirected to pipes so they
+        /// can be captured. If you need different redirection (e.g. `stderr_all(Merge)`),
+        /// set it up before calling this method and it will be preserved.
         ///
         /// This method actually waits for the processes to finish, rather than simply
         /// waiting for the output to close.  If this is undesirable, use `detached()`.
-        pub fn capture(self) -> io::Result<Capture> {
-            let deadline = self.capture_timeout.map(|t| Instant::now() + t);
-            let (mut comm, mut v) = self.setup_communicate()?;
-            let (stdout, stderr) = comm.read()?;
-
-            let vlen = v.len();
-            let remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
-            Ok(Capture {
-                stdout,
-                stderr,
-                exit_status: match remaining {
-                    Some(t) => v[vlen - 1]
-                        .wait_timeout(t)?
-                        .ok_or(io::Error::from(ErrorKind::TimedOut))?,
-                    None => v[vlen - 1].wait()?,
-                },
-            })
+        pub fn capture(mut self) -> io::Result<Capture> {
+            let setup_stdout = matches!(self.stdout, Redirection::None);
+            let setup_stderr = matches!(self.stderr, Redirection::None);
+            if setup_stdout {
+                self = self.stdout(Redirection::Pipe);
+            }
+            if setup_stderr {
+                self = self.stderr_all(Redirection::Pipe);
+            }
+            self.start()?.capture()
         }
-    }
 
-    impl Pipeline {
         /// Returns a copy of this `Pipeline`.
         ///
         /// This can fail if a `Redirection::File` is present because duplicating the
@@ -1216,7 +1276,7 @@ mod pipeline {
         }
     }
 
-    impl std::iter::FromIterator<Exec> for Pipeline {
+    impl FromIterator<Exec> for Pipeline {
         /// Creates a pipeline from an iterator of commands.
         ///
         /// # Panics
@@ -1281,35 +1341,6 @@ mod pipeline {
                 args.push(cmd.to_cmdline_lossy());
             }
             write!(f, "Pipeline {{ {} }}", args.join(" | "))
-        }
-    }
-
-    #[derive(Debug)]
-    struct ReadPipelineAdapter(Vec<Popen>);
-
-    impl Read for ReadPipelineAdapter {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            let last = self.0.last_mut().unwrap();
-            last.stdout.as_mut().unwrap().read(buf)
-        }
-    }
-
-    #[derive(Debug)]
-    struct WritePipelineAdapter(Vec<Popen>);
-
-    impl WritePipelineAdapter {
-        fn stdin(&mut self) -> &mut File {
-            let first = self.0.first_mut().unwrap();
-            first.stdin.as_mut().unwrap()
-        }
-    }
-
-    impl Write for WritePipelineAdapter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.stdin().write(buf)
-        }
-        fn flush(&mut self) -> io::Result<()> {
-            self.stdin().flush()
         }
     }
 }
