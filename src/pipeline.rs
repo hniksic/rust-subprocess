@@ -203,7 +203,7 @@ impl Pipeline {
 
     /// If called, [`join`](Self::join) and [`capture`](Self::capture) will return
     /// an error if the last command in the pipeline exits with a non-zero status.
-    pub fn check_success(mut self) -> Pipeline {
+    pub fn checked(mut self) -> Pipeline {
         self.check_success = true;
         self
     }

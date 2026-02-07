@@ -946,55 +946,47 @@ fn pipeline_default() {
 }
 
 #[test]
-fn check_success_join_ok() {
-    Exec::cmd("true").check_success().join().unwrap();
+fn checked_join_ok() {
+    Exec::cmd("true").checked().join().unwrap();
 }
 
 #[test]
-fn check_success_join_fail() {
-    let err = Exec::cmd("false").check_success().join().unwrap_err();
+fn checked_join_fail() {
+    let err = Exec::cmd("false").checked().join().unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Other);
     assert!(err.to_string().contains("command failed"), "{err}");
 }
 
 #[test]
-fn check_success_capture_ok() {
-    let c = Exec::cmd("true").check_success().capture().unwrap();
+fn checked_capture_ok() {
+    let c = Exec::cmd("true").checked().capture().unwrap();
     assert!(c.success());
 }
 
 #[test]
-fn check_success_capture_fail() {
-    let err = Exec::cmd("false").check_success().capture().unwrap_err();
+fn checked_capture_fail() {
+    let err = Exec::cmd("false").checked().capture().unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Other);
     assert!(err.to_string().contains("command failed"), "{err}");
 }
 
 #[test]
-fn ensure_success_ok() {
-    Exec::cmd("true")
-        .capture()
-        .unwrap()
-        .ensure_success()
-        .unwrap();
+fn check_ok() {
+    Exec::cmd("true").capture().unwrap().check().unwrap();
 }
 
 #[test]
-fn ensure_success_fail() {
-    let err = Exec::cmd("false")
-        .capture()
-        .unwrap()
-        .ensure_success()
-        .unwrap_err();
+fn check_fail() {
+    let err = Exec::cmd("false").capture().unwrap().check().unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Other);
     assert!(err.to_string().contains("command failed"), "{err}");
 }
 
 #[test]
-fn pipeline_check_success() {
+fn pipeline_checked() {
     // Last command fails -> error
     let err = (Exec::cmd("true") | Exec::cmd("false"))
-        .check_success()
+        .checked()
         .join()
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Other);
@@ -1002,7 +994,7 @@ fn pipeline_check_success() {
 
     // Last command succeeds -> ok
     (Exec::cmd("false") | Exec::cmd("true"))
-        .check_success()
+        .checked()
         .join()
         .unwrap();
 }

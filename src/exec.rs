@@ -195,7 +195,7 @@ impl Exec {
 
     /// If called, [`join`](Self::join) and [`capture`](Self::capture) will return
     /// an error if the process exits with a non-zero status.
-    pub fn check_success(mut self) -> Exec {
+    pub fn checked(mut self) -> Exec {
         self.check_success = true;
         self
     }
@@ -735,7 +735,7 @@ impl Capture {
     }
 
     /// Returns `self` if the exit status is successful, or an error otherwise.
-    pub fn ensure_success(self) -> io::Result<Self> {
+    pub fn check(self) -> io::Result<Self> {
         if self.success() {
             Ok(self)
         } else {
