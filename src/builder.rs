@@ -895,7 +895,7 @@ mod pipeline {
 
     use super::exec::{
         Capture, Exec, InputRedirection, InputRedirectionKind, OutputRedirection, ReadAdapter,
-        Started, WriteAdapter,
+        ReadErrAdapter, Started, WriteAdapter,
     };
 
     /// A builder for multiple [`Popen`] instances connected via pipes.
@@ -1207,6 +1207,31 @@ mod pipeline {
             self.check_no_stdin_data("stream_stdout");
             let handle = self.stdout(Redirection::Pipe).start()?;
             Ok(ReadAdapter(handle))
+        }
+
+        /// Starts the pipeline and returns a value implementing the `Read` trait that reads
+        /// from the standard error of all commands in the pipeline.
+        ///
+        /// This will automatically set up `stderr_all(Redirection::Pipe)`, so it is not
+        /// necessary to do that beforehand.
+        ///
+        /// Note that this redirects stderr of all commands in the pipeline, not just
+        /// the last one.  This differs from the shell's `cmd1 | cmd2 2>file`, which
+        /// only redirects stderr of the last command.  This method is equivalent to
+        /// `(cmd1 | cmd2) 2>file`, but without the overhead of a subshell.
+        ///
+        /// When the trait object is dropped, it will wait for the pipeline to finish.  If
+        /// this is undesirable, use `detached()`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if input data was specified with [`stdin`](Self::stdin).  Use
+        /// [`capture`](Self::capture) or [`communicate`](Self::communicate) to both
+        /// feed input and read output.
+        pub fn stream_stderr_all(self) -> io::Result<impl Read> {
+            self.check_no_stdin_data("stream_stderr_all");
+            let handle = self.stderr_all(Redirection::Pipe).start()?;
+            Ok(ReadErrAdapter(handle))
         }
 
         /// Starts the pipeline and returns a value implementing the `Write` trait that writes

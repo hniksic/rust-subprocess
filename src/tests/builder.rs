@@ -182,6 +182,14 @@ fn pipeline_stream_in() {
 }
 
 #[test]
+fn pipeline_stream_err() {
+    let stream = { Exec::cmd("sh").args(&["-c", "printf foo >&2"]) | Exec::cmd("true") }
+        .stream_stderr_all()
+        .unwrap();
+    assert_eq!(io::read_to_string(stream).unwrap(), "foo");
+}
+
+#[test]
 fn pipeline_compose_pipelines() {
     let pipe1 = Exec::cmd("echo").arg("foo\nbar\nfoo") | Exec::cmd("sort");
     let pipe2 = Exec::cmd("uniq") | Exec::cmd("wc").arg("-l");
