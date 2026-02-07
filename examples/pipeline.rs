@@ -30,7 +30,9 @@ fn main() -> std::io::Result<()> {
         Exec::cmd("wc").arg("-l"),
     ];
 
-    let line_count = subprocess::Pipeline::from_exec_iter(commands)
+    let line_count = commands
+        .into_iter()
+        .collect::<subprocess::Pipeline>()
         .capture()?
         .stdout_str();
 

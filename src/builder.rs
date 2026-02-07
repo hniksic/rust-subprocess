@@ -441,8 +441,7 @@ mod exec {
             let (mut comm, mut p) = self.setup_communicate()?;
 
             let (stdout, stderr) = comm.read()?;
-            let remaining =
-                deadline.map(|d| d.saturating_duration_since(Instant::now()));
+            let remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
             Ok(Capture {
                 stdout,
                 stderr,
@@ -875,64 +874,6 @@ mod pipeline {
             }
         }
 
-        /// Creates a new pipeline from a list of commands.  Useful if a pipeline should be
-        /// created dynamically.
-        ///
-        /// # Panics
-        ///
-        /// Panics if:
-        /// - The iterator contains fewer than two commands.
-        /// - The first command has stdin redirected.
-        /// - The last command has stdout redirected.
-        ///
-        /// Use `Pipeline::stdin()` and `Pipeline::stdout()` to redirect the pipeline's streams.
-        ///
-        /// # Example
-        ///
-        /// ```no_run
-        /// use subprocess::Exec;
-        ///
-        /// let commands = vec![
-        ///   Exec::shell("echo tset"),
-        ///   Exec::shell("tr '[:lower:]' '[:upper:]'"),
-        ///   Exec::shell("rev")
-        /// ];
-        ///
-        /// let pipeline = subprocess::Pipeline::from_exec_iter(commands);
-        /// let output = pipeline.capture().unwrap().stdout_str();
-        /// assert_eq!(output, "TEST\n");
-        /// ```
-        pub fn from_exec_iter<I>(iterable: I) -> Pipeline
-        where
-            I: IntoIterator<Item = Exec>,
-        {
-            let execs: Vec<_> = iterable.into_iter().collect();
-
-            if execs.len() < 2 {
-                panic!("pipeline requires at least two commands")
-            }
-            if execs.first().unwrap().stdin_is_set() {
-                panic!(
-                    "stdin of the first command is already redirected; \
-                     use Pipeline::stdin() to redirect pipeline input"
-                );
-            }
-            if execs.last().unwrap().stdout_is_set() {
-                panic!(
-                    "stdout of the last command is already redirected; \
-                     use Pipeline::stdout() to redirect pipeline output"
-                );
-            }
-
-            Pipeline {
-                execs,
-                stdin: Redirection::None,
-                stdout: Redirection::None,
-                stderr: Redirection::None,
-                stdin_data: None,
-            }
-        }
-
         /// Specifies how to set up the standard input of the first command in the pipeline.
         ///
         /// Argument can be:
@@ -1249,6 +1190,63 @@ mod pipeline {
             self.execs.extend(rhs.execs);
             self.stdout = rhs.stdout;
             self
+        }
+    }
+
+    impl std::iter::FromIterator<Exec> for Pipeline {
+        /// Creates a pipeline from an iterator of commands.
+        ///
+        /// # Panics
+        ///
+        /// Panics if:
+        /// - The iterator yields fewer than two commands.
+        /// - The first command has stdin redirected.
+        /// - The last command has stdout redirected.
+        ///
+        /// Use `Pipeline::stdin()` and `Pipeline::stdout()` to redirect the pipeline's
+        /// streams.
+        ///
+        /// # Example
+        ///
+        /// ```no_run
+        /// use subprocess::{Exec, Pipeline};
+        ///
+        /// let commands = vec![
+        ///   Exec::shell("echo tset"),
+        ///   Exec::shell("tr '[:lower:]' '[:upper:]'"),
+        ///   Exec::shell("rev")
+        /// ];
+        ///
+        /// let pipeline: Pipeline = commands.into_iter().collect();
+        /// let output = pipeline.capture().unwrap().stdout_str();
+        /// assert_eq!(output, "TEST\n");
+        /// ```
+        fn from_iter<I: IntoIterator<Item = Exec>>(iter: I) -> Self {
+            let execs: Vec<_> = iter.into_iter().collect();
+
+            if execs.len() < 2 {
+                panic!("pipeline requires at least two commands")
+            }
+            if execs.first().unwrap().stdin_is_set() {
+                panic!(
+                    "stdin of the first command is already redirected; \
+                     use Pipeline::stdin() to redirect pipeline input"
+                );
+            }
+            if execs.last().unwrap().stdout_is_set() {
+                panic!(
+                    "stdout of the last command is already redirected; \
+                     use Pipeline::stdout() to redirect pipeline output"
+                );
+            }
+
+            Pipeline {
+                execs,
+                stdin: Redirection::None,
+                stdout: Redirection::None,
+                stderr: Redirection::None,
+                stdin_data: None,
+            }
         }
     }
 
