@@ -463,7 +463,7 @@ fn pipeline_to_string() {
 fn capture_timeout() {
     match Exec::cmd("sleep")
         .args(&["0.5"])
-        .capture_timeout(Duration::from_millis(100))
+        .timeout(Duration::from_millis(100))
         .capture()
     {
         Ok(_) => panic!("expected timeout return"),
@@ -477,7 +477,7 @@ fn capture_timeout() {
 #[test]
 fn pipeline_capture_timeout() {
     match (Exec::cmd("sleep").arg("0.5") | Exec::cmd("cat"))
-        .capture_timeout(Duration::from_millis(100))
+        .timeout(Duration::from_millis(100))
         .capture()
     {
         Ok(_) => panic!("expected timeout return"),

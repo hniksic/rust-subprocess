@@ -128,7 +128,7 @@ mod exec {
     pub struct Exec {
         command: OsString,
         args: Vec<OsString>,
-        capture_timeout: Option<Duration>,
+        timeout: Option<Duration>,
         config: PopenConfig,
         stdin_data: Option<Vec<u8>>,
     }
@@ -147,7 +147,7 @@ mod exec {
             Exec {
                 command: command.as_ref().to_owned(),
                 args: vec![],
-                capture_timeout: None,
+                timeout: None,
                 config: PopenConfig::default(),
                 stdin_data: None,
             }
@@ -193,13 +193,15 @@ mod exec {
             self
         }
 
-        /// Set the timeout for `capture()` and `communicate()`.
+        /// Set the timeout for waiting on the process.
         ///
-        /// If set, `capture()` will return an error of kind `ErrorKind::TimedOut` if the
-        /// subprocess does not finish within the given duration.  For `communicate()`,
-        /// the timeout is forwarded to the returned `Communicator`.
-        pub fn capture_timeout(mut self, time: Duration) -> Exec {
-            self.capture_timeout = Some(time);
+        /// This affects [`join`](Self::join), [`capture`](Self::capture), and
+        /// [`communicate`](Self::communicate).  `join` and `capture` will return an
+        /// error of kind `ErrorKind::TimedOut` if the subprocess does not finish within
+        /// the given duration.  For `communicate`, the timeout is forwarded to the
+        /// returned `Communicator`.
+        pub fn timeout(mut self, time: Duration) -> Exec {
+            self.timeout = Some(time);
             self
         }
 
@@ -361,14 +363,14 @@ mod exec {
         /// and its pipe ends.
         pub fn start(mut self) -> io::Result<Started> {
             let stdin_data = self.stdin_data.take().unwrap_or_default();
-            let capture_timeout = self.capture_timeout;
+            let timeout = self.timeout;
             let mut p = self.popen()?;
             Ok(Started {
                 stdin: p.stdin.take(),
                 stdout: p.stdout.take(),
                 stderr: p.stderr.take(),
                 stdin_data,
-                capture_timeout,
+                timeout,
                 started: vec![p],
             })
         }
@@ -514,7 +516,7 @@ mod exec {
             Ok(Exec {
                 command: self.command.clone(),
                 args: self.args.clone(),
-                capture_timeout: self.capture_timeout,
+                timeout: self.timeout,
                 config: self.config.try_clone()?,
                 stdin_data: self.stdin_data.clone(),
             })
@@ -553,8 +555,9 @@ mod exec {
         /// Data to feed to the first process's stdin, set by [`Exec::stdin`] or
         /// [`Pipeline::stdin`].
         pub stdin_data: Vec<u8>,
-        /// Timeout for [`communicate`](Self::communicate) and [`capture`](Self::capture).
-        pub capture_timeout: Option<Duration>,
+        /// Timeout for [`join`](Self::join), [`capture`](Self::capture), and
+        /// [`communicate`](Self::communicate).
+        pub timeout: Option<Duration>,
         /// Started processes, in pipeline order.
         pub started: Vec<Popen>,
     }
@@ -566,8 +569,7 @@ mod exec {
         /// them as `None`.  Only streams that were redirected to a pipe will be
         /// available to the communicator.
         ///
-        /// If `capture_timeout` was set, the communicator will have a corresponding
-        /// time limit.
+        /// If `timeout` was set, the communicator will have a corresponding time limit.
         pub fn communicate(&mut self) -> Communicator<Vec<u8>> {
             let mut comm = Communicator::new(
                 self.stdin.take(),
@@ -575,7 +577,7 @@ mod exec {
                 self.stderr.take(),
                 std::mem::take(&mut self.stdin_data),
             );
-            if let Some(t) = self.capture_timeout {
+            if let Some(t) = self.timeout {
                 comm = comm.limit_time(t);
             }
             comm
@@ -583,11 +585,20 @@ mod exec {
 
         /// Closes the pipe ends, waits for the process(es) to finish, and returns the
         /// exit status of the last process.
+        ///
+        /// If `timeout` was set, returns an error of kind `ErrorKind::TimedOut` if the
+        /// process does not finish in time.
         pub fn join(mut self) -> io::Result<ExitStatus> {
             self.stdin.take();
             self.stdout.take();
             self.stderr.take();
-            self.started.last_mut().unwrap().wait()
+            let last = self.started.last_mut().unwrap();
+            match self.timeout {
+                Some(t) => last
+                    .wait_timeout(t)?
+                    .ok_or(io::Error::from(ErrorKind::TimedOut)),
+                None => last.wait(),
+            }
         }
 
         /// Captures the output and waits for the process(es) to finish.
@@ -595,10 +606,10 @@ mod exec {
         /// Only streams that were redirected to a pipe will produce data; non-piped
         /// streams will result in empty bytes in `Capture`.
         ///
-        /// If `capture_timeout` was set, both communication and waiting are limited to
+        /// If `timeout` was set, both communication and waiting are limited to
         /// that duration.
         pub fn capture(mut self) -> io::Result<Capture> {
-            let deadline = self.capture_timeout.map(|t| Instant::now() + t);
+            let deadline = self.timeout.map(|t| Instant::now() + t);
             let (stdout, stderr) = {
                 let mut comm = self.communicate();
                 comm.read()?
@@ -923,7 +934,7 @@ mod pipeline {
         stdout: Redirection,
         stderr: Redirection,
         stdin_data: Option<Vec<u8>>,
-        capture_timeout: Option<Duration>,
+        timeout: Option<Duration>,
     }
 
     impl Pipeline {
@@ -954,7 +965,7 @@ mod pipeline {
                 stdout: Redirection::None,
                 stderr: Redirection::None,
                 stdin_data: None,
-                capture_timeout: None,
+                timeout: None,
             }
         }
 
@@ -1029,13 +1040,15 @@ mod pipeline {
             self
         }
 
-        /// Set the timeout for `capture()` and `communicate()`.
+        /// Set the timeout for waiting on the pipeline.
         ///
-        /// If set, `capture()` will return an error of kind `ErrorKind::TimedOut` if the
-        /// pipeline does not finish within the given duration.  For `communicate()`, the
-        /// timeout is forwarded to the returned `Communicator`.
-        pub fn capture_timeout(mut self, time: Duration) -> Pipeline {
-            self.capture_timeout = Some(time);
+        /// This affects [`join`](Self::join), [`capture`](Self::capture), and
+        /// [`communicate`](Self::communicate).  `join` and `capture` will return an
+        /// error of kind `ErrorKind::TimedOut` if the pipeline does not finish within
+        /// the given duration.  For `communicate`, the timeout is forwarded to the
+        /// returned `Communicator`.
+        pub fn timeout(mut self, time: Duration) -> Pipeline {
+            self.timeout = Some(time);
             self
         }
 
@@ -1130,7 +1143,7 @@ mod pipeline {
                 stdout,
                 stderr: err_read_opt,
                 stdin_data: self.stdin_data.unwrap_or_default(),
-                capture_timeout: self.capture_timeout,
+                timeout: self.timeout,
                 started: ret,
             })
         }
@@ -1230,7 +1243,7 @@ mod pipeline {
                 stdout: self.stdout.try_clone()?,
                 stderr: self.stderr.try_clone()?,
                 stdin_data: self.stdin_data.clone(),
-                capture_timeout: self.capture_timeout,
+                timeout: self.timeout,
             })
         }
     }
@@ -1329,7 +1342,7 @@ mod pipeline {
                 stdout: Redirection::None,
                 stderr: Redirection::None,
                 stdin_data: None,
-                capture_timeout: None,
+                timeout: None,
             }
         }
     }
