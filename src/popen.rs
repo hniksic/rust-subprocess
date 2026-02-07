@@ -219,8 +219,7 @@ impl PopenConfig {
 
     /// Returns the environment of the current process.
     ///
-    /// The returned value is in the format accepted by the `env`
-    /// member of `PopenConfig`.
+    /// The returned value is in the format accepted by the `env` member of `PopenConfig`.
     pub fn current_env() -> Vec<(OsString, OsString)> {
         env::vars_os().collect()
     }

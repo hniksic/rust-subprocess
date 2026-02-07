@@ -205,10 +205,8 @@ mod exec {
             self
         }
 
-        fn ensure_env(&mut self) {
-            if self.config.env.is_none() {
-                self.config.env = Some(PopenConfig::current_env());
-            }
+        fn ensure_env(&mut self) -> &mut Vec<(OsString, OsString)> {
+            self.config.env.get_or_insert_with(PopenConfig::current_env)
         }
 
         /// Clears the environment of the subprocess.
@@ -227,11 +225,7 @@ mod exec {
         /// Other environment variables are by default inherited from the current process.  If
         /// this is undesirable, call `env_clear` first.
         pub fn env(mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Exec {
-            self.ensure_env();
-            self.config
-                .env
-                .as_mut()
-                .unwrap()
+            self.ensure_env()
                 .push((key.as_ref().to_owned(), value.as_ref().to_owned()));
             self
         }
@@ -247,14 +241,10 @@ mod exec {
             mut self,
             vars: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
         ) -> Exec {
-            self.ensure_env();
-            {
-                let envvec = self.config.env.as_mut().unwrap();
-                envvec.extend(
-                    vars.into_iter()
-                        .map(|(k, v)| (k.as_ref().to_owned(), v.as_ref().to_owned())),
-                );
-            }
+            self.ensure_env().extend(
+                vars.into_iter()
+                    .map(|(k, v)| (k.as_ref().to_owned(), v.as_ref().to_owned())),
+            );
             self
         }
 
@@ -262,12 +252,7 @@ mod exec {
         ///
         /// Other environment variables are inherited by default.
         pub fn env_remove(mut self, key: impl AsRef<OsStr>) -> Exec {
-            self.ensure_env();
-            self.config
-                .env
-                .as_mut()
-                .unwrap()
-                .retain(|(k, _v)| k != key.as_ref());
+            self.ensure_env().retain(|(k, _v)| k != key.as_ref());
             self
         }
 
