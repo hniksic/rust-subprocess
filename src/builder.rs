@@ -521,22 +521,19 @@ mod exec {
         }
     }
 
-    impl Clone for Exec {
-        /// Returns a copy of the value.
+    impl Exec {
+        /// Returns a copy of this `Exec`.
         ///
-        /// This method is guaranteed not to fail as long as none of the `Redirection` values
-        /// contain a `Redirection::File` variant.  If a redirection to `File` is present,
-        /// cloning that field will use `File::try_clone` method, which duplicates a file
-        /// descriptor and can (but is not likely to) fail.  In that scenario, `Exec::clone`
-        /// panics.
-        fn clone(&self) -> Exec {
-            Exec {
+        /// This can fail if a `Redirection::File` is present because duplicating the
+        /// underlying file descriptor is an OS operation that can fail.
+        pub fn try_clone(&self) -> io::Result<Exec> {
+            Ok(Exec {
                 command: self.command.clone(),
                 args: self.args.clone(),
                 time_limit: self.time_limit,
-                config: self.config.try_clone().unwrap(),
+                config: self.config.try_clone()?,
                 stdin_data: self.stdin_data.clone(),
-            }
+            })
         }
     }
 
@@ -1149,22 +1146,28 @@ mod pipeline {
         }
     }
 
-    impl Clone for Pipeline {
-        /// Returns a copy of the value.
+    impl Pipeline {
+        /// Returns a copy of this `Pipeline`.
         ///
-        /// This method is guaranteed not to fail as long as none of the `Redirection` values
-        /// contain a `Redirection::File` variant.  If a redirection to `File` is present,
-        /// cloning that field will use `File::try_clone` method, which duplicates a file
-        /// descriptor and can (but is not likely to) fail.  In that scenario, `Pipeline::clone`
-        /// panics.
-        fn clone(&self) -> Pipeline {
-            Pipeline {
-                cmds: self.cmds.clone(),
-                stdin: self.stdin.try_clone().unwrap(),
-                stdout: self.stdout.try_clone().unwrap(),
-                stderr_file: self.stderr_file.as_ref().map(|f| f.try_clone().unwrap()),
+        /// This can fail if a `Redirection::File` is present because duplicating the
+        /// underlying file descriptor is an OS operation that can fail.
+        pub fn try_clone(&self) -> io::Result<Pipeline> {
+            let cmds = self
+                .cmds
+                .iter()
+                .map(|cmd| cmd.try_clone())
+                .collect::<io::Result<Vec<_>>>()?;
+            Ok(Pipeline {
+                cmds,
+                stdin: self.stdin.try_clone()?,
+                stdout: self.stdout.try_clone()?,
+                stderr_file: self
+                    .stderr_file
+                    .as_ref()
+                    .map(|f| f.try_clone())
+                    .transpose()?,
                 stdin_data: self.stdin_data.clone(),
-            }
+            })
         }
     }
 
