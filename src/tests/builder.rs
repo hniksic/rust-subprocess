@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
-use crate::{Exec, Redirection};
+use crate::{Exec, Pipeline, Redirection};
 
 #[test]
 fn exec_join() {
@@ -839,4 +839,24 @@ fn pipeline_start_stdin_data_capture() {
         .capture()
         .unwrap();
     assert_eq!(c.stdout_str(), "hello from pipeline");
+}
+
+#[test]
+fn pipeline_cwd() {
+    let tmpdir = TempDir::new().unwrap();
+    let dir = tmpdir.path().canonicalize().unwrap();
+    let c = (Exec::cmd("pwd") | Exec::cmd("cat"))
+        .cwd(&dir)
+        .capture()
+        .unwrap();
+    assert_eq!(c.stdout_str().trim(), dir.to_str().unwrap());
+}
+
+#[test]
+fn pipeline_cwd_from_iter() {
+    let tmpdir = TempDir::new().unwrap();
+    let dir = tmpdir.path().canonicalize().unwrap();
+    let pipeline: Pipeline = vec![Exec::cmd("pwd"), Exec::cmd("cat")].into_iter().collect();
+    let c = pipeline.cwd(&dir).capture().unwrap();
+    assert_eq!(c.stdout_str().trim(), dir.to_str().unwrap());
 }

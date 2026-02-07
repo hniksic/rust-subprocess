@@ -492,7 +492,7 @@ mod exec {
         /// Show Exec as command-line string quoted in the Unix style.
         pub fn to_cmdline_lossy(&self) -> String {
             let mut out = String::new();
-            if let Some(ref cmd_env) = self.config.env {
+            if let Some(cmd_env) = &self.config.env {
                 let current: Vec<_> = env::vars_os().collect();
                 let current_map: HashMap<_, _> = current.iter().map(|(x, y)| (x, y)).collect();
                 for (k, v) in cmd_env {
@@ -895,9 +895,11 @@ mod exec {
 }
 
 mod pipeline {
+    use std::ffi::OsString;
     use std::fmt;
     use std::io::{self, Read, Write};
     use std::ops::BitOr;
+    use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -958,6 +960,7 @@ mod pipeline {
         stdin_data: Option<Vec<u8>>,
         timeout: Option<Duration>,
         detached: bool,
+        cwd: Option<OsString>,
     }
 
     impl Pipeline {
@@ -990,6 +993,7 @@ mod pipeline {
                 stdin_data: None,
                 timeout: None,
                 detached: false,
+                cwd: None,
             }
         }
 
@@ -1076,6 +1080,14 @@ mod pipeline {
             self
         }
 
+        /// Specifies the current working directory for all commands in the pipeline.
+        ///
+        /// If unspecified, the current working directory is inherited from the parent.
+        pub fn cwd(mut self, dir: impl AsRef<Path>) -> Pipeline {
+            self.cwd = Some(dir.as_ref().as_os_str().to_owned());
+            self
+        }
+
         /// Specifies that the pipeline processes are initially detached.
         ///
         /// A detached pipeline means that we will not wait for the processes
@@ -1147,6 +1159,10 @@ mod pipeline {
                         .map(|cmd| cmd.stderr(Redirection::Null))
                         .collect();
                 }
+            }
+
+            if let Some(dir) = &self.cwd {
+                self.execs = self.execs.into_iter().map(|cmd| cmd.cwd(dir)).collect();
             }
 
             if self.detached {
@@ -1326,6 +1342,7 @@ mod pipeline {
                 stdin_data: self.stdin_data.clone(),
                 timeout: self.timeout,
                 detached: self.detached,
+                cwd: self.cwd.clone(),
             })
         }
     }
@@ -1426,6 +1443,7 @@ mod pipeline {
                 stdin_data: None,
                 timeout: None,
                 detached: false,
+                cwd: None,
             }
         }
     }
