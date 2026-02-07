@@ -61,8 +61,9 @@
 #![warn(missing_debug_implementations, missing_docs)]
 #![allow(clippy::type_complexity)]
 
-mod builder;
 mod communicate;
+mod exec;
+mod pipeline;
 mod popen;
 
 #[cfg(unix)]
@@ -74,8 +75,13 @@ mod win32;
 #[cfg(test)]
 mod tests;
 
-pub use builder::{Capture, Exec, ExecExt, InputRedirection, OutputRedirection, Pipeline, Started};
 pub use communicate::Communicator;
+#[cfg(unix)]
+pub use exec::unix::ExecExt;
+#[cfg(windows)]
+pub use exec::windows::ExecExt;
+pub use exec::{Capture, Exec, InputRedirection, OutputRedirection, Started};
+pub use pipeline::Pipeline;
 pub use popen::{_PrivateSeal, ExitStatus, Popen, PopenConfig, Redirection, make_pipe};
 
 /// Subprocess extensions for Unix platforms.
@@ -87,5 +93,5 @@ pub mod unix {
 /// Subprocess extensions for Windows platforms.
 #[cfg(windows)]
 pub mod windows {
-    pub use super::builder::windows::*;
+    pub use super::exec::windows::*;
 }
