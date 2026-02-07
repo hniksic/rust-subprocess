@@ -129,6 +129,7 @@ mod exec {
         command: OsString,
         args: Vec<OsString>,
         timeout: Option<Duration>,
+        check_success: bool,
         config: PopenConfig,
         stdin_data: Option<Vec<u8>>,
     }
@@ -148,6 +149,7 @@ mod exec {
                 command: command.as_ref().to_owned(),
                 args: vec![],
                 timeout: None,
+                check_success: false,
                 config: PopenConfig::default(),
                 stdin_data: None,
             }
@@ -202,6 +204,13 @@ mod exec {
         /// returned `Communicator`.
         pub fn timeout(mut self, time: Duration) -> Exec {
             self.timeout = Some(time);
+            self
+        }
+
+        /// If called, [`join`](Self::join) and [`capture`](Self::capture) will return
+        /// an error if the process exits with a non-zero status.
+        pub fn check_success(mut self) -> Exec {
+            self.check_success = true;
             self
         }
 
@@ -359,6 +368,7 @@ mod exec {
         pub fn start(mut self) -> io::Result<Started> {
             let stdin_data = self.stdin_data.take().unwrap_or_default();
             let timeout = self.timeout;
+            let check_success = self.check_success;
             let mut p = self.popen()?;
             Ok(Started {
                 stdin: p.stdin.take(),
@@ -366,6 +376,7 @@ mod exec {
                 stderr: p.stderr.take(),
                 stdin_data,
                 timeout,
+                check_success,
                 started: vec![p],
             })
         }
@@ -540,6 +551,7 @@ mod exec {
                 command: self.command.clone(),
                 args: self.args.clone(),
                 timeout: self.timeout,
+                check_success: self.check_success,
                 config: self.config.try_clone()?,
                 stdin_data: self.stdin_data.clone(),
             })
@@ -566,6 +578,7 @@ mod exec {
     ///
     /// Created by [`Exec::start`] or [`Pipeline::start`].
     #[derive(Debug)]
+    #[non_exhaustive]
     pub struct Started {
         // Pipe fields are declared before `started` so that they are dropped first,
         // allowing children to receive EOF and exit before `Popen::drop` waits on them.
@@ -581,6 +594,8 @@ mod exec {
         /// Timeout for [`join`](Self::join), [`capture`](Self::capture), and
         /// [`communicate`](Self::communicate).
         pub timeout: Option<Duration>,
+        /// Whether to return an error on non-zero exit status.
+        pub check_success: bool,
         /// Started processes, in pipeline order.
         pub started: Vec<Popen>,
     }
@@ -617,12 +632,16 @@ mod exec {
             let Some(last) = self.started.last_mut() else {
                 return Ok(ExitStatus::from_raw(0));
             };
-            match deadline {
+            let status = match deadline {
                 Some(d) => last
                     .wait_timeout(d.saturating_duration_since(Instant::now()))?
-                    .ok_or(io::Error::from(ErrorKind::TimedOut)),
-                None => last.wait(),
+                    .ok_or(io::Error::from(ErrorKind::TimedOut))?,
+                None => last.wait()?,
+            };
+            if self.check_success && !status.success() {
+                return Err(io::Error::other(format!("command failed: {status}")));
             }
+            Ok(status)
         }
 
         /// Captures the output and waits for the process(es) to finish.
@@ -647,7 +666,7 @@ mod exec {
                 });
             };
             let remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
-            Ok(Capture {
+            let capture = Capture {
                 stdout,
                 stderr,
                 exit_status: match remaining {
@@ -656,7 +675,14 @@ mod exec {
                         .ok_or(io::Error::from(ErrorKind::TimedOut))?,
                     None => last.wait()?,
                 },
-            })
+            };
+            if self.check_success && !capture.success() {
+                return Err(io::Error::other(format!(
+                    "command failed: {}",
+                    capture.exit_status
+                )));
+            }
+            Ok(capture)
         }
     }
 
@@ -720,6 +746,18 @@ mod exec {
         /// True if the exit status of the process or pipeline is 0.
         pub fn success(&self) -> bool {
             self.exit_status.success()
+        }
+
+        /// Returns `self` if the exit status is successful, or an error otherwise.
+        pub fn ensure_success(self) -> io::Result<Self> {
+            if self.success() {
+                Ok(self)
+            } else {
+                Err(io::Error::other(format!(
+                    "command failed: {}",
+                    self.exit_status
+                )))
+            }
         }
     }
 
@@ -980,6 +1018,7 @@ mod pipeline {
         stderr: Redirection,
         stdin_data: Option<Vec<u8>>,
         timeout: Option<Duration>,
+        check_success: bool,
         detached: bool,
         cwd: Option<OsString>,
     }
@@ -1006,6 +1045,7 @@ mod pipeline {
                 stderr: Redirection::None,
                 stdin_data: None,
                 timeout: None,
+                check_success: false,
                 detached: false,
                 cwd: None,
             }
@@ -1116,6 +1156,13 @@ mod pipeline {
             self
         }
 
+        /// If called, [`join`](Self::join) and [`capture`](Self::capture) will return
+        /// an error if the last command in the pipeline exits with a non-zero status.
+        pub fn check_success(mut self) -> Pipeline {
+            self.check_success = true;
+            self
+        }
+
         /// Specifies the current working directory for all commands in the pipeline.
         ///
         /// If unspecified, the current working directory is inherited from the parent.
@@ -1142,15 +1189,19 @@ mod pipeline {
         /// Convert pipeline-level stderr redirection into a per-command form, applying it
         /// to all commands. Returns the read end of the pipe if stderr was set to Pipe.
         fn setup_stderr(&mut self) -> io::Result<Option<File>> {
-            let (redirection, stderr_read) = match std::mem::replace(&mut self.stderr, Redirection::None) {
-                Redirection::None => return Ok(None),
-                Redirection::Pipe => {
-                    let (stderr_read, stderr_write) = crate::popen::make_pipe()?;
-                    (Redirection::SharedFile(Arc::new(stderr_write)), Some(stderr_read))
-                }
-                Redirection::File(f) => (Redirection::SharedFile(Arc::new(f)), None),
-                other => (other, None),
-            };
+            let (redirection, stderr_read) =
+                match std::mem::replace(&mut self.stderr, Redirection::None) {
+                    Redirection::None => return Ok(None),
+                    Redirection::Pipe => {
+                        let (stderr_read, stderr_write) = crate::popen::make_pipe()?;
+                        (
+                            Redirection::SharedFile(Arc::new(stderr_write)),
+                            Some(stderr_read),
+                        )
+                    }
+                    Redirection::File(f) => (Redirection::SharedFile(Arc::new(f)), None),
+                    other => (other, None),
+                };
             // unwrap(): after the above conversion, redirection to apply to each cmd is
             // SharedFile, Merge, or Null, all of which are infallible to clone.
             self.execs = self
@@ -1179,6 +1230,7 @@ mod pipeline {
                     stderr: None,
                     stdin_data: vec![],
                     timeout: self.timeout,
+                    check_success: self.check_success,
                     started: vec![],
                 });
             }
@@ -1235,6 +1287,7 @@ mod pipeline {
                 stderr,
                 stdin_data: self.stdin_data.unwrap_or_default(),
                 timeout: self.timeout,
+                check_success: self.check_success,
                 started: ret,
             })
         }
@@ -1379,6 +1432,7 @@ mod pipeline {
                 stderr: self.stderr.try_clone()?,
                 stdin_data: self.stdin_data.clone(),
                 timeout: self.timeout,
+                check_success: self.check_success,
                 detached: self.detached,
                 cwd: self.cwd.clone(),
             })
@@ -1440,6 +1494,7 @@ mod pipeline {
                 stderr: Redirection::None,
                 stdin_data: None,
                 timeout: None,
+                check_success: false,
                 detached: false,
                 cwd: None,
             }

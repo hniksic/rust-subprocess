@@ -946,3 +946,65 @@ fn pipeline_default() {
     let c = Pipeline::default().capture().unwrap();
     assert!(c.success());
 }
+
+#[test]
+fn check_success_join_ok() {
+    Exec::cmd("true").check_success().join().unwrap();
+}
+
+#[test]
+fn check_success_join_fail() {
+    let err = Exec::cmd("false").check_success().join().unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Other);
+    assert!(err.to_string().contains("command failed"), "{err}");
+}
+
+#[test]
+fn check_success_capture_ok() {
+    let c = Exec::cmd("true").check_success().capture().unwrap();
+    assert!(c.success());
+}
+
+#[test]
+fn check_success_capture_fail() {
+    let err = Exec::cmd("false").check_success().capture().unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Other);
+    assert!(err.to_string().contains("command failed"), "{err}");
+}
+
+#[test]
+fn ensure_success_ok() {
+    Exec::cmd("true")
+        .capture()
+        .unwrap()
+        .ensure_success()
+        .unwrap();
+}
+
+#[test]
+fn ensure_success_fail() {
+    let err = Exec::cmd("false")
+        .capture()
+        .unwrap()
+        .ensure_success()
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Other);
+    assert!(err.to_string().contains("command failed"), "{err}");
+}
+
+#[test]
+fn pipeline_check_success() {
+    // Last command fails -> error
+    let err = (Exec::cmd("true") | Exec::cmd("false"))
+        .check_success()
+        .join()
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Other);
+    assert!(err.to_string().contains("command failed"), "{err}");
+
+    // Last command succeeds -> ok
+    (Exec::cmd("false") | Exec::cmd("true"))
+        .check_success()
+        .join()
+        .unwrap();
+}
