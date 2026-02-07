@@ -256,7 +256,7 @@ fn broken_pipe_on_stdin() {
 
 #[test]
 fn terminate() {
-    let mut handle = Exec::cmd("sleep").arg("1000").start().unwrap();
+    let handle = Exec::cmd("sleep").arg("1000").start().unwrap();
     handle.terminate().unwrap();
     handle.wait().unwrap();
 }
@@ -266,7 +266,7 @@ fn terminate_twice() {
     use std::thread;
     use std::time::Duration;
 
-    let mut handle = Exec::cmd("sleep").arg("1000").start().unwrap();
+    let handle = Exec::cmd("sleep").arg("1000").start().unwrap();
     handle.terminate().unwrap();
     thread::sleep(Duration::from_millis(100));
     handle.terminate().unwrap();
@@ -443,7 +443,7 @@ fn exec_timeout_join_succeeds() {
 
 #[test]
 fn exec_wait_timeout_terminate() {
-    let mut started = Exec::cmd("sleep").arg("10").start().unwrap();
+    let started = Exec::cmd("sleep").arg("10").start().unwrap();
     let result = started.wait_timeout(Duration::from_millis(100)).unwrap();
     assert!(result.is_none());
     started.terminate().unwrap();
@@ -463,7 +463,7 @@ fn started_pid() {
 
 #[test]
 fn started_kill() {
-    let mut handle = Exec::cmd("sleep").arg("1000").start().unwrap();
+    let handle = Exec::cmd("sleep").arg("1000").start().unwrap();
     handle.kill().unwrap();
     let status = handle.wait().unwrap();
     assert!(!status.success());
@@ -486,7 +486,7 @@ fn started_poll() {
 
 #[test]
 fn started_wait_timeout_none() {
-    let mut handle = Exec::cmd("sleep").arg("10").start().unwrap();
+    let handle = Exec::cmd("sleep").arg("10").start().unwrap();
     let result = handle.wait_timeout(Duration::from_millis(100)).unwrap();
     assert!(result.is_none(), "should return None on timeout");
     handle.terminate().unwrap();
@@ -495,7 +495,7 @@ fn started_wait_timeout_none() {
 
 #[test]
 fn started_wait_timeout_some() {
-    let mut handle = Exec::cmd("true").start().unwrap();
+    let handle = Exec::cmd("true").start().unwrap();
     let result = handle.wait_timeout(Duration::from_secs(5)).unwrap();
     assert!(result.is_some(), "should return Some when done");
     assert!(result.unwrap().success());

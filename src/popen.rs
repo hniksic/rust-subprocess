@@ -85,9 +85,6 @@ impl Redirection {
     }
 }
 
-/// Result of spawning a subprocess.
-///
-/// Contains the process handle and the parent ends of any pipes.
 pub(crate) struct SpawnResult {
     pub process: Process,
     pub stdin: Option<File>,
@@ -160,8 +157,8 @@ pub(crate) fn spawn(
     })
 }
 
-// Set up streams for the child process. Fills in the parent pipe ends and
-// returns the child ends.
+// Set up streams for the child process. Fills in the parent pipe ends and returns the
+// child ends.
 fn setup_streams(
     stdin: Redirection,
     stdout: Redirection,
@@ -282,8 +279,8 @@ fn setup_streams(
 /// This is an opaque type that wraps the platform's native exit status
 /// representation. Use the provided methods to query the exit status.
 ///
-/// On Unix, the raw value is the status from `waitpid()`. On Windows, it
-/// is the exit code from `GetExitCodeProcess()`.
+/// On Unix, the raw value is the status from `waitpid()`. On Windows, it is the exit code
+/// from `GetExitCodeProcess()`.
 #[derive(Eq, PartialEq, Copy, Clone)]
 pub struct ExitStatus(pub(crate) Option<os::RawExitStatus>);
 
@@ -487,8 +484,8 @@ pub(crate) mod os {
     impl ExitStatus {
         /// Returns the exit code if the process exited normally.
         ///
-        /// On Unix, this returns `Some` only if the process exited
-        /// voluntarily (not killed by a signal).
+        /// On Unix, this returns `Some` only if the process exited voluntarily (not
+        /// killed by a signal).
         pub fn code(&self) -> Option<u32> {
             let raw = self.0?;
             libc::WIFEXITED(raw).then(|| libc::WEXITSTATUS(raw) as u32)
@@ -642,9 +639,8 @@ pub(crate) mod os {
 
     /// Create a pipe where both ends support overlapped I/O.
     ///
-    /// Both handles are created inheritable; callers should use
-    /// `set_inheritable` to make the parent's end non-inheritable before
-    /// spawning children.
+    /// Both handles are created inheritable; callers should use `set_inheritable` to make
+    /// the parent's end non-inheritable before spawning children.
     pub fn make_pipe() -> io::Result<(File, File)> {
         win32::make_pipe()
     }

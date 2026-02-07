@@ -121,9 +121,9 @@ impl Pipeline {
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-    /// * a `Vec<u8>`, `&str`, or `&[u8]`, which will set up a `Redirection::Pipe`
-    ///   for stdin, making sure that `capture` feeds that data into the standard
-    ///   input of the subprocess.
+    /// * a `Vec<u8>`, `&str`, or `&[u8]`, which will set up a `Redirection::Pipe` for
+    ///   stdin, making sure that `capture` feeds that data into the standard input of the
+    ///   subprocess.
     ///
     /// [`Redirection`]: enum.Redirection.html
     pub fn stdin(mut self, stdin: impl InputRedirection) -> Pipeline {
@@ -153,8 +153,8 @@ impl Pipeline {
     /// Specifies how to set up the standard error of all commands in the pipeline.
     ///
     /// Unlike `stdout()`, which only affects the last command in the pipeline, this
-    /// affects all commands.  The difference is because standard output is piped from
-    /// one command to the next, so only the output of the last command is "free".  In
+    /// affects all commands.  The difference is because standard output is piped from one
+    /// command to the next, so only the output of the last command is "free".  In
     /// contrast, the standard errors are not connected to each other and can be
     /// configured *en masse*.
     ///
@@ -203,8 +203,8 @@ impl Pipeline {
 
     /// Specifies that the pipeline processes are initially detached.
     ///
-    /// A detached pipeline means that we will not wait for the processes
-    /// to finish when the objects that own them go out of scope.
+    /// A detached pipeline means that we will not wait for the processes to finish when
+    /// the objects that own them go out of scope.
     pub fn detached(mut self) -> Pipeline {
         self.detached = true;
         self
@@ -317,26 +317,25 @@ impl Pipeline {
         #[cfg(unix)]
         let mut first_pid: u32 = 0;
 
-        for (idx, mut runner) in self.execs.into_iter().enumerate() {
+        for (idx, mut exec) in self.execs.into_iter().enumerate() {
             if let Some(prev_out) = prev_stdout.take() {
-                runner = runner.stdin(prev_out);
+                exec = exec.stdin(prev_out);
             }
             if idx != cnt - 1 {
-                runner = runner.stdout(Redirection::Pipe);
+                exec = exec.stdout(Redirection::Pipe);
             }
             #[cfg(unix)]
             if self.setpgid {
-                // No race condition: spawn() uses an exec-fail pipe,
-                // so it blocks until the child has called setpgid and
-                // exec'd. By the time we fork the second child, the
-                // first child's group already exists.
+                // spawn() uses an exec-fail pipe, so it blocks until the child has called
+                // setpgid and exec'd. By the time we fork the second child, the first
+                // child's group already exists.
                 if idx == 0 {
-                    runner.set_pgid_value(0);
+                    exec.set_pgid_value(0);
                 } else {
-                    runner.set_pgid_value(first_pid);
+                    exec.set_pgid_value(first_pid);
                 }
             }
-            let result = runner.spawn()?;
+            let result = exec.spawn()?;
             if idx == 0 {
                 pipeline_stdin = result.stdin;
                 #[cfg(unix)]

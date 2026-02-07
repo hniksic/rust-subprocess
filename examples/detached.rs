@@ -17,7 +17,7 @@ fn main() -> std::io::Result<()> {
 
     // Start and explicitly wait
     println!("\nStarting another process...");
-    let mut handle = Exec::cmd("sleep").arg("0.1").detached().start()?;
+    let handle = Exec::cmd("sleep").arg("0.1").detached().start()?;
 
     println!("Waiting explicitly...");
     let status = handle.wait()?;

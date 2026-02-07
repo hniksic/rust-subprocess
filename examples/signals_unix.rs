@@ -24,7 +24,7 @@ fn main() -> std::io::Result<()> {
     println!("Sent SIGKILL to process group");
 
     // Demonstrate terminate vs kill
-    let mut handle = Exec::cmd("sleep").arg("100").start()?;
+    let handle = Exec::cmd("sleep").arg("100").start()?;
     println!("\nStarted another sleep, PID {}", handle.pid());
 
     // terminate() sends SIGTERM
@@ -32,7 +32,7 @@ fn main() -> std::io::Result<()> {
     let status = handle.wait()?;
     println!("After terminate: {:?}", status);
 
-    let mut handle = Exec::cmd("sleep").arg("100").start()?;
+    let handle = Exec::cmd("sleep").arg("100").start()?;
     println!("\nStarted another sleep, PID {}", handle.pid());
 
     // kill() sends SIGKILL

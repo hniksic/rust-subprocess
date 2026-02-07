@@ -8,22 +8,20 @@ use crate::popen::ExitStatus;
 
 /// A handle to a running or finished subprocess.
 ///
-/// `Process` is a lightweight handle that tracks a child process's lifecycle.
-/// It is created internally by [`Exec::start`] and [`Pipeline::start`] and
-/// appears as part of the [`Started`] struct.
+/// `Process` is a lightweight handle that tracks a child process's lifecycle.  It is
+/// created internally by [`Exec::start`] and [`Pipeline::start`] and appears as part of
+/// the [`Started`] struct.
 ///
-/// Unlike `std::process::Child`, all methods on `Process` take `&self` rather
-/// than `&mut self`, so a `Process` can be shared between threads without
-/// external synchronization.
+/// Unlike `std::process::Child`, all methods on `Process` take `&self` rather than `&mut
+/// self`, so a `Process` can be shared between threads without external synchronization.
 ///
 /// # Drop behavior
 ///
-/// When a `Process` is dropped, it waits for the child process to finish
-/// unless [`detach`](Self::detach) has been called. Because `Process` does
-/// not own any pipes to the child, callers must ensure that any pipes
-/// connected to the child's stdin are dropped *before* the `Process` is
-/// dropped. Otherwise, the child may block waiting for input while the
-/// `Process` drop waits for the child to exit, resulting in a deadlock.
+/// When a `Process` is dropped, it waits for the child process to finish unless
+/// [`detach`](Self::detach) has been called. Because `Process` does not own any pipes to
+/// the child, callers must ensure that any pipes connected to the child's stdin are
+/// dropped *before* the `Process` is dropped. Otherwise, the child may block waiting for
+/// input while the `Process` drop waits for the child to exit, resulting in a deadlock.
 /// [`Started`] handles this automatically via field declaration order.
 ///
 /// [`Exec::start`]: crate::Exec::start
@@ -54,17 +52,14 @@ impl Process {
     }
 
     /// Returns the PID of the subprocess.
-    ///
-    /// The PID is always available, even after the process has finished.
     pub fn pid(&self) -> u32 {
         self.pid
     }
 
-    /// Returns the cached exit status, if the process is known to have
-    /// finished.
+    /// Returns the exit status, if the process is known to have finished.
     ///
-    /// This does not perform any system calls. To check whether the process
-    /// has finished, use [`poll`](Self::poll) or [`wait`](Self::wait).
+    /// This does not perform any system calls. To check whether the process has finished,
+    /// use [`poll`](Self::poll) or [`wait`](Self::wait).
     pub fn exit_status(&self) -> Option<ExitStatus> {
         let state = self.state.lock().unwrap();
         match *state {
@@ -75,49 +70,43 @@ impl Process {
 
     /// Check whether the process has finished, without blocking.
     ///
-    /// Returns `Some(exit_status)` if the process has finished, `None` if
-    /// it is still running.
+    /// Returns `Some(exit_status)` if the process has finished, `None` if it is still
+    /// running.
     pub fn poll(&self) -> Option<ExitStatus> {
         self.wait_timeout(Duration::from_secs(0)).unwrap_or(None)
     }
 
     /// Wait for the process to finish and return its exit status.
     ///
-    /// If the process has already finished, returns the cached exit status
-    /// immediately.
+    /// If the process has already finished, returns the cached exit status immediately.
     pub fn wait(&self) -> io::Result<ExitStatus> {
         self.os_wait()
     }
 
-    /// Wait for the process to finish, timing out after the specified
-    /// duration.
+    /// Wait for the process to finish, timing out after the specified duration.
     ///
-    /// Returns `Ok(None)` if the timeout elapsed before the process
-    /// finished.
+    /// Returns `Ok(None)` if the timeout elapsed before the process finished.
     pub fn wait_timeout(&self, dur: Duration) -> io::Result<Option<ExitStatus>> {
         self.os_wait_timeout(dur)
     }
 
     /// Terminate the subprocess.
     ///
-    /// On Unix, this sends SIGTERM. On Windows, this calls
-    /// `TerminateProcess`.
+    /// On Unix, this sends SIGTERM. On Windows, this calls `TerminateProcess`.
     pub fn terminate(&self) -> io::Result<()> {
         self.os_terminate()
     }
 
     /// Kill the subprocess.
     ///
-    /// On Unix, this sends SIGKILL. On Windows, this calls
-    /// `TerminateProcess`.
+    /// On Unix, this sends SIGKILL. On Windows, this calls `TerminateProcess`.
     pub fn kill(&self) -> io::Result<()> {
         self.os_kill()
     }
 
     /// Mark the process as detached.
     ///
-    /// A detached process will not be waited on when the `Process` is
-    /// dropped.
+    /// A detached process will not be waited on when the `Process` is dropped.
     pub fn detach(&self) {
         self.detached.store(true, Ordering::Relaxed);
     }
@@ -187,8 +176,7 @@ mod os {
                     return Ok(None);
                 }
                 let remaining = deadline.duration_since(now);
-                // Release the lock while sleeping so other threads can
-                // access the state.
+                // Release the lock while sleeping so other threads can access the state.
                 drop(state);
                 std::thread::sleep(min(delay, remaining));
                 delay = min(delay * 2, Duration::from_millis(100));
@@ -218,8 +206,8 @@ mod os {
                 }
                 Ok(_) => {}
                 Err(e) if e.raw_os_error() == Some(posix::ECHILD) => {
-                    // Someone else waited for the child. The PID no longer
-                    // exists and we cannot find its exit status.
+                    // Someone else waited for the child. The PID no longer exists and we
+                    // cannot find its exit status.
                     *state = ProcessState::Finished(ExitStatus(None));
                 }
                 Err(e) => return Err(e),
@@ -236,9 +224,8 @@ mod os {
         pub trait ProcessExt {
             /// Send the specified signal to the child process.
             ///
-            /// If the child process is known to have finished (due to e.g.
-            /// a previous call to [`wait`] or [`poll`]), this will do
-            /// nothing and return `Ok`.
+            /// If the child process is known to have finished (due to e.g.  a previous
+            /// call to [`wait`] or [`poll`]), this will do nothing and return `Ok`.
             ///
             /// [`poll`]: crate::Process::poll
             /// [`wait`]: crate::Process::wait
@@ -246,13 +233,13 @@ mod os {
 
             /// Send the specified signal to the child's process group.
             ///
-            /// This is useful for terminating a tree of processes spawned
-            /// by the child. For this to work correctly, the child should
-            /// be started with [`ExecExt::setpgid`] set, which places the
-            /// child in a new process group with PGID equal to its PID.
+            /// This is useful for terminating a tree of processes spawned by the
+            /// child. For this to work correctly, the child should be started with
+            /// [`ExecExt::setpgid`] set, which places the child in a new process group
+            /// with PGID equal to its PID.
             ///
-            /// If the child process is known to have finished, this will
-            /// do nothing and return `Ok`.
+            /// If the child process is known to have finished, this will do nothing and
+            /// return `Ok`.
             ///
             /// [`ExecExt::setpgid`]: crate::ExecExt::setpgid
             fn send_signal_group(&self, signal: i32) -> io::Result<()>;

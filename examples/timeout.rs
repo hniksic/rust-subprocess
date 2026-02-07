@@ -9,7 +9,7 @@ fn main() -> std::io::Result<()> {
     // Using wait_timeout on a process
     println!("Waiting with timeout...");
 
-    let mut handle = Exec::cmd("sleep").arg("10").start()?;
+    let handle = Exec::cmd("sleep").arg("10").start()?;
 
     match handle.wait_timeout(Duration::from_millis(100))? {
         Some(status) => println!("Process exited: {:?}", status),

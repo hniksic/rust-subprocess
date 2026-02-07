@@ -630,7 +630,7 @@ impl Started {
     ///
     /// Delegates to [`Process::terminate()`] on each process, which sends `SIGTERM` on
     /// Unix and calls `TerminateProcess` on Windows.
-    pub fn terminate(&mut self) -> io::Result<()> {
+    pub fn terminate(&self) -> io::Result<()> {
         for p in &self.processes {
             p.terminate()?;
         }
@@ -641,7 +641,7 @@ impl Started {
     ///
     /// Unlike [`join`](Self::join), this does not consume `self`, does not close the pipe
     /// ends, and ignores `check_success`.
-    pub fn wait(&mut self) -> io::Result<ExitStatus> {
+    pub fn wait(&self) -> io::Result<ExitStatus> {
         let mut status = ExitStatus::from_raw(0);
         for p in &self.processes {
             status = p.wait()?;
@@ -688,7 +688,7 @@ impl Started {
     /// Like [`wait`](Self::wait), but with a timeout.
     ///
     /// Returns `Ok(None)` if the processes don't finish within the given duration.
-    pub fn wait_timeout(&mut self, timeout: Duration) -> io::Result<Option<ExitStatus>> {
+    pub fn wait_timeout(&self, timeout: Duration) -> io::Result<Option<ExitStatus>> {
         let deadline = Instant::now() + timeout;
         let mut status = ExitStatus::from_raw(0);
         for p in &self.processes {
@@ -717,10 +717,10 @@ impl Started {
     /// within the given duration.
     pub fn join_timeout(mut self, timeout: Duration) -> io::Result<ExitStatus> {
         let deadline = Instant::now() + timeout;
-        self.communicate_with_deadline(deadline).read()?;
+        self.communicate().limit_time(timeout).read()?;
         let status = self
             .wait_timeout(deadline.saturating_duration_since(Instant::now()))?
-            .ok_or(io::Error::from(ErrorKind::TimedOut))?;
+            .ok_or_else(|| io::Error::from(ErrorKind::TimedOut))?;
         if self.check_success && !status.success() {
             return Err(io::Error::other(format!("command failed: {status}")));
         }
@@ -732,10 +732,8 @@ impl Started {
     /// Only streams that were redirected to a pipe will produce data; non-piped streams
     /// will result in empty bytes in `Capture`.
     pub fn capture(mut self) -> io::Result<Capture> {
-        let (stdout, stderr) = {
-            let mut comm = self.communicate();
-            comm.read()?
-        };
+        let mut comm = self.communicate();
+        let (stdout, stderr) = comm.read()?;
         let capture = Capture {
             stdout,
             stderr,
@@ -756,13 +754,11 @@ impl Started {
     /// within the given duration.
     pub fn capture_timeout(mut self, timeout: Duration) -> io::Result<Capture> {
         let deadline = Instant::now() + timeout;
-        let (stdout, stderr) = {
-            let mut comm = self.communicate_with_deadline(deadline);
-            comm.read()?
-        };
+        let mut comm = self.communicate().limit_time(timeout);
+        let (stdout, stderr) = comm.read()?;
         let exit_status = self
             .wait_timeout(deadline.saturating_duration_since(Instant::now()))?
-            .ok_or(io::Error::from(ErrorKind::TimedOut))?;
+            .ok_or_else(|| io::Error::from(ErrorKind::TimedOut))?;
         let capture = Capture {
             stdout,
             stderr,
@@ -775,11 +771,6 @@ impl Started {
             )));
         }
         Ok(capture)
-    }
-
-    fn communicate_with_deadline(&mut self, deadline: Instant) -> Communicator<Vec<u8>> {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        self.communicate().limit_time(remaining)
     }
 }
 
