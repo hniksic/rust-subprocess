@@ -441,3 +441,78 @@ fn capture_timeout() {
         },
     }
 }
+
+#[test]
+fn pipeline_stderr_all_merge() {
+    // stderr_all(Merge) redirects each command's stderr to its stdout,
+    // so stderr output flows through the pipeline into captured stdout.
+    let c = { Exec::cmd("sh").arg("-c").arg("echo from-stderr >&2") | Exec::cmd("cat") }
+        .stderr_all(Redirection::Merge)
+        .capture()
+        .unwrap();
+    assert!(
+        c.stdout_str().contains("from-stderr"),
+        "stdout should contain stderr output, got: {:?}",
+        c.stdout_str()
+    );
+    assert_eq!(c.stderr_str(), "");
+}
+
+#[test]
+fn pipeline_stderr_all_file() {
+    let tmpdir = TempDir::new().unwrap();
+    let tmpname = tmpdir.path().join("stderr_output");
+    {
+        let f = File::create(&tmpname).unwrap();
+        let _status = {
+            Exec::cmd("sh").arg("-c").arg("echo err1 >&2; echo out1")
+                | Exec::cmd("sh").arg("-c").arg("cat; echo err2 >&2")
+        }
+        .stderr_all(f)
+        .join()
+        .unwrap();
+    }
+    let stderr_content = fs::read_to_string(&tmpname).unwrap();
+    assert!(
+        stderr_content.contains("err1"),
+        "file should contain err1, got: {:?}",
+        stderr_content
+    );
+    assert!(
+        stderr_content.contains("err2"),
+        "file should contain err2, got: {:?}",
+        stderr_content
+    );
+}
+
+#[test]
+fn pipeline_stderr_all_pipe_capture() {
+    // Explicitly requesting Pipe should work with capture(), capturing
+    // stderr from all commands.
+    let c = {
+        Exec::cmd("sh").arg("-c").arg("echo err1 >&2; echo out1")
+            | Exec::cmd("sh").arg("-c").arg("cat; echo err2 >&2")
+    }
+    .stderr_all(Redirection::Pipe)
+    .capture()
+    .unwrap();
+    assert!(
+        c.stderr_str().contains("err1"),
+        "stderr should contain err1, got: {:?}",
+        c.stderr_str()
+    );
+    assert!(
+        c.stderr_str().contains("err2"),
+        "stderr should contain err2, got: {:?}",
+        c.stderr_str()
+    );
+}
+
+#[test]
+fn pipeline_stderr_all_pipe_popen_errors() {
+    // Pipe without capture/communicate is not supported.
+    let result = (Exec::cmd("true") | Exec::cmd("true"))
+        .stderr_all(Redirection::Pipe)
+        .popen();
+    assert_eq!(result.unwrap_err().kind(), ErrorKind::InvalidInput);
+}

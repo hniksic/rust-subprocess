@@ -278,15 +278,13 @@ mod exec {
         ///
         /// Argument can be:
         ///
-        /// * a [`Redirection`], including [`Redirection::Null`] to redirect
-        ///   to the null device;
+        /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-        /// * a `Vec<u8>` or `&str`, which will set up a `Redirection::Pipe`
-        ///   for stdin, making sure that `capture` feeds that data into the
-        ///   standard input of the subprocess.
+        /// * a `Vec<u8>` or `&str`, which will set up a `Redirection::Pipe` for stdin,
+        ///   making sure that `capture` feeds that data into the standard input of the
+        ///   subprocess.
         ///
         /// [`Redirection`]: enum.Redirection.html
-        /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stdin(mut self, stdin: impl InputRedirection) -> Exec {
             match stdin.into_input_redirection() {
                 InputRedirectionKind::AsRedirection(new) => {
@@ -305,12 +303,10 @@ mod exec {
         ///
         /// Argument can be:
         ///
-        /// * a [`Redirection`], including [`Redirection::Null`] to redirect
-        ///   to the null device;
+        /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`.
         ///
         /// [`Redirection`]: enum.Redirection.html
-        /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stdout(mut self, stdout: impl OutputRedirection) -> Exec {
             self.config.stdout = stdout.into_output_redirection();
             self
@@ -320,12 +316,10 @@ mod exec {
         ///
         /// Argument can be:
         ///
-        /// * a [`Redirection`], including [`Redirection::Null`] to redirect
-        ///   to the null device;
+        /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`.
         ///
         /// [`Redirection`]: enum.Redirection.html
-        /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stderr(mut self, stderr: impl OutputRedirection) -> Exec {
             self.config.stderr = stderr.into_output_redirection();
             self
@@ -840,7 +834,7 @@ mod pipeline {
         execs: Vec<Exec>,
         stdin: Redirection,
         stdout: Redirection,
-        stderr_file: Option<File>,
+        stderr: Redirection,
         stdin_data: Option<Vec<u8>>,
     }
 
@@ -870,7 +864,7 @@ mod pipeline {
                 execs: vec![cmd1, cmd2],
                 stdin: Redirection::None,
                 stdout: Redirection::None,
-                stderr_file: None,
+                stderr: Redirection::None,
                 stdin_data: None,
             }
         }
@@ -928,7 +922,7 @@ mod pipeline {
                 execs,
                 stdin: Redirection::None,
                 stdout: Redirection::None,
-                stderr_file: None,
+                stderr: Redirection::None,
                 stdin_data: None,
             }
         }
@@ -937,15 +931,13 @@ mod pipeline {
         ///
         /// Argument can be:
         ///
-        /// * a [`Redirection`], including [`Redirection::Null`] to redirect
-        ///   to the null device;
+        /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-        /// * a `Vec<u8>` or `&str`, which will set up a `Redirection::Pipe`
-        ///   for stdin, making sure that `capture` feeds that data into the
-        ///   standard input of the subprocess.
+        /// * a `Vec<u8>` or `&str`, which will set up a `Redirection::Pipe` for stdin,
+        ///   making sure that `capture` feeds that data into the standard input of the
+        ///   subprocess.
         ///
         /// [`Redirection`]: enum.Redirection.html
-        /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stdin(mut self, stdin: impl InputRedirection) -> Pipeline {
             match stdin.into_input_redirection() {
                 InputRedirectionKind::AsRedirection(r) => self.stdin = r,
@@ -961,33 +953,48 @@ mod pipeline {
         ///
         /// Argument can be:
         ///
-        /// * a [`Redirection`], including [`Redirection::Null`] to redirect
-        ///   to the null device;
+        /// * a [`Redirection`];
         /// * a `File`, which is a shorthand for `Redirection::File(file)`.
         ///
         /// [`Redirection`]: enum.Redirection.html
-        /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stdout(mut self, stdout: impl OutputRedirection) -> Pipeline {
             self.stdout = stdout.into_output_redirection();
             self
         }
 
-        /// Specifies a file to which to redirect the standard error of all the commands in the
-        /// pipeline.
+        /// Specifies how to set up the standard error of all commands in the pipeline.
         ///
-        /// It is useful for capturing the standard error of the pipeline as a whole.  Unlike
-        /// `stdout()`, which only affects the last command in the pipeline, this affects all
-        /// commands.  The difference is because standard output is piped from one command to
-        /// the next, so only the output of the last command is "free".  In contrast, the
-        /// standard errors are not connected in any way.  This is also the reason only a
-        /// `File` is supported - it allows for efficient sharing of the same file by all
-        /// commands.
+        /// Unlike `stdout()`, which only affects the last command in the pipeline, this
+        /// affects all commands.  The difference is because standard output is piped from
+        /// one command to the next, so only the output of the last command is "free".  In
+        /// contrast, the standard errors are not connected to each other and can be
+        /// configured *en masse*.
+        ///
+        /// Argument can be:
+        ///
+        /// * a [`Redirection`];
+        /// * a `File`, which is a shorthand for `Redirection::File(file)`.
+        ///
+        /// All `Redirection` variants are meaningful:
+        ///
+        /// * `Redirection::None` - inherit from the parent (the default)
+        /// * `Redirection::Pipe` - funnel stderr of all commands into stderr obtained
+        ///   with `capture()` or `communicate()`
+        /// * `Redirection::Merge` - redirect stderr to stdout, like `2>&1` for each
+        ///   command
+        /// * `Redirection::File(f)` / `Redirection::SharedFile(arc)` - redirect to a file
+        /// * `Redirection::Null` - suppress stderr
         ///
         /// Note that this differs from the shell's `cmd1 | cmd2 2>file`, which only
-        /// redirects stderr of the last command.  This method is equivalent to
-        /// `(cmd1 | cmd2) 2>file`, but without the overhead of a subshell.
-        pub fn stderr_to(mut self, to: File) -> Pipeline {
-            self.stderr_file = Some(to);
+        /// redirects stderr of the last command.  This method is equivalent to `(cmd1 |
+        /// cmd2) 2>file`, but without the overhead of a subshell.
+        ///
+        /// If you pass `Redirection::Pipe`, you must use `capture()` or `communicate()`
+        /// to start the pipeline - using `popen()` will result in an error.
+        ///
+        /// [`Redirection`]: enum.Redirection.html
+        pub fn stderr_all(mut self, stderr: impl OutputRedirection) -> Pipeline {
+            self.stderr = stderr.into_output_redirection();
             self
         }
 
@@ -1011,13 +1018,44 @@ mod pipeline {
             self.check_no_stdin_data("popen");
             assert!(self.execs.len() >= 2);
 
-            if let Some(stderr_to) = self.stderr_file {
-                let stderr_to = Arc::new(stderr_to);
-                self.execs = self
-                    .execs
-                    .into_iter()
-                    .map(|cmd| cmd.stderr(Redirection::SharedFile(Arc::clone(&stderr_to))))
-                    .collect();
+            match self.stderr {
+                Redirection::None => {}
+                Redirection::Pipe => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "use capture() or communicate() to capture stderr from a pipeline",
+                    ));
+                }
+                Redirection::Merge => {
+                    self.execs = self
+                        .execs
+                        .into_iter()
+                        .map(|cmd| cmd.stderr(Redirection::Merge))
+                        .collect();
+                }
+                Redirection::File(f) => {
+                    let shared = Arc::new(f);
+                    self.execs = self
+                        .execs
+                        .into_iter()
+                        .map(|cmd| cmd.stderr(Redirection::SharedFile(Arc::clone(&shared))))
+                        .collect();
+                }
+                Redirection::SharedFile(ref arc) => {
+                    let arc = Arc::clone(arc);
+                    self.execs = self
+                        .execs
+                        .into_iter()
+                        .map(|cmd| cmd.stderr(Redirection::SharedFile(Arc::clone(&arc))))
+                        .collect();
+                }
+                Redirection::Null => {
+                    self.execs = self
+                        .execs
+                        .into_iter()
+                        .map(|cmd| cmd.stderr(Redirection::Null))
+                        .collect();
+                }
             }
 
             let first_cmd = self.execs.remove(0);
@@ -1084,9 +1122,18 @@ mod pipeline {
         fn setup_communicate(mut self) -> io::Result<(Communicator<Vec<u8>>, Vec<Popen>)> {
             assert!(self.execs.len() >= 2);
 
-            // Parent reads stderr - make_pipe() creates pipes suitable for this
-            let (err_read, err_write) = crate::popen::make_pipe()?;
-            self = self.stderr_to(err_write);
+            // Set up stderr capture based on the user's stderr_all() choice.
+            // None and Pipe both want a pipe for capture (None is the
+            // default/backward-compat case).  Other variants direct stderr
+            // elsewhere, so we don't capture it.
+            let err_read = match self.stderr {
+                Redirection::None | Redirection::Pipe => {
+                    let (err_read, err_write) = crate::popen::make_pipe()?;
+                    self.stderr = Redirection::SharedFile(Arc::new(err_write));
+                    Some(err_read)
+                }
+                _ => None,
+            };
 
             let stdin_data = self.stdin_data.take();
             let mut v = self.stdout(Redirection::Pipe).popen()?;
@@ -1095,7 +1142,7 @@ mod pipeline {
             let comm = Communicator::new(
                 v[0].stdin.take(),
                 v[vlen - 1].stdout.take(),
-                Some(err_read),
+                err_read,
                 stdin_data.unwrap_or_default(),
             );
             Ok((comm, v))
@@ -1152,11 +1199,7 @@ mod pipeline {
                 execs,
                 stdin: self.stdin.try_clone()?,
                 stdout: self.stdout.try_clone()?,
-                stderr_file: self
-                    .stderr_file
-                    .as_ref()
-                    .map(|f| f.try_clone())
-                    .transpose()?,
+                stderr: self.stderr.try_clone()?,
                 stdin_data: self.stdin_data.clone(),
             })
         }
