@@ -288,16 +288,15 @@ mod exec {
         /// [`Redirection`]: enum.Redirection.html
         /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stdin(mut self, stdin: impl InputRedirection) -> Exec {
-            match (&self.config.stdin, stdin.into_input_redirection()) {
-                (&Redirection::None, InputRedirectionKind::AsRedirection(new)) => {
-                    self.config.stdin = new
+            match stdin.into_input_redirection() {
+                InputRedirectionKind::AsRedirection(new) => {
+                    self.config.stdin = new;
+                    self.stdin_data = None;
                 }
-                (&Redirection::Pipe, InputRedirectionKind::AsRedirection(Redirection::Pipe)) => (),
-                (&Redirection::None, InputRedirectionKind::FeedData(data)) => {
+                InputRedirectionKind::FeedData(data) => {
                     self.config.stdin = Redirection::Pipe;
                     self.stdin_data = Some(data);
                 }
-                (_, _) => panic!("stdin is already set"),
             }
             self
         }
@@ -313,11 +312,7 @@ mod exec {
         /// [`Redirection`]: enum.Redirection.html
         /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stdout(mut self, stdout: impl OutputRedirection) -> Exec {
-            match (&self.config.stdout, stdout.into_output_redirection()) {
-                (&Redirection::None, new) => self.config.stdout = new,
-                (&Redirection::Pipe, Redirection::Pipe) => (),
-                (_, _) => panic!("stdout is already set"),
-            }
+            self.config.stdout = stdout.into_output_redirection();
             self
         }
 
@@ -332,11 +327,7 @@ mod exec {
         /// [`Redirection`]: enum.Redirection.html
         /// [`Redirection::Null`]: enum.Redirection.html#variant.Null
         pub fn stderr(mut self, stderr: impl OutputRedirection) -> Exec {
-            match (&self.config.stderr, stderr.into_output_redirection()) {
-                (&Redirection::None, new) => self.config.stderr = new,
-                (&Redirection::Pipe, Redirection::Pipe) => (),
-                (_, _) => panic!("stderr is already set"),
-            }
+            self.config.stderr = stderr.into_output_redirection();
             self
         }
 
@@ -846,7 +837,7 @@ mod pipeline {
     /// [`Pipeline`]: struct.Pipeline.html
     #[must_use]
     pub struct Pipeline {
-        cmds: Vec<Exec>,
+        execs: Vec<Exec>,
         stdin: Redirection,
         stdout: Redirection,
         stderr_file: Option<File>,
@@ -876,7 +867,7 @@ mod pipeline {
                 );
             }
             Pipeline {
-                cmds: vec![cmd1, cmd2],
+                execs: vec![cmd1, cmd2],
                 stdin: Redirection::None,
                 stdout: Redirection::None,
                 stderr_file: None,
@@ -915,18 +906,18 @@ mod pipeline {
         where
             I: IntoIterator<Item = Exec>,
         {
-            let cmds: Vec<_> = iterable.into_iter().collect();
+            let execs: Vec<_> = iterable.into_iter().collect();
 
-            if cmds.len() < 2 {
+            if execs.len() < 2 {
                 panic!("pipeline requires at least two commands")
             }
-            if cmds.first().unwrap().stdin_is_set() {
+            if execs.first().unwrap().stdin_is_set() {
                 panic!(
                     "stdin of the first command is already redirected; \
                      use Pipeline::stdin() to redirect pipeline input"
                 );
             }
-            if cmds.last().unwrap().stdout_is_set() {
+            if execs.last().unwrap().stdout_is_set() {
                 panic!(
                     "stdout of the last command is already redirected; \
                      use Pipeline::stdout() to redirect pipeline output"
@@ -934,7 +925,7 @@ mod pipeline {
             }
 
             Pipeline {
-                cmds,
+                execs,
                 stdin: Redirection::None,
                 stdout: Redirection::None,
                 stderr_file: None,
@@ -1018,27 +1009,27 @@ mod pipeline {
         /// equivalent to what the shell does.
         pub fn popen(mut self) -> io::Result<Vec<Popen>> {
             self.check_no_stdin_data("popen");
-            assert!(self.cmds.len() >= 2);
+            assert!(self.execs.len() >= 2);
 
             if let Some(stderr_to) = self.stderr_file {
                 let stderr_to = Arc::new(stderr_to);
-                self.cmds = self
-                    .cmds
+                self.execs = self
+                    .execs
                     .into_iter()
                     .map(|cmd| cmd.stderr(Redirection::SharedFile(Arc::clone(&stderr_to))))
                     .collect();
             }
 
-            let first_cmd = self.cmds.remove(0);
-            self.cmds.insert(0, first_cmd.stdin(self.stdin));
+            let first_cmd = self.execs.remove(0);
+            self.execs.insert(0, first_cmd.stdin(self.stdin));
 
-            let last_cmd = self.cmds.remove(self.cmds.len() - 1);
-            self.cmds.push(last_cmd.stdout(self.stdout));
+            let last_cmd = self.execs.remove(self.execs.len() - 1);
+            self.execs.push(last_cmd.stdout(self.stdout));
 
             let mut ret = Vec::<Popen>::new();
-            let cnt = self.cmds.len();
+            let cnt = self.execs.len();
 
-            for (idx, mut runner) in self.cmds.into_iter().enumerate() {
+            for (idx, mut runner) in self.execs.into_iter().enumerate() {
                 if idx != 0 {
                     let prev_stdout = ret[idx - 1].stdout.take().unwrap();
                     runner = runner.stdin(prev_stdout);
@@ -1091,7 +1082,7 @@ mod pipeline {
         }
 
         fn setup_communicate(mut self) -> io::Result<(Communicator<Vec<u8>>, Vec<Popen>)> {
-            assert!(self.cmds.len() >= 2);
+            assert!(self.execs.len() >= 2);
 
             // Parent reads stderr - make_pipe() creates pipes suitable for this
             let (err_read, err_write) = crate::popen::make_pipe()?;
@@ -1118,7 +1109,7 @@ mod pipeline {
         /// Unlike `capture()`, this method doesn't wait for the pipeline to finish,
         /// effectively detaching it.
         pub fn communicate(mut self) -> io::Result<Communicator<Vec<u8>>> {
-            self.cmds = self.cmds.into_iter().map(|cmd| cmd.detached()).collect();
+            self.execs = self.execs.into_iter().map(|cmd| cmd.detached()).collect();
             let comm = self.setup_communicate()?.0;
             Ok(comm)
         }
@@ -1152,13 +1143,13 @@ mod pipeline {
         /// This can fail if a `Redirection::File` is present because duplicating the
         /// underlying file descriptor is an OS operation that can fail.
         pub fn try_clone(&self) -> io::Result<Pipeline> {
-            let cmds = self
-                .cmds
+            let execs = self
+                .execs
                 .iter()
                 .map(|cmd| cmd.try_clone())
                 .collect::<io::Result<Vec<_>>>()?;
             Ok(Pipeline {
-                cmds,
+                execs,
                 stdin: self.stdin.try_clone()?,
                 stdout: self.stdout.try_clone()?,
                 stderr_file: self
@@ -1186,7 +1177,7 @@ mod pipeline {
                      use Pipeline::stdout() to redirect pipeline output"
                 );
             }
-            self.cmds.push(rhs);
+            self.execs.push(rhs);
             self
         }
     }
@@ -1200,13 +1191,13 @@ mod pipeline {
         ///
         /// Panics if the last command of `rhs` has stdout redirected.
         fn bitor(mut self, rhs: Pipeline) -> Pipeline {
-            if rhs.cmds.last().unwrap().stdout_is_set() {
+            if rhs.execs.last().unwrap().stdout_is_set() {
                 panic!(
                     "stdout of the last command is already redirected; \
                      use Pipeline::stdout() to redirect pipeline output"
                 );
             }
-            self.cmds.extend(rhs.cmds);
+            self.execs.extend(rhs.execs);
             self.stdout = rhs.stdout;
             self
         }
@@ -1215,7 +1206,7 @@ mod pipeline {
     impl fmt::Debug for Pipeline {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             let mut args = vec![];
-            for cmd in &self.cmds {
+            for cmd in &self.execs {
                 args.push(cmd.to_cmdline_lossy());
             }
             write!(f, "Pipeline {{ {} }}", args.join(" | "))
