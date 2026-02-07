@@ -114,7 +114,6 @@ use os::*;
 pub struct Exec {
     command: OsString,
     args: Vec<OsString>,
-    timeout: Option<Duration>,
     check_success: bool,
     config: PopenConfig,
     stdin_data: Option<Vec<u8>>,
@@ -134,7 +133,6 @@ impl Exec {
         Exec {
             command: command.as_ref().to_owned(),
             args: vec![],
-            timeout: None,
             check_success: false,
             config: PopenConfig::default(),
             stdin_data: None,
@@ -178,18 +176,6 @@ impl Exec {
     /// object that owns it goes out of scope.
     pub fn detached(mut self) -> Exec {
         self.config.detached = true;
-        self
-    }
-
-    /// Set the timeout for waiting on the process.
-    ///
-    /// This affects [`join`](Self::join), [`capture`](Self::capture), and
-    /// [`communicate`](Self::communicate).  `join` and `capture` will return an
-    /// error of kind `ErrorKind::TimedOut` if the subprocess does not finish within
-    /// the given duration.  For `communicate`, the timeout is forwarded to the
-    /// returned `Communicator`.
-    pub fn timeout(mut self, time: Duration) -> Exec {
-        self.timeout = Some(time);
         self
     }
 
@@ -336,15 +322,6 @@ impl Exec {
     }
 
     /// Starts the process, waits for it to finish, and returns the exit status.
-    ///
-    /// This method will wait for as long as necessary for the process to finish.
-    /// Use [`timeout`](Self::timeout) to limit the wait time; if the process
-    /// doesn't finish in time, an error of kind `ErrorKind::TimedOut` is returned.
-    ///
-    /// Note: on timeout, dropping the subprocess will still wait for it to
-    /// exit. If the process might not exit on its own after its pipes are
-    /// closed, also use [`detached`](Self::detached) to prevent the drop
-    /// from blocking.
     pub fn join(self) -> io::Result<ExitStatus> {
         self.start()?.join()
     }
@@ -353,7 +330,6 @@ impl Exec {
     /// and its pipe ends.
     pub fn start(mut self) -> io::Result<Started> {
         let stdin_data = self.stdin_data.take().unwrap_or_default();
-        let timeout = self.timeout;
         let check_success = self.check_success;
         let mut p = self.popen()?;
         Ok(Started {
@@ -361,7 +337,6 @@ impl Exec {
             stdout: p.stdout.take(),
             stderr: p.stderr.take(),
             stdin_data,
-            timeout,
             check_success,
             started: vec![p],
         })
@@ -536,7 +511,6 @@ impl Exec {
         Ok(Exec {
             command: self.command.clone(),
             args: self.args.clone(),
-            timeout: self.timeout,
             check_success: self.check_success,
             config: self.config.try_clone()?,
             stdin_data: self.stdin_data.clone(),
@@ -577,9 +551,6 @@ pub struct Started {
     /// Data to feed to the first process's stdin, set by [`Exec::stdin`] or
     /// [`Pipeline::stdin`].
     pub stdin_data: Vec<u8>,
-    /// Timeout for [`join`](Self::join), [`capture`](Self::capture), and
-    /// [`communicate`](Self::communicate).
-    pub timeout: Option<Duration>,
     /// Whether to return an error on non-zero exit status.
     pub check_success: bool,
     /// Started processes, in pipeline order.
@@ -592,38 +563,73 @@ impl Started {
     /// The communicator takes ownership of `stdin`, `stdout`, and `stderr`, leaving
     /// them as `None`.  Only streams that were redirected to a pipe will be
     /// available to the communicator.
-    ///
-    /// If `timeout` was set, the communicator will have a corresponding time limit.
     pub fn communicate(&mut self) -> Communicator<Vec<u8>> {
-        let mut comm = Communicator::new(
+        Communicator::new(
             self.stdin.take(),
             self.stdout.take(),
             self.stderr.take(),
             std::mem::take(&mut self.stdin_data),
-        );
-        if let Some(t) = self.timeout {
-            comm = comm.limit_time(t);
-        }
-        comm
+        )
     }
 
-    /// Closes the pipe ends, waits for the process(es) to finish, and returns the
-    /// exit status of the last process.
+    /// Terminates all processes in the pipeline.
     ///
-    /// If `timeout` was set, returns an error of kind `ErrorKind::TimedOut` if the
-    /// process does not finish in time.
+    /// Delegates to [`Popen::terminate()`] on each process, which sends `SIGTERM`
+    /// on Unix and calls `TerminateProcess` on Windows.
+    pub fn terminate(&mut self) -> io::Result<()> {
+        for p in &mut self.started {
+            p.terminate()?;
+        }
+        Ok(())
+    }
+
+    /// Waits for all processes to finish and returns the last process's exit
+    /// status.
+    ///
+    /// Unlike [`join`](Self::join), this does not consume `self`, does not close
+    /// the pipe ends, and ignores `check_success`.
+    pub fn wait(&mut self) -> io::Result<ExitStatus> {
+        let mut status = ExitStatus::from_raw(0);
+        for p in &mut self.started {
+            status = p.wait()?;
+        }
+        Ok(status)
+    }
+
+    /// Like [`wait`](Self::wait), but with a timeout.
+    ///
+    /// Returns an error of kind `ErrorKind::TimedOut` if the processes don't
+    /// finish within the given duration.
+    pub fn wait_timeout(&mut self, timeout: Duration) -> io::Result<ExitStatus> {
+        let deadline = Instant::now() + timeout;
+        let mut status = ExitStatus::from_raw(0);
+        for p in &mut self.started {
+            status = p
+                .wait_timeout(deadline.saturating_duration_since(Instant::now()))?
+                .ok_or(io::Error::from(ErrorKind::TimedOut))?;
+        }
+        Ok(status)
+    }
+
+    /// Closes the pipe ends, waits for all processes to finish, and returns
+    /// the exit status of the last process.
     pub fn join(mut self) -> io::Result<ExitStatus> {
-        let deadline = self.timeout.map(|t| Instant::now() + t);
         self.communicate().read()?;
-        let Some(last) = self.started.last_mut() else {
-            return Ok(ExitStatus::from_raw(0));
-        };
-        let status = match deadline {
-            Some(d) => last
-                .wait_timeout(d.saturating_duration_since(Instant::now()))?
-                .ok_or(io::Error::from(ErrorKind::TimedOut))?,
-            None => last.wait()?,
-        };
+        let status = self.wait()?;
+        if self.check_success && !status.success() {
+            return Err(io::Error::other(format!("command failed: {status}")));
+        }
+        Ok(status)
+    }
+
+    /// Like [`join`](Self::join), but with a timeout.
+    ///
+    /// Returns an error of kind `ErrorKind::TimedOut` if the processes don't
+    /// finish within the given duration.
+    pub fn join_timeout(mut self, timeout: Duration) -> io::Result<ExitStatus> {
+        let deadline = Instant::now() + timeout;
+        self.communicate_with_deadline(deadline).read()?;
+        let status = self.wait_timeout(deadline.saturating_duration_since(Instant::now()))?;
         if self.check_success && !status.success() {
             return Err(io::Error::other(format!("command failed: {status}")));
         }
@@ -634,33 +640,15 @@ impl Started {
     ///
     /// Only streams that were redirected to a pipe will produce data; non-piped
     /// streams will result in empty bytes in `Capture`.
-    ///
-    /// If `timeout` was set, both communication and waiting are limited to
-    /// that duration.
     pub fn capture(mut self) -> io::Result<Capture> {
-        let deadline = self.timeout.map(|t| Instant::now() + t);
         let (stdout, stderr) = {
             let mut comm = self.communicate();
             comm.read()?
         };
-
-        let Some(last) = self.started.last_mut() else {
-            return Ok(Capture {
-                stdout,
-                stderr,
-                exit_status: ExitStatus::from_raw(0),
-            });
-        };
-        let remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
         let capture = Capture {
             stdout,
             stderr,
-            exit_status: match remaining {
-                Some(t) => last
-                    .wait_timeout(t)?
-                    .ok_or(io::Error::from(ErrorKind::TimedOut))?,
-                None => last.wait()?,
-            },
+            exit_status: self.wait()?,
         };
         if self.check_success && !capture.success() {
             return Err(io::Error::other(format!(
@@ -669,6 +657,35 @@ impl Started {
             )));
         }
         Ok(capture)
+    }
+
+    /// Like [`capture`](Self::capture), but with a timeout.
+    ///
+    /// Returns an error of kind `ErrorKind::TimedOut` if the processes don't
+    /// finish within the given duration.
+    pub fn capture_timeout(mut self, timeout: Duration) -> io::Result<Capture> {
+        let deadline = Instant::now() + timeout;
+        let (stdout, stderr) = {
+            let mut comm = self.communicate_with_deadline(deadline);
+            comm.read()?
+        };
+        let capture = Capture {
+            stdout,
+            stderr,
+            exit_status: self.wait_timeout(deadline.saturating_duration_since(Instant::now()))?,
+        };
+        if self.check_success && !capture.success() {
+            return Err(io::Error::other(format!(
+                "command failed: {}",
+                capture.exit_status
+            )));
+        }
+        Ok(capture)
+    }
+
+    fn communicate_with_deadline(&mut self, deadline: Instant) -> Communicator<Vec<u8>> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        self.communicate().limit_time(remaining)
     }
 }
 

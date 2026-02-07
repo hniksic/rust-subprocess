@@ -54,7 +54,6 @@ library is fine for simple use cases, but it doesn't cover common scenarios such
 | Pipelines | Manual pipe setup | `cmd1 \| cmd2 \| cmd3` |
 | Merge stderr into stdout | Not supported | `Redirection::Merge` |
 | Send SIGTERM (Unix) | Only `kill()` (SIGKILL) | `send_signal(SIGTERM)` |
-| Signal process group (Unix) | Not supported | `send_signal_group()` |
 | Auto-cleanup on drop | No (zombies possible) | Yes (waits by default) |
 
 ## API Overview
@@ -78,12 +77,15 @@ The API has two levels:
 Execute a command and wait for it to complete:
 
 ```rust
-let exit_status = Exec::cmd("umount").arg(dirname).join()?;
-assert!(exit_status.success());
+Exec::cmd("umount").arg(dirname).checked().join()?;
 ```
 
-To prevent quoting issues and shell injection attacks, `subprocess` does not spawn a shell
-unless explicitly requested.  To execute a command through the OS shell, use `Exec::shell`:
+`join()` starts the command and waits for it to finish. `checked()` ensures error in case
+of non-zero exit status, analogous to reqwest's `error_for_status()`.
+
+To prevent quoting issues and shell injection attacks, `subprocess` doesn't spawn a shell
+unless explicitly requested.  To execute a command through the OS shell, use
+`Exec::shell`:
 
 ```rust
 Exec::shell("shutdown -h now").join()?;
@@ -91,20 +93,16 @@ Exec::shell("shutdown -h now").join()?;
 
 ### Capturing output
 
-Capture the output of a command:
+Capture the stdout and stderr of a command, and print the stdout:
 
 ```rust
-let out = Exec::cmd("ls")
-  .stdout(Redirection::Pipe)
-  .capture()?
-  .stdout_str();
+let out = Exec::cmd("ls").stdout(Redirection::Pipe).capture()?.stdout_str();
 ```
 
 Capture both stdout and stderr merged together:
 
 ```rust
 let out_and_err = Exec::cmd("ls")
-  .stdout(Redirection::Pipe)
   .stderr(Redirection::Merge)  // 2>&1
   .capture()?
   .stdout_str();
@@ -117,7 +115,6 @@ Provide input data and capture output:
 ```rust
 let out = Exec::cmd("sort")
   .stdin("b\nc\na\n")
-  .stdout(Redirection::Pipe)
   .capture()?
   .stdout_str();
 assert_eq!(out, "a\nb\nc\n");
@@ -137,8 +134,8 @@ let stream = Exec::cmd("find").arg("/").stream_stdout()?;
 Create pipelines using the `|` operator:
 
 ```rust
-let exit_status =
-  (Exec::shell("ls *.bak") | Exec::cmd("xargs").arg("rm")).join()?;
+let pipeline = Exec::shell("ls *.bak") | Exec::cmd("xargs").arg("rm");
+let exit_status = pipeline.join()?;
 ```
 
 Capture the output of a pipeline:
@@ -154,29 +151,25 @@ let dir_checksum = {
 Give the process some time to run, then terminate if needed:
 
 ```rust
-let mut p = Exec::cmd("sleep").arg("10").popen()?;
-if let Some(status) = p.wait_timeout(Duration::from_secs(1))? {
-    println!("finished: {:?}", status);
-} else {
-    println!("timed out, terminating");
-    p.terminate()?;
-    p.wait()?;
+let mut started = Exec::cmd("sleep").arg("10").start()?;
+match started.wait_timeout(Duration::from_secs(1)) {
+    Ok(status) => println!("finished: {:?}", status),
+    Err(e) if e.kind() == ErrorKind::TimedOut => {
+        started.terminate()?;
+        started.wait()?;
+    }
+    Err(e) => return Err(e),
 }
 ```
 
 ### Communicating with deadlock prevention
 
-When you need to write to stdin and read from stdout/stderr simultaneously:
+When you need to pipe some (or a lot of) data to stdin and read stdout/stderr:
 
 ```rust
-let mut p = Popen::create(&["cat"], PopenConfig {
-    stdin: Redirection::Pipe,
-    stdout: Redirection::Pipe,
-    ..Default::default()
-})?;
-
 // communicate() handles the write/read interleaving to avoid deadlock
-let (out, _err) = p.communicate("hello world")?.read_string()?;
+let mut comm = Exec::cmd("cat").stdin("hello world").communicate()?;
+let (out, _err) = comm.read_string()?;
 assert_eq!(out, "hello world");
 ```
 
@@ -185,15 +178,10 @@ With a timeout:
 ```rust
 let mut comm = Exec::cmd("slow-program")
     .stdin("input")
-    .stdout(Redirection::Pipe)
-    .communicate()?
-    .limit_time(Duration::from_secs(5));
-
-match comm.read_string() {
+    .communicate()?;
+match comm.limit_time(Duration::from_secs(5)).read_string() {
     Ok((stdout, stderr)) => println!("got: {:?}", stdout),
-    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-        println!("timed out, partial: {:?}", e.capture);
-    }
+    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => println!("timed out"),
     Err(e) => return Err(e.into()),
 }
 ```
@@ -207,22 +195,6 @@ use subprocess::unix::PopenExt;
 
 let mut p = Exec::cmd("sleep").arg("100").popen()?;
 p.send_signal(libc::SIGTERM)?;  // graceful termination
-p.wait()?;
-```
-
-Terminate an entire process tree using process groups:
-
-```rust
-use subprocess::unix::PopenExt;
-
-// Start child in its own process group
-let mut p = Popen::create(&["sh", "-c", "sleep 100 & sleep 100"], PopenConfig {
-    setpgid: true,
-    ..Default::default()
-})?;
-
-// Signal the entire process group
-p.send_signal_group(libc::SIGTERM)?;
 p.wait()?;
 ```
 

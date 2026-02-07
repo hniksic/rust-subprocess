@@ -496,8 +496,9 @@ fn pipeline_to_string() {
 fn capture_timeout() {
     match Exec::cmd("sleep")
         .args(&["0.5"])
-        .timeout(Duration::from_millis(100))
-        .capture()
+        .start()
+        .unwrap()
+        .capture_timeout(Duration::from_millis(100))
     {
         Ok(_) => panic!("expected timeout return"),
         Err(e) => match e.kind() {
@@ -510,8 +511,9 @@ fn capture_timeout() {
 #[test]
 fn pipeline_capture_timeout() {
     match (Exec::cmd("sleep").arg("0.5") | Exec::cmd("cat"))
-        .timeout(Duration::from_millis(100))
-        .capture()
+        .start()
+        .unwrap()
+        .capture_timeout(Duration::from_millis(100))
     {
         Ok(_) => panic!("expected timeout return"),
         Err(e) => assert_eq!(e.kind(), ErrorKind::TimedOut),
@@ -725,16 +727,18 @@ fn pipeline_start_communicate_needs_explicit_pipes() {
 fn exec_timeout_join_timed_out() {
     let result = Exec::cmd("sleep")
         .arg("0.5")
-        .timeout(Duration::from_millis(100))
-        .join();
+        .start()
+        .unwrap()
+        .join_timeout(Duration::from_millis(100));
     assert_eq!(result.unwrap_err().kind(), ErrorKind::TimedOut);
 }
 
 #[test]
 fn exec_timeout_join_succeeds() {
     let status = Exec::cmd("true")
-        .timeout(Duration::from_secs(5))
-        .join()
+        .start()
+        .unwrap()
+        .join_timeout(Duration::from_secs(5))
         .unwrap();
     assert!(status.success());
 }
@@ -743,9 +747,9 @@ fn exec_timeout_join_succeeds() {
 fn exec_timeout_communicate_timed_out() {
     let result = Exec::cmd("sleep")
         .arg("0.5")
-        .timeout(Duration::from_millis(100))
         .communicate()
         .unwrap()
+        .limit_time(Duration::from_millis(100))
         .read();
     assert_eq!(result.unwrap_err().kind(), ErrorKind::TimedOut);
 }
@@ -753,8 +757,9 @@ fn exec_timeout_communicate_timed_out() {
 #[test]
 fn pipeline_timeout_join_timed_out() {
     let result = (Exec::cmd("sleep").arg("0.5") | Exec::cmd("cat"))
-        .timeout(Duration::from_millis(100))
-        .join();
+        .start()
+        .unwrap()
+        .join_timeout(Duration::from_millis(100));
     assert_eq!(result.unwrap_err().kind(), ErrorKind::TimedOut);
 }
 
@@ -997,4 +1002,16 @@ fn pipeline_checked() {
         .checked()
         .join()
         .unwrap();
+}
+
+#[test]
+fn exec_wait_timeout_terminate() {
+    let mut started = Exec::cmd("sleep").arg("10").start().unwrap();
+    let err = started
+        .wait_timeout(Duration::from_millis(100))
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::TimedOut);
+    started.terminate().unwrap();
+    let status = started.wait().unwrap();
+    assert!(!status.success());
 }

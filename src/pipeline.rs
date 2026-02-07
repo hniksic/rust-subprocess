@@ -5,7 +5,6 @@ use std::io::{self, Read, Write};
 use std::ops::BitOr;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::communicate::Communicator;
 use crate::popen::ExitStatus;
@@ -46,7 +45,7 @@ use crate::exec::{
 /// # use subprocess::*;
 /// # fn dummy() -> std::io::Result<()> {
 /// let dir_checksum = {
-///     Exec::cmd("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
+///     Exec::shell("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum")
 /// }.capture()?.stdout_str();
 /// # Ok(())
 /// # }
@@ -62,7 +61,6 @@ pub struct Pipeline {
     stdout: Redirection,
     stderr: Redirection,
     stdin_data: Option<Vec<u8>>,
-    timeout: Option<Duration>,
     check_success: bool,
     detached: bool,
     cwd: Option<OsString>,
@@ -89,7 +87,6 @@ impl Pipeline {
             stdout: Redirection::None,
             stderr: Redirection::None,
             stdin_data: None,
-            timeout: None,
             check_success: false,
             detached: false,
             cwd: None,
@@ -189,18 +186,6 @@ impl Pipeline {
         self
     }
 
-    /// Set the timeout for waiting on the pipeline.
-    ///
-    /// This affects [`join`](Self::join), [`capture`](Self::capture), and
-    /// [`communicate`](Self::communicate).  `join` and `capture` will return an
-    /// error of kind `ErrorKind::TimedOut` if the pipeline does not finish within
-    /// the given duration.  For `communicate`, the timeout is forwarded to the
-    /// returned `Communicator`.
-    pub fn timeout(mut self, time: Duration) -> Pipeline {
-        self.timeout = Some(time);
-        self
-    }
-
     /// If called, [`join`](Self::join) and [`capture`](Self::capture) will return
     /// an error if the last command in the pipeline exits with a non-zero status.
     pub fn checked(mut self) -> Pipeline {
@@ -274,7 +259,6 @@ impl Pipeline {
                 stdout: None,
                 stderr: None,
                 stdin_data: vec![],
-                timeout: self.timeout,
                 check_success: self.check_success,
                 started: vec![],
             });
@@ -331,7 +315,6 @@ impl Pipeline {
             stdout,
             stderr,
             stdin_data: self.stdin_data.unwrap_or_default(),
-            timeout: self.timeout,
             check_success: self.check_success,
             started: ret,
         })
@@ -339,16 +322,6 @@ impl Pipeline {
 
     /// Starts the pipeline, waits for it to finish, and returns the exit status
     /// of the last command.
-    ///
-    /// This method will wait for as long as necessary for the pipeline to
-    /// finish. Use [`timeout`](Self::timeout) to limit the wait time; if the
-    /// pipeline doesn't finish in time, an error of kind `ErrorKind::TimedOut`
-    /// is returned.
-    ///
-    /// Note: on timeout, dropping the subprocesses will still wait for them
-    /// to exit. If the processes might not exit on their own after their
-    /// pipes are closed, also use [`detached`](Self::detached) to prevent
-    /// the drop from blocking.
     pub fn join(self) -> io::Result<ExitStatus> {
         self.start()?.join()
     }
@@ -476,7 +449,6 @@ impl Pipeline {
             stdout: self.stdout.try_clone()?,
             stderr: self.stderr.try_clone()?,
             stdin_data: self.stdin_data.clone(),
-            timeout: self.timeout,
             check_success: self.check_success,
             detached: self.detached,
             cwd: self.cwd.clone(),
@@ -538,7 +510,6 @@ impl FromIterator<Exec> for Pipeline {
             stdout: Redirection::None,
             stderr: Redirection::None,
             stdin_data: None,
-            timeout: None,
             check_success: false,
             detached: false,
             cwd: None,
