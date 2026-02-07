@@ -2,7 +2,7 @@ use std::env;
 use std::fs::{self, File};
 use std::io::{self, ErrorKind, prelude::*};
 use std::sync::{Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
@@ -122,6 +122,22 @@ fn exec_start_capture() {
         .capture()
         .unwrap();
     assert!(c.stdout_str().contains("hello"));
+}
+
+#[test]
+fn pipeline_detached() {
+    let start = Instant::now();
+    {
+        let _handle = { Exec::cmd("sleep").arg("10") | Exec::cmd("sleep").arg("10") }
+            .detached()
+            .start()
+            .unwrap();
+        // handle and its processes are dropped here without waiting
+    }
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "detached() didn't prevent waiting on drop"
+    );
 }
 
 #[test]

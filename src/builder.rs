@@ -945,6 +945,7 @@ mod pipeline {
         stderr: Redirection,
         stdin_data: Option<Vec<u8>>,
         timeout: Option<Duration>,
+        detached: bool,
     }
 
     impl Pipeline {
@@ -976,6 +977,7 @@ mod pipeline {
                 stderr: Redirection::None,
                 stdin_data: None,
                 timeout: None,
+                detached: false,
             }
         }
 
@@ -1062,6 +1064,15 @@ mod pipeline {
             self
         }
 
+        /// Specifies that the pipeline processes are initially detached.
+        ///
+        /// A detached pipeline means that we will not wait for the processes
+        /// to finish when the objects that own them go out of scope.
+        pub fn detached(mut self) -> Pipeline {
+            self.detached = true;
+            self
+        }
+
         fn check_no_stdin_data(&self, meth: &str) {
             if self.stdin_data.is_some() {
                 panic!("{} called with input data specified", meth);
@@ -1124,6 +1135,10 @@ mod pipeline {
                         .map(|cmd| cmd.stderr(Redirection::Null))
                         .collect();
                 }
+            }
+
+            if self.detached {
+                self.execs = self.execs.into_iter().map(|cmd| cmd.detached()).collect();
             }
 
             let first_cmd = self.execs.remove(0);
@@ -1223,7 +1238,7 @@ mod pipeline {
         /// performed, such as read size limit and timeout.  Unlike `capture()`, this
         /// method doesn't wait for the pipeline to finish, effectively detaching it.
         pub fn communicate(mut self) -> io::Result<Communicator<Vec<u8>>> {
-            self.execs = self.execs.into_iter().map(|cmd| cmd.detached()).collect();
+            self = self.detached();
             let setup_stdout = matches!(self.stdout, Redirection::None);
             let setup_stderr = matches!(self.stderr, Redirection::None);
             if setup_stdout {
@@ -1273,6 +1288,7 @@ mod pipeline {
                 stderr: self.stderr.try_clone()?,
                 stdin_data: self.stdin_data.clone(),
                 timeout: self.timeout,
+                detached: self.detached,
             })
         }
     }
@@ -1372,6 +1388,7 @@ mod pipeline {
                 stderr: Redirection::None,
                 stdin_data: None,
                 timeout: None,
+                detached: false,
             }
         }
     }
