@@ -17,29 +17,18 @@
 //!   arbitrary [open files](Redirection::File), or [merging](Redirection::Merge) output
 //!   streams like shell's `2>&1` and `1>&2` operators.
 //!
-//! * Non-blocking and timeout methods to wait on the process: [`poll`](Popen::poll),
-//!   [`wait`](Popen::wait), and [`wait_timeout`](Popen::wait_timeout).
+//! * Non-blocking and timeout methods to wait on the process: [`poll`](Process::poll),
+//!   [`wait`](Process::wait), and [`wait_timeout`](Process::wait_timeout).
 //!
 //! # Examples
 //!
-//! Communicate with a process and optionally terminate it:
+//! Execute a command and capture its output:
 //!
 //! ```
 //! # use subprocess::*;
 //! # fn dummy() -> std::io::Result<()> {
-//! let mut p = Popen::create(&["ps", "x"], PopenConfig {
-//!     stdout: Redirection::Pipe, ..Default::default()
-//! })?;
-//!
-//! // Obtain the output from the standard streams.
-//! let (out, err) = p.communicate([])?.read_string()?;
-//!
-//! if let Some(exit_status) = p.poll() {
-//!     // the process has finished
-//! } else {
-//!     // it is still running, terminate it
-//!     p.terminate()?;
-//! }
+//! let out = Exec::cmd("echo").arg("hello").capture()?.stdout_str();
+//! assert!(out.contains("hello"));
 //! # Ok(())
 //! # }
 //! ```
@@ -63,6 +52,7 @@ mod communicate;
 mod exec;
 mod pipeline;
 mod popen;
+mod process;
 
 #[cfg(unix)]
 mod posix;
@@ -76,16 +66,20 @@ mod tests;
 pub use communicate::Communicator;
 #[cfg(unix)]
 pub use exec::unix::ExecExt;
+#[cfg(unix)]
+pub use exec::unix::StartedExt;
 #[cfg(windows)]
 pub use exec::windows::ExecExt;
 pub use exec::{Capture, Exec, InputRedirection, OutputRedirection, Started};
 pub use pipeline::Pipeline;
-pub use popen::{_PrivateSeal, ExitStatus, Popen, PopenConfig, Redirection, make_pipe};
+pub use popen::{ExitStatus, Redirection};
+pub use process::Process;
 
 /// Subprocess extensions for Unix platforms.
 #[cfg(unix)]
 pub mod unix {
-    pub use super::popen::os_ext::*;
+    pub use super::exec::unix::StartedExt;
+    pub use super::process::ProcessExt;
 }
 
 /// Subprocess extensions for Windows platforms.

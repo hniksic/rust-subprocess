@@ -1,125 +1,111 @@
-use tempfile::TempDir;
-
-use std::fs::{self, File};
+use std::fs;
 use std::io;
 use std::time::Duration;
 
-use crate::{Popen, PopenConfig, Redirection};
+use tempfile::TempDir;
+
+use crate::{Exec, Redirection};
 
 #[test]
 fn communicate_input() {
+    // Feed input data to stdin, redirect stdout to a file, and verify
+    // the data arrives in the file.
     let tmpdir = TempDir::new().unwrap();
     let tmpname = tmpdir.path().join("input");
-    let mut p = Popen::create(
-        &["cat"],
-        PopenConfig {
-            stdin: Redirection::Pipe,
-            stdout: Redirection::File(File::create(&tmpname).unwrap()),
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, err) = p.communicate("hello world").unwrap().read().unwrap();
-    assert!(out.is_empty());
-    assert!(err.is_empty());
-    assert!(p.wait().unwrap().success());
+    let mut handle = Exec::cmd("cat")
+        .stdin("hello world")
+        .stdout(std::fs::File::create(&tmpname).unwrap())
+        .start()
+        .unwrap();
+    handle.communicate().read().unwrap();
+    assert!(handle.wait().unwrap().success());
     assert_eq!(fs::read_to_string(&tmpname).unwrap(), "hello world");
 }
 
 #[test]
 fn communicate_output() {
-    let mut p = Popen::create(
-        &["sh", "-c", "echo foo; echo bar >&2"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, err) = p.communicate([]).unwrap().read().unwrap();
+    // Capture both stdout and stderr from a command that writes to both.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "echo foo; echo bar >&2"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
     assert_eq!(out, b"foo\n");
     assert_eq!(err, b"bar\n");
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_input_output() {
-    let mut p = Popen::create(
-        &["sh", "-c", "cat; echo foo >&2"],
-        PopenConfig {
-            stdin: Redirection::Pipe,
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, err) = p.communicate("hello world").unwrap().read().unwrap();
+    // Feed input data and capture both stdout and stderr.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "cat; echo foo >&2"])
+        .stdin("hello world")
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
     assert_eq!(out, b"hello world");
     assert_eq!(err, b"foo\n");
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_input_output_long() {
-    let mut p = Popen::create(
-        &["sh", "-c", "cat; printf '%100000s' '' >&2"],
-        PopenConfig {
-            stdin: Redirection::Pipe,
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let input = [65u8; 1_000_000];
-    let (out, err) = p.communicate(&input).unwrap().read().unwrap();
-    assert_eq!(&out[..], &input[..]);
+    // Large data in both directions with simultaneous stdout and stderr
+    // output, testing deadlock prevention.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "cat; printf '%100000s' '' >&2"])
+        .stdin(vec![65u8; 1_000_000])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
+    assert_eq!(&out[..], &[65u8; 1_000_000][..]);
     assert_eq!(&err[..], &[32u8; 100_000][..]);
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_timeout() {
-    let mut p = Popen::create(
-        &["sh", "-c", "printf foo; sleep 1"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    // A command that produces partial output then sleeps should time out,
+    // and the partial output should still be available.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "printf foo; sleep 1"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
     let mut out = vec![];
     let mut err = vec![];
-    let result = p
-        .communicate([])
-        .unwrap()
+    let result = handle
+        .communicate()
         .limit_time(Duration::from_millis(100))
         .read_to(&mut out, &mut err);
     assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
     assert_eq!(out, b"foo");
     assert_eq!(err, vec![]);
-    p.kill().unwrap();
+    handle.processes[0].kill().unwrap();
 }
 
 #[test]
 fn communicate_size_limit_small() {
-    let mut p = Popen::create(
-        &["sh", "-c", "printf '%5s' a"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let mut comm = p.communicate([]).unwrap().limit_size(2);
+    // Read with a small size limit, then continue reading in chunks.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "printf '%5s' a"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let mut comm = handle.communicate().limit_size(2);
     assert_eq!(comm.read().unwrap(), (vec![32; 2], vec![]));
     assert_eq!(comm.read().unwrap(), (vec![32; 2], vec![]));
     assert_eq!(comm.read().unwrap(), (vec![b'a'], vec![]));
-    p.kill().unwrap();
+    handle.processes[0].kill().unwrap();
 }
 
 fn check_vec(v: &[u8], size: usize, content: u8) {
@@ -129,16 +115,14 @@ fn check_vec(v: &[u8], size: usize, content: u8) {
 
 #[test]
 fn communicate_size_limit_large() {
-    let mut p = Popen::create(
-        &["sh", "-c", "printf '%20001s' a"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let mut comm = p.communicate([]).unwrap().limit_size(10_000);
+    // Read large output in chunks using limit_size.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "printf '%20001s' a"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let mut comm = handle.communicate().limit_size(10_000);
 
     let (out, err) = comm.read().unwrap();
     check_vec(&out, 10_000, 32);
@@ -149,21 +133,20 @@ fn communicate_size_limit_large() {
     assert_eq!(err, vec![]);
 
     assert_eq!(comm.read().unwrap(), (vec![b'a'], vec![]));
-    p.kill().unwrap();
+    handle.processes[0].kill().unwrap();
 }
 
 #[test]
 fn communicate_size_limit_different_sizes() {
-    let mut p = Popen::create(
-        &["sh", "-c", "printf '%20001s' a"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let comm = p.communicate([]).unwrap();
+    // Change the size limit between successive reads to verify that
+    // the communicator respects the new limit each time.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "printf '%20001s' a"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let comm = handle.communicate();
 
     let mut comm = comm.limit_size(100);
     let (out, err) = comm.read().unwrap();
@@ -187,187 +170,152 @@ fn communicate_size_limit_different_sizes() {
 
     assert_eq!(comm.read().unwrap(), (vec![b'a'], vec![]));
     assert_eq!(comm.read().unwrap(), (vec![], vec![]));
-    p.kill().unwrap();
+    handle.processes[0].kill().unwrap();
 }
 
 #[test]
 fn communicate_stdout_only() {
-    // Test with only stdout pipe (no stderr)
-    let mut p = Popen::create(
-        &["sh", "-c", "echo hello; echo ignored >&2"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, err) = p.communicate([]).unwrap().read().unwrap();
+    // Capture only stdout (no stderr pipe). Stderr output goes to the
+    // parent's stderr and is not captured.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "echo hello; echo ignored >&2"])
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
     assert_eq!(out, b"hello\n");
     assert!(err.is_empty());
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_stderr_only() {
-    // Test with only stderr pipe (no stdout)
-    let mut p = Popen::create(
-        &["sh", "-c", "echo ignored; echo error >&2"],
-        PopenConfig {
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, err) = p.communicate([]).unwrap().read().unwrap();
+    // Capture only stderr (no stdout pipe). Stdout output goes to the
+    // parent's stdout and is not captured.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "echo ignored; echo error >&2"])
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
     assert!(out.is_empty());
     assert_eq!(err, b"error\n");
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_stdin_only() {
-    // Test with only stdin pipe - output goes to /dev/null
-    let mut p = Popen::create(
-        &["cat"],
-        PopenConfig {
-            stdin: Redirection::Pipe,
-            stdout: Redirection::None,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, err) = p.communicate("test data").unwrap().read().unwrap();
+    // Feed stdin data to a process with no output pipes. Output goes
+    // to /dev/null equivalent (no pipe set up).
+    let mut handle = Exec::cmd("cat").stdin("test data").start().unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
     assert!(out.is_empty());
     assert!(err.is_empty());
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_empty_input() {
-    // Send empty input to stdin
-    let mut p = Popen::create(
-        &["cat"],
-        PopenConfig {
-            stdin: Redirection::Pipe,
-            stdout: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, err) = p.communicate("").unwrap().read().unwrap();
+    // Send empty input to stdin and verify cat produces empty output.
+    let mut handle = Exec::cmd("cat")
+        .stdin("")
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
     assert!(out.is_empty());
     assert!(err.is_empty());
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_empty_output() {
-    // Process produces no output
-    let mut p = Popen::create(
-        &["true"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, err) = p.communicate([]).unwrap().read().unwrap();
+    // A process that produces no output should return empty vectors.
+    let mut handle = Exec::cmd("true")
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
     assert!(out.is_empty());
     assert!(err.is_empty());
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_large_stderr() {
-    // Test large output on stderr specifically
-    let mut p = Popen::create(
-        &["sh", "-c", "printf '%50000s' x >&2"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, err) = p.communicate([]).unwrap().read().unwrap();
+    // Test large output on stderr specifically.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "printf '%50000s' x >&2"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
     assert!(out.is_empty());
     assert_eq!(err.len(), 50000);
     assert!(err.iter().all(|&c| c == b' ' || c == b'x'));
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_interleaved_output() {
     // Test interleaved stdout/stderr - both should be captured correctly
-    let mut p = Popen::create(
-        &[
-            "sh",
-            "-c",
-            "echo out1; echo err1 >&2; echo out2; echo err2 >&2",
-        ],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, err) = p.communicate([]).unwrap().read().unwrap();
+    // in their respective buffers.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "echo out1; echo err1 >&2; echo out2; echo err2 >&2"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
     assert_eq!(out, b"out1\nout2\n");
     assert_eq!(err, b"err1\nerr2\n");
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_quick_exit() {
-    // Process exits immediately without reading input or producing output
-    let mut p = Popen::create(
-        &["sh", "-c", "exit 0"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, err) = p.communicate([]).unwrap().read().unwrap();
+    // Process exits immediately without producing output.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "exit 0"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
     assert!(out.is_empty());
     assert!(err.is_empty());
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_process_fails() {
-    // Process exits with error code
-    let mut p = Popen::create(
-        &["sh", "-c", "echo output; echo error >&2; exit 42"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, err) = p.communicate([]).unwrap().read().unwrap();
+    // Process exits with non-zero status. Communicate should still
+    // succeed and return the captured data.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "echo output; echo error >&2; exit 42"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
     assert_eq!(out, b"output\n");
     assert_eq!(err, b"error\n");
-    assert_eq!(p.wait().unwrap().code(), Some(42));
+    assert_eq!(handle.wait().unwrap().code(), Some(42));
 }
 
 #[test]
 fn communicate_size_limit_zero() {
-    // Size limit of 0 should return empty immediately
-    let mut p = Popen::create(
-        &["sh", "-c", "printf 'data'"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let mut comm = p.communicate([]).unwrap().limit_size(0);
+    // Size limit of 0 should return empty immediately; continue reading
+    // with a larger limit to get the remaining data.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "printf 'data'"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let mut comm = handle.communicate().limit_size(0);
     let (out, err) = comm.read().unwrap();
     assert!(out.is_empty());
     assert!(err.is_empty());
@@ -376,65 +324,54 @@ fn communicate_size_limit_zero() {
     let (out, err) = comm.read().unwrap();
     assert_eq!(out, b"data");
     assert_eq!(err, vec![]);
-    p.kill().unwrap();
+    handle.processes[0].kill().unwrap();
 }
 
 #[test]
 fn communicate_size_limit_stderr() {
-    // Size limit should apply to combined stdout + stderr
-    let mut p = Popen::create(
-        &["sh", "-c", "printf out; printf err >&2"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let mut comm = p.communicate([]).unwrap().limit_size(4);
+    // Size limit should apply to the combined total of stdout + stderr.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "printf out; printf err >&2"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let mut comm = handle.communicate().limit_size(4);
     let (out, err) = comm.read().unwrap();
     // Should get approximately 4 bytes total across both streams
     let total = out.len() + err.len();
-    assert!(total <= 6, "got {} bytes, expected <= 6", total); // allow some slack
-    p.kill().unwrap();
+    assert!(total <= 6, "got {} bytes, expected <= 6", total);
+    handle.processes[0].kill().unwrap();
 }
 
 #[test]
 fn communicate_timeout_zero() {
-    // Immediate timeout (0 duration) - may or may not get data
-    let mut p = Popen::create(
-        &["sh", "-c", "sleep 1; echo done"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let result = p
-        .communicate([])
-        .unwrap()
+    // Immediate timeout (zero duration) on a sleeping process.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "sleep 1; echo done"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let result = handle
+        .communicate()
         .limit_time(Duration::from_secs(0))
         .read();
-    // Should timeout since process sleeps
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
-    p.kill().unwrap();
+    handle.processes[0].kill().unwrap();
 }
 
 #[test]
 fn communicate_multiple_reads_after_eof() {
-    // Multiple reads after EOF should return empty
-    let mut p = Popen::create(
-        &["printf", "hello"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let mut comm = p.communicate([]).unwrap();
+    // After EOF, subsequent reads should return empty data.
+    let mut handle = Exec::cmd("printf")
+        .arg("hello")
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let mut comm = handle.communicate();
     let (out, err) = comm.read().unwrap();
     assert_eq!(out, b"hello");
     assert!(err.is_empty());
@@ -449,42 +386,37 @@ fn communicate_multiple_reads_after_eof() {
     assert!(out.is_empty());
     assert!(err.is_empty());
 
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_large_bidirectional() {
-    // Large data in both directions simultaneously - tests deadlock prevention
-    let mut p = Popen::create(
-        &["cat"],
-        PopenConfig {
-            stdin: Redirection::Pipe,
-            stdout: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    // 500KB of data - larger than typical pipe buffer (64KB on Linux)
+    // Large data in both directions simultaneously - tests deadlock
+    // prevention. 500KB is larger than the typical pipe buffer (64KB on
+    // Linux).
     let input: Vec<u8> = (0..500_000).map(|i| (i % 256) as u8).collect();
-    let (out, _) = p.communicate(&input).unwrap().read().unwrap();
+    let mut handle = Exec::cmd("cat")
+        .stdin(input.clone())
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, _) = handle.communicate().read().unwrap();
     assert_eq!(out, input);
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_partial_read_continue() {
-    // Read with size limit, then continue reading
-    let mut p = Popen::create(
-        &["sh", "-c", "printf 'abcdefghij'"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    // Read with a size limit, then continue reading in multiple chunks
+    // until all data is consumed.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "printf 'abcdefghij'"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
 
-    let mut comm = p.communicate([]).unwrap().limit_size(3);
+    let mut comm = handle.communicate().limit_size(3);
     let (out1, _) = comm.read().unwrap();
     assert_eq!(out1.len(), 3);
 
@@ -502,53 +434,45 @@ fn communicate_partial_read_continue() {
     combined.extend(out3);
     assert_eq!(combined, b"abcdefghij");
 
-    p.kill().unwrap();
+    handle.processes[0].kill().unwrap();
 }
 
 #[test]
 fn communicate_no_streams() {
-    // No pipes at all - should work fine
-    let mut p = Popen::create(&["true"], PopenConfig::default()).unwrap();
-    let (out, err) = p.communicate([]).unwrap().read().unwrap();
+    // No pipes at all - should work fine, just returning empty data.
+    let mut handle = Exec::cmd("true").start().unwrap();
+    let (out, err) = handle.communicate().read().unwrap();
     assert!(out.is_empty());
     assert!(err.is_empty());
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_very_long_lines() {
-    // Test with very long lines (no newlines)
-    let mut p = Popen::create(
-        &["sh", "-c", "printf '%100000s' x"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, _) = p.communicate([]).unwrap().read().unwrap();
+    // Test with very long output that contains no newlines.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "printf '%100000s' x"])
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, _) = handle.communicate().read().unwrap();
     assert_eq!(out.len(), 100_000);
     assert!(out.ends_with(b"x"));
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
 fn communicate_timeout_with_partial_and_continue() {
-    // Timeout, capture partial data, then continue
-    let mut p = Popen::create(
-        &["sh", "-c", "printf first; sleep 0.5; printf second"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    // Time out while reading, capture partial data, then continue
+    // reading with a longer timeout to get the rest.
+    let mut handle = Exec::cmd("sh")
+        .args(&["-c", "printf first; sleep 0.5; printf second"])
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .start()
+        .unwrap();
 
-    let mut comm = p
-        .communicate([])
-        .unwrap()
-        .limit_time(Duration::from_millis(100));
+    let mut comm = handle.communicate().limit_time(Duration::from_millis(100));
     let mut out = vec![];
     let mut err = vec![];
     let result = comm.read_to(&mut out, &mut err);
@@ -565,13 +489,19 @@ fn communicate_timeout_with_partial_and_continue() {
     // Should get "second"
     assert_eq!(out2, b"second");
 
-    assert!(p.wait().unwrap().success());
+    assert!(handle.wait().unwrap().success());
 }
 
 #[test]
-fn communicate_input_without_stdin_returns_error() {
-    let mut p = Popen::create(&["true"], PopenConfig::default()).unwrap();
-    let result = p.communicate("data");
-    assert!(result.is_err());
-    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+fn communicate_input_data_flows_through() {
+    // Verify that stdin data set via the Exec builder is correctly fed
+    // through and appears in the captured output.
+    let mut handle = Exec::cmd("cat")
+        .stdin("data through builder")
+        .stdout(Redirection::Pipe)
+        .start()
+        .unwrap();
+    let (out, _) = handle.communicate().read().unwrap();
+    assert_eq!(out, b"data through builder");
+    assert!(handle.wait().unwrap().success());
 }

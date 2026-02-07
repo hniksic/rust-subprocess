@@ -3,42 +3,34 @@
 //! Run with: cargo run --example timeout
 
 use std::time::Duration;
-use subprocess::{Popen, PopenConfig, Redirection};
+use subprocess::{Exec, Redirection};
 
 fn main() -> std::io::Result<()> {
-    // Using wait_timeout on Popen
+    // Using wait_timeout on a process
     println!("Waiting with timeout...");
 
-    let mut p = Popen::create(
-        &["sleep", "10"],
-        PopenConfig {
-            ..Default::default()
-        },
-    )?;
+    let mut handle = Exec::cmd("sleep").arg("10").start()?;
 
-    match p.wait_timeout(Duration::from_millis(100))? {
+    match handle.wait_timeout(Duration::from_millis(100))? {
         Some(status) => println!("Process exited: {:?}", status),
         None => {
             println!("Timeout! Process still running, terminating...");
-            p.terminate()?;
-            p.wait()?;
+            handle.terminate()?;
+            handle.wait()?;
             println!("Process terminated.");
         }
     }
 
     // Polling without blocking
     println!("\nPolling a quick command...");
-    let mut p = Popen::create(
-        &["echo", "quick"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            ..Default::default()
-        },
-    )?;
+    let handle = Exec::cmd("echo")
+        .arg("quick")
+        .stdout(Redirection::Pipe)
+        .start()?;
 
     // Poll until done
     loop {
-        if let Some(status) = p.poll() {
+        if let Some(status) = handle.poll() {
             println!("Command finished with: {:?}", status);
             break;
         }

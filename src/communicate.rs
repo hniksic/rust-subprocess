@@ -396,10 +396,10 @@ use win32::RawCommunicator;
 /// parallel operation prevents deadlock that would occur if the subprocess produces output
 /// while waiting for more input.
 ///
-/// Create a `Communicator` by calling [`Popen::communicate`], then call [`read`] or
+/// Create a `Communicator` by calling [`Started::communicate`], then call [`read`] or
 /// [`read_string`] to perform the data exchange.
 ///
-/// [`Popen::communicate`]: struct.Popen.html#method.communicate
+/// [`Started::communicate`]: crate::Started::communicate
 /// [`read`]: #method.read
 /// [`read_string`]: #method.read_string
 #[must_use]
@@ -446,10 +446,10 @@ impl<I: AsRef<[u8]>> Communicator<I> {
     ///
     /// Note that this method does not wait for the subprocess to finish, only to close its
     /// output/error streams.  It is rare but possible for the program to continue running
-    /// after having closed the streams, in which case `Popen::Drop` will wait for it to
-    /// finish.  If such a wait is undesirable, it can be prevented by waiting explicitly
-    /// using `wait()`, by detaching the process using `detach()`, or by terminating it with
-    /// `terminate()`.
+    /// after having closed the streams, in which case `Process::Drop` will wait for it
+    /// to finish.  If such a wait is undesirable, it can be prevented by waiting
+    /// explicitly using `wait()`, by detaching the process using `detach()`, or by
+    /// terminating it with `terminate()`.
     ///
     /// # Errors
     ///
@@ -501,10 +501,10 @@ impl<I: AsRef<[u8]>> Communicator<I> {
     ///
     /// Note that this method does not wait for the subprocess to finish, only to close its
     /// output/error streams.  It is rare but possible for the program to continue running
-    /// after having closed the streams, in which case `Popen::Drop` will wait for it to
-    /// finish.  If such a wait is undesirable, it can be prevented by waiting explicitly
-    /// using `wait()`, by detaching the process using `detach()`, or by terminating it with
-    /// `terminate()`.
+    /// after having closed the streams, in which case `Process::Drop` will wait for it
+    /// to finish.  If such a wait is undesirable, it can be prevented by waiting
+    /// explicitly using `wait()`, by detaching the process using `detach()`, or by
+    /// terminating it with `terminate()`.
     ///
     /// # Errors
     ///

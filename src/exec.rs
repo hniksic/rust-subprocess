@@ -21,16 +21,16 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::communicate::Communicator;
-use crate::popen::ExitStatus;
-use crate::popen::{Popen, PopenConfig, Redirection};
+use crate::popen::{ExitStatus, Redirection};
+use crate::process::Process;
 
 use crate::pipeline::Pipeline;
 use os::*;
 
-/// A builder for [`Popen`] instances, providing control and convenience methods.
+/// A builder for creating subprocesses.
 ///
-/// `Exec` provides a builder API for [`Popen::create`], and includes convenience methods
-/// for capturing the output, and for connecting subprocesses into pipelines.
+/// `Exec` provides a builder API for spawning subprocesses, and includes convenience
+/// methods for capturing the output and for connecting subprocesses into pipelines.
 ///
 /// # Examples
 ///
@@ -55,7 +55,7 @@ use os::*;
 /// # }
 /// ```
 ///
-/// Start a subprocess and obtain its output as a `Read` trait object, like C's `popen`:
+/// Start a subprocess and obtain its output as an `impl Read`, like C's `popen`:
 ///
 /// ```
 /// # use subprocess::*;
@@ -102,22 +102,33 @@ use os::*;
 /// # Ok(())
 /// # }
 /// ```
-///
-/// [`Popen`]: struct.Popen.html
-/// [`Popen::create`]: struct.Popen.html#method.create
 #[must_use]
 pub struct Exec {
     command: OsString,
     args: Vec<OsString>,
     check_success: bool,
-    config: PopenConfig,
     stdin_data: Option<Vec<u8>>,
+    stdin_redirect: Redirection,
+    stdout_redirect: Redirection,
+    stderr_redirect: Redirection,
+    detached: bool,
+    executable: Option<OsString>,
+    env: Option<Vec<(OsString, OsString)>>,
+    cwd: Option<OsString>,
+    #[cfg(unix)]
+    setuid: Option<u32>,
+    #[cfg(unix)]
+    setgid: Option<u32>,
+    #[cfg(unix)]
+    setpgid: bool,
+    #[cfg(windows)]
+    creation_flags: u32,
 }
 
 impl Exec {
     /// Constructs a new `Exec`, configured to run `command`.
     ///
-    /// The command will be run directly in the OS, without an intervening shell.  To run
+    /// The command will be run directly in the OS, without an intervening shell. To run
     /// it through a shell, use [`Exec::shell`] instead.
     ///
     /// By default, the command will be run without arguments, and none of the standard
@@ -129,25 +140,39 @@ impl Exec {
             command: command.as_ref().to_owned(),
             args: vec![],
             check_success: false,
-            config: PopenConfig::default(),
             stdin_data: None,
+            stdin_redirect: Redirection::None,
+            stdout_redirect: Redirection::None,
+            stderr_redirect: Redirection::None,
+            detached: false,
+            executable: None,
+            env: None,
+            cwd: None,
+            #[cfg(unix)]
+            setuid: None,
+            #[cfg(unix)]
+            setgid: None,
+            #[cfg(unix)]
+            setpgid: false,
+            #[cfg(windows)]
+            creation_flags: 0,
         }
     }
 
     /// Constructs a new `Exec`, configured to run `cmdstr` with the system shell.
     ///
-    /// `subprocess` never spawns shells without an explicit request.  This command
+    /// `subprocess` never spawns shells without an explicit request. This command
     /// requests the shell to be used; on Unix-like systems, this is equivalent to
-    /// `Exec::cmd("sh").arg("-c").arg(cmdstr)`.  On Windows, it runs
+    /// `Exec::cmd("sh").arg("-c").arg(cmdstr)`. On Windows, it runs
     /// `Exec::cmd("cmd.exe").arg("/c")`.
     ///
     /// `shell` is useful for porting code that uses the C `system` function, which also
     /// spawns a shell.
     ///
     /// When invoking this function, be careful not to interpolate arguments into the
-    /// string run by the shell, such as `Exec::shell(format!("sort {}", filename))`.
-    /// Such code is prone to errors and, if `filename` comes from an untrusted source, to
-    /// shell injection attacks.  Instead, use `Exec::cmd("sort").arg(filename)`.
+    /// string run by the shell, such as `Exec::shell(format!("sort {}", filename))`. Such
+    /// code is prone to errors and, if `filename` comes from an untrusted source, to
+    /// shell injection attacks. Instead, use `Exec::cmd("sort").arg(filename)`.
     pub fn shell(cmdstr: impl AsRef<OsStr>) -> Exec {
         Exec::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
     }
@@ -170,19 +195,19 @@ impl Exec {
     /// A detached process means that we will not wait for the process to finish when the
     /// object that owns it goes out of scope.
     pub fn detached(mut self) -> Exec {
-        self.config.detached = true;
+        self.detached = true;
         self
     }
 
-    /// If called, [`join`](Self::join) and [`capture`](Self::capture) will return
-    /// an error if the process exits with a non-zero status.
+    /// If called, [`join`](Self::join) and [`capture`](Self::capture) will return an
+    /// error if the process exits with a non-zero status.
     pub fn checked(mut self) -> Exec {
         self.check_success = true;
         self
     }
 
     fn ensure_env(&mut self) -> &mut Vec<(OsString, OsString)> {
-        self.config.env.get_or_insert_with(PopenConfig::current_env)
+        self.env.get_or_insert_with(|| env::vars_os().collect())
     }
 
     /// Clears the environment of the subprocess.
@@ -190,7 +215,7 @@ impl Exec {
     /// When this is invoked, the subprocess will not inherit the environment of this
     /// process.
     pub fn env_clear(mut self) -> Exec {
-        self.config.env = Some(vec![]);
+        self.env = Some(vec![]);
         self
     }
 
@@ -198,7 +223,7 @@ impl Exec {
     ///
     /// If the same variable is set more than once, the last value is used.
     ///
-    /// Other environment variables are by default inherited from the current process.  If
+    /// Other environment variables are by default inherited from the current process. If
     /// this is undesirable, call `env_clear` first.
     pub fn env(mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Exec {
         self.ensure_env()
@@ -211,7 +236,7 @@ impl Exec {
     /// The keys and values of the variables are specified by the iterable.  If the same
     /// variable is set more than once, the last value is used.
     ///
-    /// Other environment variables are by default inherited from the current process.  If
+    /// Other environment variables are by default inherited from the current process. If
     /// this is undesirable, call `env_clear` first.
     pub fn env_extend(
         mut self,
@@ -236,7 +261,7 @@ impl Exec {
     ///
     /// If unspecified, the current working directory is inherited from the parent.
     pub fn cwd(mut self, dir: impl AsRef<Path>) -> Exec {
-        self.config.cwd = Some(dir.as_ref().as_os_str().to_owned());
+        self.cwd = Some(dir.as_ref().as_os_str().to_owned());
         self
     }
 
@@ -246,19 +271,19 @@ impl Exec {
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-    /// * a `Vec<u8>`, `&str`, or `&[u8]`, which will set up a `Redirection::Pipe`
-    ///   for stdin, making sure that `capture` feeds that data into the standard
-    ///   input of the subprocess.
+    /// * a `Vec<u8>`, `&str`, or `&[u8]`, which will set up a `Redirection::Pipe` for
+    ///   stdin, making sure that `capture` feeds that data into the standard input of the
+    ///   subprocess.
     ///
     /// [`Redirection`]: enum.Redirection.html
     pub fn stdin(mut self, stdin: impl InputRedirection) -> Exec {
         match stdin.into_input_redirection() {
             InputRedirectionKind::AsRedirection(new) => {
-                self.config.stdin = new;
+                self.stdin_redirect = new;
                 self.stdin_data = None;
             }
             InputRedirectionKind::FeedData(data) => {
-                self.config.stdin = Redirection::Pipe;
+                self.stdin_redirect = Redirection::Pipe;
                 self.stdin_data = Some(data);
             }
         }
@@ -274,7 +299,7 @@ impl Exec {
     ///
     /// [`Redirection`]: enum.Redirection.html
     pub fn stdout(mut self, stdout: impl OutputRedirection) -> Exec {
-        self.config.stdout = stdout.into_output_redirection();
+        self.stdout_redirect = stdout.into_output_redirection();
         self
     }
 
@@ -287,7 +312,7 @@ impl Exec {
     ///
     /// [`Redirection`]: enum.Redirection.html
     pub fn stderr(mut self, stderr: impl OutputRedirection) -> Exec {
-        self.config.stderr = stderr.into_output_redirection();
+        self.stderr_redirect = stderr.into_output_redirection();
         self
     }
 
@@ -299,21 +324,50 @@ impl Exec {
 
     // Terminators
 
-    /// Starts the process and returns the low-level `Popen` handle.
+    /// Spawn the process and return the raw spawn result.
     ///
-    /// Prefer [`start`](Self::start) for access to the running process and its
-    /// pipes, or higher-level terminators like [`join`](Self::join),
-    /// [`capture`](Self::capture), and [`communicate`](Self::communicate).
-    ///
-    /// # Panics
-    ///
-    /// Panics if input data was specified with [`stdin`](Self::stdin).  Use
-    /// [`start`](Self::start) or a higher-level terminator instead.
-    pub fn popen(self) -> io::Result<Popen> {
-        self.check_no_stdin_data("popen");
-        let mut args = self.args;
-        args.insert(0, self.command);
-        Popen::create(&args, self.config)
+    /// This is the low-level entry point used by both `start()` and
+    /// `Pipeline::start()`. It calls `crate::popen::spawn()` with the Exec's fields.
+    pub(crate) fn spawn(self) -> io::Result<crate::popen::SpawnResult> {
+        let mut argv = self.args;
+        argv.insert(0, self.command);
+
+        crate::popen::spawn(
+            argv,
+            self.stdin_redirect,
+            self.stdout_redirect,
+            self.stderr_redirect,
+            self.detached,
+            self.executable.as_deref(),
+            self.env.as_deref(),
+            self.cwd.as_deref(),
+            #[cfg(unix)]
+            self.setuid,
+            #[cfg(unix)]
+            self.setgid,
+            #[cfg(unix)]
+            self.setpgid,
+            #[cfg(windows)]
+            self.creation_flags,
+        )
+    }
+
+    /// Starts the process and returns a `Started` handle with the running process and its
+    /// pipe ends.
+    pub fn start(mut self) -> io::Result<Started> {
+        let stdin_data = self.stdin_data.take().unwrap_or_default();
+        let check_success = self.check_success;
+
+        let result = self.spawn()?;
+
+        Ok(Started {
+            stdin: result.stdin,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            stdin_data,
+            check_success,
+            processes: vec![result.process],
+        })
     }
 
     /// Starts the process, waits for it to finish, and returns the exit status.
@@ -321,67 +375,51 @@ impl Exec {
         self.start()?.join()
     }
 
-    /// Starts the process and returns a `Started` handle with the running process
-    /// and its pipe ends.
-    pub fn start(mut self) -> io::Result<Started> {
-        let stdin_data = self.stdin_data.take().unwrap_or_default();
-        let check_success = self.check_success;
-        let mut p = self.popen()?;
-        Ok(Started {
-            stdin: p.stdin.take(),
-            stdout: p.stdout.take(),
-            stderr: p.stderr.take(),
-            stdin_data,
-            check_success,
-            started: vec![p],
-        })
-    }
-
-    /// Starts the process and returns a value implementing the `Read` trait that reads from
-    /// the standard output of the child process.
+    /// Starts the process and returns a value implementing the `Read` trait that reads
+    /// from the standard output of the child process.
     ///
     /// This will automatically set up `stdout(Redirection::Pipe)`, so it is not necessary
     /// to do that beforehand.
     ///
-    /// When the trait object is dropped, it will wait for the process to finish.  If this
+    /// When the trait object is dropped, it will wait for the process to finish. If this
     /// is undesirable, use `detached()`.
     ///
     /// # Panics
     ///
-    /// Panics if input data was specified with [`stdin`](Self::stdin).  Use
-    /// [`capture`](Self::capture) or [`communicate`](Self::communicate) to both
-    /// feed input and read output.
+    /// Panics if input data was specified with [`stdin`](Self::stdin). Use
+    /// [`capture`](Self::capture) or [`communicate`](Self::communicate) to both feed
+    /// input and read output.
     pub fn stream_stdout(self) -> io::Result<impl Read> {
         self.check_no_stdin_data("stream_stdout");
         Ok(ReadAdapter(self.stdout(Redirection::Pipe).start()?))
     }
 
-    /// Starts the process and returns a value implementing the `Read` trait that reads from
-    /// the standard error of the child process.
+    /// Starts the process and returns a value implementing the `Read` trait that reads
+    /// from the standard error of the child process.
     ///
     /// This will automatically set up `stderr(Redirection::Pipe)`, so it is not necessary
     /// to do that beforehand.
     ///
-    /// When the trait object is dropped, it will wait for the process to finish.  If this
+    /// When the trait object is dropped, it will wait for the process to finish. If this
     /// is undesirable, use `detached()`.
     ///
     /// # Panics
     ///
-    /// Panics if input data was specified with [`stdin`](Self::stdin).  Use
-    /// [`capture`](Self::capture) or [`communicate`](Self::communicate) to both
-    /// feed input and read output.
+    /// Panics if input data was specified with [`stdin`](Self::stdin). Use
+    /// [`capture`](Self::capture) or [`communicate`](Self::communicate) to both feed
+    /// input and read output.
     pub fn stream_stderr(self) -> io::Result<impl Read> {
         self.check_no_stdin_data("stream_stderr");
         Ok(ReadErrAdapter(self.stderr(Redirection::Pipe).start()?))
     }
 
-    /// Starts the process and returns a value implementing the `Write` trait that writes to
-    /// the standard input of the child process.
+    /// Starts the process and returns a value implementing the `Write` trait that writes
+    /// to the standard input of the child process.
     ///
     /// This will automatically set up `stdin(Redirection::Pipe)`, so it is not necessary
     /// to do that beforehand.
     ///
-    /// When the trait object is dropped, it will wait for the process to finish.  If this
+    /// When the trait object is dropped, it will wait for the process to finish. If this
     /// is undesirable, use `detached()`.
     ///
     /// # Panics
@@ -394,21 +432,20 @@ impl Exec {
 
     /// Starts the process and returns a `Communicator` handle.
     ///
-    /// Unless already configured, stdout and stderr are redirected to pipes.
-    /// To only communicate over specific streams, set them up explicitly and
-    /// use `start()`.
+    /// Unless already configured, stdout and stderr are redirected to pipes. To only
+    /// communicate over specific streams, set them up explicitly and use `start()`.
     ///
-    /// Compared to `capture()`, this offers more choice in how communication
-    /// is performed, such as read size limit and timeout.
+    /// Compared to `capture()`, this offers more choice in how communication is
+    /// performed, such as read size limit and timeout.
     ///
     /// Unlike `capture()`, this method doesn't wait for the process to finish,
     /// effectively detaching it.
     pub fn communicate(mut self) -> io::Result<Communicator<Vec<u8>>> {
         self = self.detached();
-        if matches!(self.config.stdout, Redirection::None) {
+        if matches!(self.stdout_redirect, Redirection::None) {
             self = self.stdout(Redirection::Pipe);
         }
-        if matches!(self.config.stderr, Redirection::None) {
+        if matches!(self.stderr_redirect, Redirection::None) {
             self = self.stderr(Redirection::Pipe);
         }
         Ok(self.start()?.communicate())
@@ -416,25 +453,23 @@ impl Exec {
 
     /// Starts the process, collects its output, and waits for it to finish.
     ///
-    /// The return value provides the standard output and standard error as bytes
-    /// or optionally strings, as well as the exit status.
+    /// The return value provides the standard output and standard error as bytes or
+    /// optionally strings, as well as the exit status.
     ///
-    /// Unless already configured, stdout and stderr are redirected to pipes so
-    /// they can be captured. To only capture stdout, set it up explicitly and
-    /// use `start()`:
+    /// Unless already configured, stdout and stderr are redirected to pipes so they can
+    /// be captured. To only capture stdout, set it up explicitly and use `start()`:
     ///
     /// ```ignore
     /// let c = Exec::cmd("foo").stdout(Redirection::Pipe).start()?.capture()?;
     /// ```
     ///
-    /// This method waits for the process to finish, rather than simply waiting
-    /// for its standard streams to close. If this is undesirable, use
-    /// `detached()`.
+    /// This method waits for the process to finish, rather than simply waiting for its
+    /// standard streams to close. If this is undesirable, use `detached()`.
     pub fn capture(mut self) -> io::Result<Capture> {
-        if matches!(self.config.stdout, Redirection::None) {
+        if matches!(self.stdout_redirect, Redirection::None) {
             self = self.stdout(Redirection::Pipe);
         }
-        if matches!(self.config.stderr, Redirection::None) {
+        if matches!(self.stderr_redirect, Redirection::None) {
             self = self.stderr(Redirection::Pipe);
         }
         self.start()?.capture()
@@ -459,11 +494,11 @@ impl Exec {
     /// Show Exec as command-line string quoted in the Unix style.
     pub fn to_cmdline_lossy(&self) -> String {
         let mut out = String::new();
-        if let Some(cmd_env) = &self.config.env {
+        if let Some(cmd_env) = &self.env {
             let current: Vec<_> = env::vars_os().collect();
             let current_map: HashMap<_, _> = current.iter().map(|(x, y)| (x, y)).collect();
             for (k, v) in cmd_env {
-                if current_map.get(&k) == Some(&v) {
+                if current_map.get(k) == Some(&v) {
                     continue;
                 }
                 out.push_str(&Exec::display_escape(&k.to_string_lossy()));
@@ -489,11 +524,11 @@ impl Exec {
     }
 
     pub(crate) fn stdin_is_set(&self) -> bool {
-        !matches!(self.config.stdin, Redirection::None)
+        !matches!(self.stdin_redirect, Redirection::None)
     }
 
     pub(crate) fn stdout_is_set(&self) -> bool {
-        !matches!(self.config.stdout, Redirection::None)
+        !matches!(self.stdout_redirect, Redirection::None)
     }
 }
 
@@ -507,8 +542,22 @@ impl Exec {
             command: self.command.clone(),
             args: self.args.clone(),
             check_success: self.check_success,
-            config: self.config.try_clone()?,
             stdin_data: self.stdin_data.clone(),
+            stdin_redirect: self.stdin_redirect.try_clone()?,
+            stdout_redirect: self.stdout_redirect.try_clone()?,
+            stderr_redirect: self.stderr_redirect.try_clone()?,
+            detached: self.detached,
+            executable: self.executable.clone(),
+            env: self.env.clone(),
+            cwd: self.cwd.clone(),
+            #[cfg(unix)]
+            setuid: self.setuid,
+            #[cfg(unix)]
+            setgid: self.setgid,
+            #[cfg(unix)]
+            setpgid: self.setpgid,
+            #[cfg(windows)]
+            creation_flags: self.creation_flags,
         })
     }
 }
@@ -528,36 +577,36 @@ impl fmt::Debug for Exec {
     }
 }
 
-/// A started process or pipeline, consisting of running processes and their pipe
-/// ends.
+/// A started process or pipeline, consisting of running processes and their pipe ends.
 ///
 /// Created by [`Exec::start`] or [`Pipeline::start`].
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct Started {
-    // Pipe fields are declared before `started` so that they are dropped first,
-    // allowing children to receive EOF and exit before `Popen::drop` waits on them.
+    // Pipe fields are declared before `processes` so that they are dropped
+    // first, allowing children to receive EOF and exit before
+    // `Process::drop` waits on them.
     /// Write end of the first process's stdin pipe, if stdin was `Pipe`.
     pub stdin: Option<File>,
     /// Read end of the last process's stdout pipe, if stdout was `Pipe`.
     pub stdout: Option<File>,
     /// Read end of the shared stderr pipe, if stderr was `Pipe`.
     pub stderr: Option<File>,
-    /// Data to feed to the first process's stdin, set by [`Exec::stdin`] or
-    /// [`Pipeline::stdin`].
+    /// Data to feed to the first process's stdin, set by [`Exec::stdin`]
+    /// or [`Pipeline::stdin`].
     pub stdin_data: Vec<u8>,
     /// Whether to return an error on non-zero exit status.
     pub check_success: bool,
     /// Started processes, in pipeline order.
-    pub started: Vec<Popen>,
+    pub processes: Vec<Process>,
 }
 
 impl Started {
     /// Creates a [`Communicator`] from the pipe ends.
     ///
-    /// The communicator takes ownership of `stdin`, `stdout`, and `stderr`, leaving
-    /// them as `None`.  Only streams that were redirected to a pipe will be
-    /// available to the communicator.
+    /// The communicator takes ownership of `stdin`, `stdout`, and `stderr`, leaving them
+    /// as `None`. Only streams that were redirected to a pipe will be available to the
+    /// communicator.
     pub fn communicate(&mut self) -> Communicator<Vec<u8>> {
         Communicator::new(
             self.stdin.take(),
@@ -569,45 +618,80 @@ impl Started {
 
     /// Terminates all processes in the pipeline.
     ///
-    /// Delegates to [`Popen::terminate()`] on each process, which sends `SIGTERM`
-    /// on Unix and calls `TerminateProcess` on Windows.
+    /// Delegates to [`Process::terminate()`] on each process, which sends `SIGTERM` on
+    /// Unix and calls `TerminateProcess` on Windows.
     pub fn terminate(&mut self) -> io::Result<()> {
-        for p in &mut self.started {
+        for p in &self.processes {
             p.terminate()?;
         }
         Ok(())
     }
 
-    /// Waits for all processes to finish and returns the last process's exit
-    /// status.
+    /// Waits for all processes to finish and returns the last process's exit status.
     ///
-    /// Unlike [`join`](Self::join), this does not consume `self`, does not close
-    /// the pipe ends, and ignores `check_success`.
+    /// Unlike [`join`](Self::join), this does not consume `self`, does not close the pipe
+    /// ends, and ignores `check_success`.
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
         let mut status = ExitStatus::from_raw(0);
-        for p in &mut self.started {
+        for p in &self.processes {
             status = p.wait()?;
         }
         Ok(status)
     }
 
-    /// Like [`wait`](Self::wait), but with a timeout.
+    /// Returns the PID of the last process in the pipeline.
     ///
-    /// Returns an error of kind `ErrorKind::TimedOut` if the processes don't
-    /// finish within the given duration.
-    pub fn wait_timeout(&mut self, timeout: Duration) -> io::Result<ExitStatus> {
-        let deadline = Instant::now() + timeout;
-        let mut status = ExitStatus::from_raw(0);
-        for p in &mut self.started {
-            status = p
-                .wait_timeout(deadline.saturating_duration_since(Instant::now()))?
-                .ok_or(io::Error::from(ErrorKind::TimedOut))?;
-        }
-        Ok(status)
+    /// For a single command started with [`Exec::start`], this is the PID of that
+    /// command. For a pipeline, this is the PID of the last command.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no processes have been started because this was created by an empty
+    /// `Pipeline`.
+    pub fn pid(&self) -> u32 {
+        self.processes.last().unwrap().pid()
     }
 
-    /// Closes the pipe ends, waits for all processes to finish, and returns
-    /// the exit status of the last process.
+    /// Kill all processes in the pipeline.
+    ///
+    /// Delegates to [`Process::kill()`] on each process, which sends `SIGKILL` on Unix
+    /// and calls `TerminateProcess` on Windows.
+    pub fn kill(&self) -> io::Result<()> {
+        for p in &self.processes {
+            p.kill()?;
+        }
+        Ok(())
+    }
+
+    /// Poll all processes for completion without blocking.
+    ///
+    /// Returns `Some(exit_status)` of the last process if all processes have finished, or
+    /// `None` if any process is still running.
+    pub fn poll(&self) -> Option<ExitStatus> {
+        let mut status = None;
+        for p in &self.processes {
+            status = Some(p.poll()?);
+        }
+        status
+    }
+
+    /// Like [`wait`](Self::wait), but with a timeout.
+    ///
+    /// Returns `Ok(None)` if the processes don't finish within the given duration.
+    pub fn wait_timeout(&mut self, timeout: Duration) -> io::Result<Option<ExitStatus>> {
+        let deadline = Instant::now() + timeout;
+        let mut status = ExitStatus::from_raw(0);
+        for p in &self.processes {
+            match p.wait_timeout(deadline.saturating_duration_since(Instant::now()))? {
+                Some(s) => status = s,
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(status))
+    }
+
+    /// Closes the pipe ends, waits for all processes to finish, and returns the exit
+    /// status of the last process.
     pub fn join(mut self) -> io::Result<ExitStatus> {
         self.communicate().read()?;
         let status = self.wait()?;
@@ -619,12 +703,14 @@ impl Started {
 
     /// Like [`join`](Self::join), but with a timeout.
     ///
-    /// Returns an error of kind `ErrorKind::TimedOut` if the processes don't
-    /// finish within the given duration.
+    /// Returns an error of kind `ErrorKind::TimedOut` if the processes don't finish
+    /// within the given duration.
     pub fn join_timeout(mut self, timeout: Duration) -> io::Result<ExitStatus> {
         let deadline = Instant::now() + timeout;
         self.communicate_with_deadline(deadline).read()?;
-        let status = self.wait_timeout(deadline.saturating_duration_since(Instant::now()))?;
+        let status = self
+            .wait_timeout(deadline.saturating_duration_since(Instant::now()))?
+            .ok_or(io::Error::from(ErrorKind::TimedOut))?;
         if self.check_success && !status.success() {
             return Err(io::Error::other(format!("command failed: {status}")));
         }
@@ -633,8 +719,8 @@ impl Started {
 
     /// Captures the output and waits for the process(es) to finish.
     ///
-    /// Only streams that were redirected to a pipe will produce data; non-piped
-    /// streams will result in empty bytes in `Capture`.
+    /// Only streams that were redirected to a pipe will produce data;
+    /// non-piped streams will result in empty bytes in `Capture`.
     pub fn capture(mut self) -> io::Result<Capture> {
         let (stdout, stderr) = {
             let mut comm = self.communicate();
@@ -656,18 +742,21 @@ impl Started {
 
     /// Like [`capture`](Self::capture), but with a timeout.
     ///
-    /// Returns an error of kind `ErrorKind::TimedOut` if the processes don't
-    /// finish within the given duration.
+    /// Returns an error of kind `ErrorKind::TimedOut` if the processes
+    /// don't finish within the given duration.
     pub fn capture_timeout(mut self, timeout: Duration) -> io::Result<Capture> {
         let deadline = Instant::now() + timeout;
         let (stdout, stderr) = {
             let mut comm = self.communicate_with_deadline(deadline);
             comm.read()?
         };
+        let exit_status = self
+            .wait_timeout(deadline.saturating_duration_since(Instant::now()))?
+            .ok_or(io::Error::from(ErrorKind::TimedOut))?;
         let capture = Capture {
             stdout,
             stderr,
-            exit_status: self.wait_timeout(deadline.saturating_duration_since(Instant::now()))?,
+            exit_status,
         };
         if self.check_success && !capture.success() {
             return Err(io::Error::other(format!(
@@ -746,7 +835,8 @@ impl Capture {
         self.exit_status.success()
     }
 
-    /// Returns `self` if the exit status is successful, or an error otherwise.
+    /// Returns `self` if the exit status is successful, or an error
+    /// otherwise.
     pub fn check(self) -> io::Result<Self> {
         if self.success() {
             Ok(self)
@@ -780,7 +870,8 @@ pub trait InputRedirection: sealed::InputRedirectionSealed {
     fn into_input_redirection(self) -> InputRedirectionKind;
 }
 
-/// Trait for types that can be used to redirect standard output or standard error.
+/// Trait for types that can be used to redirect standard output or
+/// standard error.
 ///
 /// This is a sealed trait that cannot be implemented outside this crate.
 pub trait OutputRedirection: sealed::OutputRedirectionSealed {
@@ -850,45 +941,83 @@ impl OutputRedirection for File {
 
 #[cfg(unix)]
 pub mod unix {
-    use super::Exec;
+    use super::{Exec, Started};
+    use crate::unix::ProcessExt;
+    use std::io;
+
+    /// Unix-specific extension methods for [`Started`].
+    pub trait StartedExt {
+        /// Send the specified signal to all processes in the pipeline.
+        ///
+        /// Delegates to [`ProcessExt::send_signal`] on each process.
+        fn send_signal(&self, signal: i32) -> io::Result<()>;
+
+        /// Send the specified signal to the process group of each process
+        /// in the pipeline.
+        ///
+        /// Delegates to [`ProcessExt::send_signal_group`] on each process.
+        /// For this to work correctly, the processes should have been
+        /// started with [`ExecExt::setpgid`].
+        fn send_signal_group(&self, signal: i32) -> io::Result<()>;
+    }
+
+    impl StartedExt for Started {
+        fn send_signal(&self, signal: i32) -> io::Result<()> {
+            for p in &self.processes {
+                p.send_signal(signal)?;
+            }
+            Ok(())
+        }
+
+        fn send_signal_group(&self, signal: i32) -> io::Result<()> {
+            for p in &self.processes {
+                p.send_signal_group(signal)?;
+            }
+            Ok(())
+        }
+    }
 
     /// Extension trait for Unix-specific process creation options.
     pub trait ExecExt {
         /// Set the user ID for the spawned process.
         ///
-        /// The child process will run with the specified user ID, which affects file
-        /// access permissions and process ownership. This calls `setuid(2)` in the child
-        /// process after `fork()` but before `exec()`.
+        /// The child process will run with the specified user ID, which
+        /// affects file access permissions and process ownership. This
+        /// calls `setuid(2)` in the child process after `fork()` but
+        /// before `exec()`.
         fn setuid(self, uid: u32) -> Self;
 
         /// Set the group ID for the spawned process.
         ///
-        /// The child process will run with the specified group ID, which affects file
-        /// access permissions based on group ownership. This calls `setgid(2)` in the
-        /// child process after `fork()` but before `exec()`.
+        /// The child process will run with the specified group ID, which
+        /// affects file access permissions based on group ownership. This
+        /// calls `setgid(2)` in the child process after `fork()` but
+        /// before `exec()`.
         fn setgid(self, gid: u32) -> Self;
 
         /// Put the subprocess into its own process group.
         ///
-        /// This calls `setpgid(0, 0)` before execing the child process, making it the
-        /// leader of a new process group.  Use with [`PopenExt::send_signal_group`]
-        /// to signal the entire group.
+        /// This calls `setpgid(0, 0)` before execing the child process,
+        /// making it the leader of a new process group. Use with
+        /// [`ProcessExt::send_signal_group`] to signal the entire group.
+        ///
+        /// [`ProcessExt::send_signal_group`]: crate::unix::ProcessExt::send_signal_group
         fn setpgid(self) -> Self;
     }
 
     impl ExecExt for Exec {
         fn setuid(mut self, uid: u32) -> Exec {
-            self.config.setuid = Some(uid);
+            self.setuid = Some(uid);
             self
         }
 
         fn setgid(mut self, gid: u32) -> Exec {
-            self.config.setgid = Some(gid);
+            self.setgid = Some(gid);
             self
         }
 
         fn setpgid(mut self) -> Exec {
-            self.config.setpgid = true;
+            self.setpgid = true;
             self
         }
     }
@@ -899,51 +1028,32 @@ pub mod windows {
     use super::Exec;
 
     /// Process creation flag: The process does not have a console window.
-    ///
-    /// Use this flag when launching GUI applications or background processes to prevent
-    /// a console window from briefly appearing.
     pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     /// Process creation flag: The new process has a new console.
-    ///
-    /// This flag cannot be used with `DETACHED_PROCESS`.
     pub const CREATE_NEW_CONSOLE: u32 = 0x00000010;
 
-    /// Process creation flag: The new process is the root of a new process group.
-    ///
-    /// The process group includes all descendant processes. Useful for sending signals
-    /// to a group of related processes.
+    /// Process creation flag: The new process is the root of a new process
+    /// group.
     pub const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
 
-    /// Process creation flag: The process does not inherit its parent's console.
-    ///
-    /// The new process can call `AllocConsole` later to create a console.
-    /// This flag cannot be used with `CREATE_NEW_CONSOLE`.
+    /// Process creation flag: The process does not inherit its parent's
+    /// console.
     pub const DETACHED_PROCESS: u32 = 0x00000008;
 
     /// Extension trait for Windows-specific process creation options.
     pub trait ExecExt {
         /// Set process creation flags for Windows.
         ///
-        /// This value is passed to the `dwCreationFlags` parameter of `CreateProcessW`.
-        /// Use this to control process creation behavior such as creating the process
-        /// without a console window.
-        ///
-        /// # Example
-        ///
-        /// ```ignore
-        /// use subprocess::{Exec, ExecExt, windows::CREATE_NO_WINDOW};
-        ///
-        /// let popen = Exec::cmd("my_app")
-        ///     .creation_flags(CREATE_NO_WINDOW)
-        ///     .popen()?;
-        /// ```
+        /// This value is passed to the `dwCreationFlags` parameter of
+        /// `CreateProcessW`. Use this to control process creation behavior
+        /// such as creating the process without a console window.
         fn creation_flags(self, flags: u32) -> Self;
     }
 
     impl ExecExt for Exec {
         fn creation_flags(mut self, flags: u32) -> Exec {
-            self.config.creation_flags = flags;
+            self.creation_flags = flags;
             self
         }
     }

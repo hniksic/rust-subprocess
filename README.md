@@ -39,14 +39,14 @@ library is fine for simple use cases, but it doesn't cover common scenarios such
 
 * **Sending signals** (Unix) - `std::process::Child::kill()` only sends `SIGKILL`.
   `subprocess` lets you [send any
-  signal](https://docs.rs/subprocess/latest/subprocess/unix/trait.PopenExt.html#tymethod.send_signal)
+  signal](https://docs.rs/subprocess/latest/subprocess/unix/trait.ProcessExt.html#tymethod.send_signal)
   including `SIGTERM`, and can [signal process
-  groups](https://docs.rs/subprocess/latest/subprocess/unix/trait.PopenExt.html#tymethod.send_signal_group)
+  groups](https://docs.rs/subprocess/latest/subprocess/unix/trait.ProcessExt.html#tymethod.send_signal_group)
   to terminate an entire process tree.
 
 * **Preventing zombies** - `subprocess` automatically waits on child processes when they go
   out of scope (with
-  [`detach()`](https://docs.rs/subprocess/latest/subprocess/struct.Popen.html#method.detach)
+  [`detach()`](https://docs.rs/subprocess/latest/subprocess/struct.Process.html#method.detach)
   to opt out), whereas `std::process::Child` does not, risking zombie process accumulation.
 
 ## Comparison with std::process
@@ -175,13 +175,12 @@ Give the process some time to run, then terminate if needed:
 
 ```rust
 let mut started = Exec::cmd("sleep").arg("10").start()?;
-match started.wait_timeout(Duration::from_secs(1)) {
-    Ok(status) => println!("finished: {:?}", status),
-    Err(e) if e.kind() == ErrorKind::TimedOut => {
+match started.wait_timeout(Duration::from_secs(1))? {
+    Some(status) => println!("finished: {:?}", status),
+    None => {
         started.terminate()?;
         started.wait()?;
     }
-    Err(e) => return Err(e),
 }
 ```
 

@@ -7,15 +7,15 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::communicate::Communicator;
-use crate::popen::ExitStatus;
-use crate::popen::{Popen, Redirection};
+use crate::popen::{ExitStatus, Redirection};
+use crate::process::Process;
 
 use crate::exec::{
     Capture, Exec, InputRedirection, InputRedirectionKind, OutputRedirection, ReadAdapter,
     ReadErrAdapter, Started, WriteAdapter,
 };
 
-/// A builder for multiple [`Popen`] instances connected via pipes.
+/// A builder for pipelines of subprocesses connected via pipes.
 ///
 /// A pipeline is a sequence of two or more [`Exec`] commands connected via pipes.  Just
 /// like in a Unix shell pipeline, each command receives standard input from the previous
@@ -50,10 +50,6 @@ use crate::exec::{
 /// # Ok(())
 /// # }
 /// ```
-///
-/// [`Popen`]: struct.Popen.html
-/// [`Exec`]: struct.Exec.html
-/// [`Pipeline`]: struct.Pipeline.html
 #[must_use]
 pub struct Pipeline {
     execs: Vec<Exec>,
@@ -244,14 +240,14 @@ impl Pipeline {
 
     // Terminators:
 
-    /// Starts all commands in the pipeline and returns a [`Started`] with the
-    /// running processes and their pipe ends.
+    /// Starts all commands in the pipeline and returns a [`Started`] with the running
+    /// processes and their pipe ends.
     ///
-    /// If some command fails to start, the remaining commands will not be started,
-    /// and the appropriate error will be returned.  The commands that have already
-    /// started will be waited to finish (but will probably exit immediately due to
-    /// missing output), except for the ones for which `detached()` was called.  This
-    /// is equivalent to what the shell does.
+    /// If some command fails to start, the remaining commands will not be started, and
+    /// the appropriate error will be returned.  The commands that have already started
+    /// will be waited to finish (but will probably exit immediately due to missing
+    /// output), except for the ones for which `detached()` was called.  This is
+    /// equivalent to what the shell does.
     pub fn start(mut self) -> io::Result<Started> {
         if self.execs.is_empty() {
             return Ok(Started {
@@ -260,7 +256,7 @@ impl Pipeline {
                 stderr: None,
                 stdin_data: vec![],
                 check_success: self.check_success,
-                started: vec![],
+                processes: vec![],
             });
         }
 
@@ -294,29 +290,38 @@ impl Pipeline {
         let last_cmd = self.execs.remove(self.execs.len() - 1);
         self.execs.push(last_cmd.stdout(self.stdout));
 
-        let mut ret = Vec::<Popen>::new();
         let cnt = self.execs.len();
+        let mut processes = Vec::<Process>::new();
+        let mut pipeline_stdin = None;
+        let mut pipeline_stdout = None;
+        let mut prev_stdout: Option<File> = None;
 
         for (idx, mut runner) in self.execs.into_iter().enumerate() {
-            if idx != 0 {
-                let prev_stdout = ret[idx - 1].stdout.take().unwrap();
-                runner = runner.stdin(prev_stdout);
+            if let Some(prev_out) = prev_stdout.take() {
+                runner = runner.stdin(prev_out);
             }
             if idx != cnt - 1 {
                 runner = runner.stdout(Redirection::Pipe);
             }
-            ret.push(runner.popen()?);
+            let result = runner.spawn()?;
+            if idx == 0 {
+                pipeline_stdin = result.stdin;
+            }
+            if idx == cnt - 1 {
+                pipeline_stdout = result.stdout;
+            } else {
+                prev_stdout = result.stdout;
+            }
+            processes.push(result.process);
         }
 
-        let stdin = ret.first_mut().and_then(|p| p.stdin.take());
-        let stdout = ret.last_mut().and_then(|p| p.stdout.take());
         Ok(Started {
-            stdin,
-            stdout,
+            stdin: pipeline_stdin,
+            stdout: pipeline_stdout,
             stderr,
             stdin_data: self.stdin_data.unwrap_or_default(),
             check_success: self.check_success,
-            started: ret,
+            processes,
         })
     }
 

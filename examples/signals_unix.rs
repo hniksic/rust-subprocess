@@ -4,46 +4,40 @@
 
 #[cfg(unix)]
 fn main() -> std::io::Result<()> {
-    use subprocess::unix::PopenExt;
-    use subprocess::{Popen, PopenConfig};
+    use subprocess::unix::StartedExt;
+    use subprocess::{Exec, ExecExt};
 
     // Start a long-running process
-    let p = Popen::create(&["sleep", "100"], PopenConfig::default())?;
-    println!("Started sleep with PID {:?}", p.pid());
+    let handle = Exec::cmd("sleep").arg("100").start()?;
+    println!("Started sleep with PID {}", handle.pid());
 
     // Send SIGTERM (graceful termination)
-    p.send_signal(libc::SIGTERM)?;
+    handle.send_signal(libc::SIGTERM)?;
     println!("Sent SIGTERM");
 
     // Start another process in its own process group
-    let p = Popen::create(
-        &["sleep", "100"],
-        PopenConfig {
-            setpgid: true,
-            ..Default::default()
-        },
-    )?;
-    println!("\nStarted sleep in new process group, PID {:?}", p.pid());
+    let handle = Exec::cmd("sleep").arg("100").setpgid().start()?;
+    println!("\nStarted sleep in new process group, PID {}", handle.pid());
 
     // Send signal to the entire process group
-    p.send_signal_group(libc::SIGKILL)?;
+    handle.send_signal_group(libc::SIGKILL)?;
     println!("Sent SIGKILL to process group");
 
     // Demonstrate terminate vs kill
-    let mut p = Popen::create(&["sleep", "100"], PopenConfig::default())?;
-    println!("\nStarted another sleep, PID {:?}", p.pid());
+    let mut handle = Exec::cmd("sleep").arg("100").start()?;
+    println!("\nStarted another sleep, PID {}", handle.pid());
 
     // terminate() sends SIGTERM
-    p.terminate()?;
-    let status = p.wait()?;
+    handle.terminate()?;
+    let status = handle.wait()?;
     println!("After terminate: {:?}", status);
 
-    let mut p = Popen::create(&["sleep", "100"], PopenConfig::default())?;
-    println!("\nStarted another sleep, PID {:?}", p.pid());
+    let mut handle = Exec::cmd("sleep").arg("100").start()?;
+    println!("\nStarted another sleep, PID {}", handle.pid());
 
     // kill() sends SIGKILL
-    p.kill()?;
-    let status = p.wait()?;
+    handle.kill()?;
+    let status = handle.wait()?;
     println!("After kill: {:?}", status);
 
     Ok(())

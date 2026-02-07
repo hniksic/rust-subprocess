@@ -1,147 +1,146 @@
-use std::ffi::{OsStr, OsString};
-
-use crate::ExitStatus;
-use crate::unix::PopenExt;
-use crate::{Popen, PopenConfig, Redirection};
-
-#[test]
-fn setup_executable() {
-    // Test that PopenConfig::executable overrides the actual executable while argv[0] is
-    // passed to the process. We run sh with executable override, and have it print $0
-    // which should be "foobar", not "sh".
-    let mut p = Popen::create(
-        &["foobar", "-c", r#"printf %s "$0""#],
-        PopenConfig {
-            executable: Some(OsStr::new("sh").to_owned()),
-            stdout: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, _err) = p.communicate([]).unwrap().read_string().unwrap();
-    assert_eq!(out, "foobar");
-}
+use crate::unix::{ProcessExt, StartedExt};
+use crate::{Exec, ExecExt, ExitStatus, Redirection};
 
 #[test]
 fn err_terminate() {
-    let mut p = Popen::create(&["sleep", "5"], PopenConfig::default()).unwrap();
-    assert!(p.poll().is_none());
-    p.terminate().unwrap();
-    assert!(p.wait().unwrap().is_killed_by(libc::SIGTERM));
+    let handle = Exec::cmd("sleep").arg("5").start().unwrap();
+    assert!(handle.processes[0].poll().is_none());
+    handle.processes[0].terminate().unwrap();
+    assert!(
+        handle.processes[0]
+            .wait()
+            .unwrap()
+            .is_killed_by(libc::SIGTERM)
+    );
 }
 
 #[test]
 fn waitpid_echild() {
-    let mut p = Popen::create(&["true"], PopenConfig::default()).unwrap();
-    let pid = p.pid().unwrap() as i32;
+    // Start a short-lived process and steal its child with raw waitpid
+    // before our Process::wait() gets to it. The library should handle
+    // the ECHILD error gracefully.
+    let handle = Exec::cmd("true").start().unwrap();
+    let pid = handle.processes[0].pid() as i32;
     let mut status = 0 as libc::c_int;
     let wpid = unsafe { libc::waitpid(pid, &mut status, 0) };
     assert_eq!(wpid, pid);
     assert_eq!(status, 0);
-    let exit = p.wait().unwrap();
+    let exit = handle.processes[0].wait().unwrap();
     assert!(exit.code().is_none() && exit.signal().is_none());
 }
 
 #[test]
 fn send_signal() {
-    let mut p = Popen::create(&["sleep", "5"], PopenConfig::default()).unwrap();
-    p.send_signal(libc::SIGUSR1).unwrap();
-    assert_eq!(p.wait().unwrap().signal(), Some(libc::SIGUSR1));
+    let handle = Exec::cmd("sleep").arg("5").start().unwrap();
+    handle.processes[0].send_signal(libc::SIGUSR1).unwrap();
+    assert_eq!(
+        handle.processes[0].wait().unwrap().signal(),
+        Some(libc::SIGUSR1)
+    );
 }
 
 #[test]
 fn env_set_all_1() {
-    let mut p = Popen::create(
-        &["env"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            env: Some(Vec::new()),
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, _err) = p.communicate([]).unwrap().read_string().unwrap();
+    // An empty environment should result in no env vars being printed.
+    let out = Exec::cmd("env")
+        .env_clear()
+        .stdout(Redirection::Pipe)
+        .capture()
+        .unwrap()
+        .stdout_str();
     assert_eq!(out, "");
 }
 
 #[test]
 fn env_set_all_2() {
-    let mut p = Popen::create(
-        &["env"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            env: Some(vec![(OsString::from("FOO"), OsString::from("bar"))]),
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, _err) = p.communicate([]).unwrap().read_string().unwrap();
+    // A single env var in a cleared environment should be the only
+    // output.
+    let out = Exec::cmd("env")
+        .env_clear()
+        .env("FOO", "bar")
+        .stdout(Redirection::Pipe)
+        .capture()
+        .unwrap()
+        .stdout_str();
     assert_eq!(out.trim_end(), "FOO=bar");
 }
 
 #[test]
 fn exec_setpgid() {
-    use crate::Exec;
-    use crate::ExecExt;
-
-    let mut p = (Exec::cmd("sh").args(&["-c", "sleep 100 & wait"]))
+    // Spawn a shell in a new process group that spawns a background
+    // child. Signaling the group should terminate both the shell and
+    // its child.
+    let handle = Exec::cmd("sh")
+        .args(&["-c", "sleep 100 & wait"])
         .setpgid()
-        .popen()
+        .start()
         .unwrap();
-    p.send_signal_group(libc::SIGTERM).unwrap();
-    assert!(p.wait().unwrap().is_killed_by(libc::SIGTERM));
+    handle.processes[0]
+        .send_signal_group(libc::SIGTERM)
+        .unwrap();
+    assert!(
+        handle.processes[0]
+            .wait()
+            .unwrap()
+            .is_killed_by(libc::SIGTERM)
+    );
 }
 
 #[test]
 fn send_signal_group() {
-    // Spawn a shell in a new process group that spawns a background child. Signaling the
-    // group should terminate both the shell and its child.
-    let mut p = Popen::create(
-        &["sh", "-c", "sleep 100 & wait"],
-        PopenConfig {
-            setpgid: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    p.send_signal_group(libc::SIGTERM).unwrap();
-    assert!(p.wait().unwrap().is_killed_by(libc::SIGTERM));
+    // Spawn a shell in a new process group that spawns a background
+    // child. Signaling the group should terminate both the shell and
+    // its child.
+    let handle = Exec::cmd("sh")
+        .args(&["-c", "sleep 100 & wait"])
+        .setpgid()
+        .start()
+        .unwrap();
+    handle.processes[0]
+        .send_signal_group(libc::SIGTERM)
+        .unwrap();
+    assert!(
+        handle.processes[0]
+            .wait()
+            .unwrap()
+            .is_killed_by(libc::SIGTERM)
+    );
 }
 
 #[test]
 fn send_signal_group_after_finish() {
     // Signaling a finished process group should succeed (no-op).
-    let mut p = Popen::create(
-        &["true"],
-        PopenConfig {
-            setpgid: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    p.wait().unwrap();
-    p.send_signal_group(libc::SIGTERM).unwrap();
+    let handle = Exec::cmd("true").setpgid().start().unwrap();
+    handle.processes[0].wait().unwrap();
+    handle.processes[0]
+        .send_signal_group(libc::SIGTERM)
+        .unwrap();
 }
 
 #[test]
 fn kill_process() {
-    // kill() sends SIGKILL which cannot be caught
-    let mut p = Popen::create(&["sleep", "1000"], PopenConfig::default()).unwrap();
-    p.kill().unwrap();
-    assert!(p.wait().unwrap().is_killed_by(libc::SIGKILL));
+    // kill() sends SIGKILL which cannot be caught.
+    let handle = Exec::cmd("sleep").arg("1000").start().unwrap();
+    handle.processes[0].kill().unwrap();
+    assert!(
+        handle.processes[0]
+            .wait()
+            .unwrap()
+            .is_killed_by(libc::SIGKILL)
+    );
 }
 
 #[test]
 fn kill_vs_terminate() {
-    // Demonstrate that terminate (SIGTERM) and kill (SIGKILL) produce different exit
-    // statuses
-    let mut p1 = Popen::create(&["sleep", "1000"], PopenConfig::default()).unwrap();
-    p1.terminate().unwrap();
-    let status1 = p1.wait().unwrap();
+    // Demonstrate that terminate (SIGTERM) and kill (SIGKILL) produce
+    // different exit statuses.
+    let h1 = Exec::cmd("sleep").arg("1000").start().unwrap();
+    h1.processes[0].terminate().unwrap();
+    let status1 = h1.processes[0].wait().unwrap();
 
-    let mut p2 = Popen::create(&["sleep", "1000"], PopenConfig::default()).unwrap();
-    p2.kill().unwrap();
-    let status2 = p2.wait().unwrap();
+    let h2 = Exec::cmd("sleep").arg("1000").start().unwrap();
+    h2.processes[0].kill().unwrap();
+    let status2 = h2.processes[0].wait().unwrap();
 
     assert!(status1.is_killed_by(libc::SIGTERM));
     assert!(status2.is_killed_by(libc::SIGKILL));
@@ -176,4 +175,26 @@ fn exit_status_display() {
     assert_eq!(ExitStatus::from_raw(0 << 8).to_string(), "exit code 0");
     assert_eq!(ExitStatus::from_raw(1 << 8).to_string(), "exit code 1");
     assert_eq!(ExitStatus::from_raw(9).to_string(), "signal 9");
+}
+
+// --- StartedExt tests ---
+
+#[test]
+fn started_send_signal() {
+    let handle = Exec::cmd("sleep").arg("100").start().unwrap();
+    handle.send_signal(libc::SIGTERM).unwrap();
+    let status = handle.processes[0].wait().unwrap();
+    assert!(status.is_killed_by(libc::SIGTERM));
+}
+
+#[test]
+fn started_send_signal_group() {
+    let handle = Exec::cmd("sh")
+        .args(&["-c", "sleep 100 & wait"])
+        .setpgid()
+        .start()
+        .unwrap();
+    handle.send_signal_group(libc::SIGKILL).unwrap();
+    let status = handle.processes[0].wait().unwrap();
+    assert!(status.is_killed_by(libc::SIGKILL) || status.is_killed_by(libc::SIGTERM));
 }

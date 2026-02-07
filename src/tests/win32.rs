@@ -1,36 +1,11 @@
-use std::ffi::OsStr;
-
-use crate::ExitStatus;
-use crate::{Popen, PopenConfig, Redirection};
-
-#[test]
-fn setup_executable() {
-    // Test that PopenConfig::executable overrides the actual executable while argv[0] is
-    // passed to the process. We run PowerShell with executable override, and have it
-    // print its argv[0] which should be "foobar", not "powershell".
-    let mut p = Popen::create(
-        &[
-            "foobar",
-            "-Command",
-            "[Environment]::GetCommandLineArgs()[0]",
-        ],
-        PopenConfig {
-            executable: Some(OsStr::new("powershell.exe").to_owned()),
-            stdout: Redirection::Pipe,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (out, _err) = p.communicate([]).unwrap().read_string().unwrap();
-    assert_eq!(out.trim(), "foobar");
-}
+use crate::{Exec, ExitStatus, Redirection};
 
 #[test]
 fn err_terminate() {
-    let mut p = Popen::create(&["sleep", "5"], PopenConfig::default()).unwrap();
-    assert!(p.poll().is_none());
-    p.terminate().unwrap();
-    assert_eq!(p.wait().unwrap().code(), Some(1));
+    let handle = Exec::cmd("sleep").arg("5").start().unwrap();
+    assert!(handle.processes[0].poll().is_none());
+    handle.processes[0].terminate().unwrap();
+    assert_eq!(handle.processes[0].wait().unwrap().code(), Some(1));
 }
 
 #[test]

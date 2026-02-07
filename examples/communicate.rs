@@ -3,36 +3,28 @@
 //! Run with: cargo run --example communicate
 
 use std::time::Duration;
-use subprocess::{Popen, PopenConfig, Redirection};
+use subprocess::{Exec, Redirection};
 
 fn main() -> std::io::Result<()> {
     // Basic communicate: send input, receive output
-    let mut p = Popen::create(
-        &["cat"],
-        PopenConfig {
-            stdin: Redirection::Pipe,
-            stdout: Redirection::Pipe,
-            ..Default::default()
-        },
-    )?;
+    let mut handle = Exec::cmd("cat")
+        .stdin("Hello, cat!")
+        .stdout(Redirection::Pipe)
+        .start()?;
 
-    let (stdout, _stderr) = p.communicate("Hello, cat!")?.read_string()?;
-    println!("cat said: {}", stdout);
-    p.wait()?;
+    let (stdout, _stderr) = handle.communicate().read()?;
+    println!("cat said: {}", String::from_utf8_lossy(&stdout));
+    handle.wait()?;
 
     // Communicate with timeout using Communicator
     println!("\nCommunicating with timeout:");
-    let mut p = Popen::create(
-        &["cat"],
-        PopenConfig {
-            stdin: Redirection::Pipe,
-            stdout: Redirection::Pipe,
-            ..Default::default()
-        },
-    )?;
+    let mut handle = Exec::cmd("cat")
+        .stdin("data with timeout")
+        .stdout(Redirection::Pipe)
+        .start()?;
 
-    let result = p
-        .communicate("data with timeout")?
+    let result = handle
+        .communicate()
         .limit_time(Duration::from_secs(5))
         .read();
 
@@ -40,20 +32,14 @@ fn main() -> std::io::Result<()> {
         Ok((stdout, _)) => println!("Got: {}", String::from_utf8_lossy(&stdout)),
         Err(e) => println!("Error: {}", e),
     }
-    p.wait()?;
+    handle.wait()?;
 
     // Communicate with size limit
     println!("\nCommunicating with size limit:");
-    let mut p = Popen::create(
-        &["yes"],
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            ..Default::default()
-        },
-    )?;
+    let mut handle = Exec::cmd("yes").stdout(Redirection::Pipe).start()?;
 
-    let result = p
-        .communicate([])?
+    let result = handle
+        .communicate()
         .limit_size(100) // Only read first 100 bytes
         .read();
 
@@ -63,8 +49,8 @@ fn main() -> std::io::Result<()> {
         }
         Err(e) => println!("Error: {}", e),
     }
-    p.terminate()?;
-    p.wait()?;
+    handle.terminate()?;
+    handle.wait()?;
 
     Ok(())
 }

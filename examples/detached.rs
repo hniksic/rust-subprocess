@@ -8,19 +8,19 @@ use subprocess::Exec;
 fn main() -> std::io::Result<()> {
     // Start a detached process - won't be waited on drop
     println!("Starting detached process...");
-    let popen = Exec::cmd("sleep").arg("0.1").detached().popen()?;
+    let handle = Exec::cmd("sleep").arg("0.1").detached().start()?;
 
-    println!("Process started with PID: {:?}", popen.pid());
-    println!("Dropping Popen without waiting...");
-    drop(popen);
-    println!("Popen dropped, process may still be running");
+    println!("Process started with PID: {}", handle.pid());
+    println!("Dropping handle without waiting...");
+    drop(handle);
+    println!("Handle dropped, process may still be running");
 
     // Start and explicitly wait
     println!("\nStarting another process...");
-    let mut popen = Exec::cmd("sleep").arg("0.1").detached().popen()?;
+    let mut handle = Exec::cmd("sleep").arg("0.1").detached().start()?;
 
     println!("Waiting explicitly...");
-    let status = popen.wait()?;
+    let status = handle.wait()?;
     println!("Process finished: {:?}", status);
 
     // Detached with streaming - useful for long-running processes
