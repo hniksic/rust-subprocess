@@ -712,6 +712,13 @@ mod exec {
             /// access permissions based on group ownership. This calls `setgid(2)` in the
             /// child process after `fork()` but before `exec()`.
             fn setgid(self, gid: u32) -> Self;
+
+            /// Put the subprocess into its own process group.
+            ///
+            /// This calls `setpgid(0, 0)` before execing the child process, making it the
+            /// leader of a new process group.  Use with [`PopenExt::send_signal_group`]
+            /// to signal the entire group.
+            fn setpgid(self) -> Self;
         }
 
         impl ExecExt for Exec {
@@ -722,6 +729,11 @@ mod exec {
 
             fn setgid(mut self, gid: u32) -> Exec {
                 self.config.setgid = Some(gid);
+                self
+            }
+
+            fn setpgid(mut self) -> Exec {
+                self.config.setpgid = true;
                 self
             }
         }

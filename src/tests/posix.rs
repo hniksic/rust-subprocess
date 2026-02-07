@@ -80,6 +80,19 @@ fn env_set_all_2() {
 }
 
 #[test]
+fn exec_setpgid() {
+    use crate::Exec;
+    use crate::ExecExt;
+
+    let mut p = (Exec::cmd("sh").args(&["-c", "sleep 100 & wait"]))
+        .setpgid()
+        .popen()
+        .unwrap();
+    p.send_signal_group(libc::SIGTERM).unwrap();
+    assert!(p.wait().unwrap().is_killed_by(libc::SIGTERM));
+}
+
+#[test]
 fn send_signal_group() {
     // Spawn a shell in a new process group that spawns a background child. Signaling the
     // group should terminate both the shell and its child.
