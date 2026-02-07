@@ -427,36 +427,48 @@ mod exec {
 
         /// Starts the process and returns a `Communicator` handle.
         ///
-        /// Compared to `capture()`, this offers more choice in how communication is
-        /// performed, such as read size limit and timeout.
+        /// Unless already configured, stdout and stderr are redirected to pipes.
+        /// To only communicate over specific streams, set them up explicitly and
+        /// use `start()`.
+        ///
+        /// Compared to `capture()`, this offers more choice in how communication
+        /// is performed, such as read size limit and timeout.
         ///
         /// Unlike `capture()`, this method doesn't wait for the process to finish,
         /// effectively detaching it.
-        pub fn communicate(self) -> io::Result<Communicator<Vec<u8>>> {
-            if let (&Redirection::None, &Redirection::None) =
-                (&self.config.stdout, &self.config.stderr)
-            {
-                return Ok(self
-                    .detached()
-                    .stdout(Redirection::Pipe)
-                    .start()?
-                    .communicate());
+        pub fn communicate(mut self) -> io::Result<Communicator<Vec<u8>>> {
+            self = self.detached();
+            if matches!(self.config.stdout, Redirection::None) {
+                self = self.stdout(Redirection::Pipe);
             }
-            Ok(self.detached().start()?.communicate())
+            if matches!(self.config.stderr, Redirection::None) {
+                self = self.stderr(Redirection::Pipe);
+            }
+            Ok(self.start()?.communicate())
         }
 
         /// Starts the process, collects its output, and waits for it to finish.
         ///
-        /// The return value provides the standard output and standard error as bytes or
-        /// optionally strings, as well as the exit status.
+        /// The return value provides the standard output and standard error as bytes
+        /// or optionally strings, as well as the exit status.
         ///
-        /// This method waits for the process to finish, rather than simply waiting for
-        /// its standard streams to close.  If this is undesirable, use `detached()`.
-        pub fn capture(self) -> io::Result<Capture> {
-            if let (&Redirection::None, &Redirection::None) =
-                (&self.config.stdout, &self.config.stderr)
-            {
-                return self.stdout(Redirection::Pipe).start()?.capture();
+        /// Unless already configured, stdout and stderr are redirected to pipes so
+        /// they can be captured. To only capture stdout, set it up explicitly and
+        /// use `start()`:
+        ///
+        /// ```ignore
+        /// let c = Exec::cmd("foo").stdout(Redirection::Pipe).start()?.capture()?;
+        /// ```
+        ///
+        /// This method waits for the process to finish, rather than simply waiting
+        /// for its standard streams to close. If this is undesirable, use
+        /// `detached()`.
+        pub fn capture(mut self) -> io::Result<Capture> {
+            if matches!(self.config.stdout, Redirection::None) {
+                self = self.stdout(Redirection::Pipe);
+            }
+            if matches!(self.config.stderr, Redirection::None) {
+                self = self.stderr(Redirection::Pipe);
             }
             self.start()?.capture()
         }

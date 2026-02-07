@@ -594,17 +594,27 @@ fn pipeline_stderr_all_pipe_start() {
 }
 
 #[test]
-fn exec_capture_no_auto_stdout_when_stderr_set() {
-    // Exec::capture() only auto-pipes stdout when BOTH stdout and stderr are None.
-    // Setting stderr(Pipe) means the joint check (None, None) fails, so stdout is
-    // NOT auto-piped - output goes to the parent's stdout (inherited).
+fn exec_capture_auto_stdout_when_stderr_set() {
+    // Exec::capture() auto-pipes stdout and stderr independently.
+    // Setting stderr(Pipe) does not suppress stdout auto-piping.
     let c = Exec::cmd("sh")
         .args(&["-c", "echo out; echo err >&2"])
         .stderr(Redirection::Pipe)
         .capture()
         .unwrap();
     assert_eq!(c.stderr_str().trim(), "err");
-    assert_eq!(c.stdout_str(), "");
+    assert_eq!(c.stdout_str().trim(), "out");
+}
+
+#[test]
+fn exec_capture_auto_pipes_both() {
+    // Bare Exec::cmd(...).capture() auto-pipes both stdout and stderr.
+    let c = Exec::cmd("sh")
+        .args(&["-c", "echo out; echo err >&2"])
+        .capture()
+        .unwrap();
+    assert_eq!(c.stdout_str().trim(), "out");
+    assert_eq!(c.stderr_str().trim(), "err");
 }
 
 #[test]
@@ -663,17 +673,16 @@ fn pipeline_start_capture_stdout_only() {
 }
 
 #[test]
-fn exec_communicate_no_auto_stdout_when_stderr_set() {
-    // Same joint-check logic as capture: Exec::communicate() only auto-pipes
-    // stdout when both stdout and stderr are None.  With stderr(Pipe), only
-    // stderr is piped.
+fn exec_communicate_auto_stdout_when_stderr_set() {
+    // Exec::communicate() auto-pipes stdout and stderr independently.
+    // Setting stderr(Pipe) does not suppress stdout auto-piping.
     let mut comm = Exec::cmd("sh")
         .args(&["-c", "echo out; echo err >&2"])
         .stderr(Redirection::Pipe)
         .communicate()
         .unwrap();
     let (stdout, stderr) = comm.read().unwrap();
-    assert_eq!(stdout, b"");
+    assert_eq!(String::from_utf8_lossy(&stdout).trim(), "out");
     assert_eq!(String::from_utf8_lossy(&stderr).trim(), "err");
 }
 
