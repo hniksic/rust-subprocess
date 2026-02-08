@@ -26,9 +26,9 @@ pub(crate) struct SpawnResult {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn(
     argv: Vec<OsString>,
-    stdin: Redirection,
-    stdout: Redirection,
-    stderr: Redirection,
+    stdin: Arc<Redirection>,
+    stdout: Arc<Redirection>,
+    stderr: Arc<Redirection>,
     detached: bool,
     executable: Option<&OsStr>,
     env: Option<&[(OsString, OsString)]>,
@@ -45,18 +45,7 @@ pub(crate) fn spawn(
         ));
     }
 
-    let mut parent_stdin: Option<File> = None;
-    let mut parent_stdout: Option<File> = None;
-    let mut parent_stderr: Option<File> = None;
-
-    let child_ends = setup_streams(
-        stdin,
-        stdout,
-        stderr,
-        &mut parent_stdin,
-        &mut parent_stdout,
-        &mut parent_stderr,
-    )?;
+    let (parent_ends, child_ends) = setup_streams(stdin, stdout, stderr)?;
 
     let process = os::os_start(
         argv,
@@ -77,114 +66,150 @@ pub(crate) fn spawn(
 
     Ok(SpawnResult {
         process,
-        stdin: parent_stdin,
-        stdout: parent_stdout,
-        stderr: parent_stderr,
+        stdin: parent_ends.0,
+        stdout: parent_ends.1,
+        stderr: parent_ends.2,
     })
 }
 
-// Set up streams for the child process. Fills in the parent pipe ends and returns the
-// child ends.
-fn setup_streams(
-    stdin: Redirection,
-    stdout: Redirection,
-    stderr: Redirection,
-    parent_stdin: &mut Option<File>,
-    parent_stdout: &mut Option<File>,
-    parent_stderr: &mut Option<File>,
-) -> io::Result<(Option<Arc<File>>, Option<Arc<File>>, Option<Arc<File>>)> {
-    fn prepare_pipe(
-        parent_writes: bool,
-        parent_ref: &mut Option<File>,
-        child_ref: &mut Option<Arc<File>>,
-    ) -> io::Result<()> {
-        let (read, write) = os::make_pipe()?;
-        let (parent_end, child_end) = if parent_writes {
-            (write, read)
-        } else {
-            (read, write)
-        };
-        os::set_inheritable(&parent_end, false)?;
-        *parent_ref = Some(parent_end);
-        *child_ref = Some(Arc::new(child_end));
-        Ok(())
+fn child_file(r: &Redirection) -> &File {
+    match r {
+        Redirection::File(f) => f,
+        _ => unreachable!(),
     }
-    fn prepare_file(file: File, child_ref: &mut Option<Arc<File>>) -> io::Result<()> {
-        os::set_inheritable(&file, true)?;
-        *child_ref = Some(Arc::new(file));
-        Ok(())
-    }
-    fn prepare_shared_file(file: Arc<File>, child_ref: &mut Option<Arc<File>>) -> io::Result<()> {
-        os::set_inheritable(&file, true)?;
-        *child_ref = Some(file);
-        Ok(())
-    }
-    fn prepare_null_file(for_read: bool, child_ref: &mut Option<Arc<File>>) -> io::Result<()> {
-        let file = if for_read {
-            OpenOptions::new().read(true).open(os::NULL_DEVICE)?
-        } else {
-            OpenOptions::new().write(true).open(os::NULL_DEVICE)?
-        };
-        prepare_file(file, child_ref)
-    }
-    fn reuse_stream(
-        dest: &mut Option<Arc<File>>,
-        src: &mut Option<Arc<File>>,
-        src_id: StandardStream,
-    ) -> io::Result<()> {
-        if src.is_none() {
-            *src = Some(get_standard_stream(src_id)?);
-        }
-        *dest = src.clone();
-        Ok(())
-    }
+}
 
+/// Translate a single `Redirection` into the child-side fd and (for Pipe) the parent-side
+/// fd. Returns `(parent_end, child_end)` where only Pipe produces a parent end and None
+/// produces neither.
+///
+/// Merge is not handled here - the caller checks for Merge before calling this function.
+fn prepare_child_stream(
+    redir: Arc<Redirection>,
+    is_input: bool,
+) -> io::Result<(Option<File>, Option<Arc<Redirection>>)> {
+    // File is the only variant holding a resource - handle specially to avoid dup() when
+    // the Arc is shared.
+    if matches!(&*redir, Redirection::File(_)) {
+        return match Arc::try_unwrap(redir) {
+            Ok(Redirection::File(f)) => Ok((None, Some(prepare_file(f)?))),
+            Err(arc) => Ok((None, Some(prepare_file_shared(arc)?))),
+            _ => unreachable!(),
+        };
+    }
+    // Other variants are trivially cheap - just peek and handle.
+    match &*redir {
+        Redirection::Pipe => {
+            let (parent, child) = prepare_pipe(is_input)?;
+            Ok((Some(parent), Some(child)))
+        }
+        Redirection::Null => Ok((None, Some(prepare_null_file(is_input)?))),
+        Redirection::None => Ok((None, None)),
+        _ => unreachable!(),
+    }
+}
+
+fn prepare_pipe(parent_writes: bool) -> io::Result<(File, Arc<Redirection>)> {
+    let (read, write) = os::make_pipe()?;
+    let (parent_end, child_end) = if parent_writes {
+        (write, read)
+    } else {
+        (read, write)
+    };
+    os::set_inheritable(&parent_end, false)?;
+    Ok((parent_end, Arc::new(Redirection::File(child_end))))
+}
+
+fn prepare_file(file: File) -> io::Result<Arc<Redirection>> {
+    os::set_inheritable(&file, true)?;
+    Ok(Arc::new(Redirection::File(file)))
+}
+
+fn prepare_file_shared(arc: Arc<Redirection>) -> io::Result<Arc<Redirection>> {
+    os::set_inheritable(child_file(&arc), true)?;
+    Ok(arc)
+}
+
+fn prepare_null_file(for_read: bool) -> io::Result<Arc<Redirection>> {
+    let file = if for_read {
+        OpenOptions::new().read(true).open(os::NULL_DEVICE)?
+    } else {
+        OpenOptions::new().write(true).open(os::NULL_DEVICE)?
+    };
+    prepare_file(file)
+}
+
+// Share a child stream via Arc::clone - zero dup syscalls.
+fn reuse_stream(
+    dest: &mut Option<Arc<Redirection>>,
+    src: &mut Option<Arc<Redirection>>,
+    src_id: StandardStream,
+) -> io::Result<()> {
+    if src.is_none() {
+        *src = Some(get_redirection_to_standard_stream(src_id)?);
+    }
+    *dest = src.clone();
+    Ok(())
+}
+
+// Set up streams for the child process. Returns (parent_ends, child_ends).
+//
+// Child ends use Arc<Redirection> (always the File variant internally) so that Merge
+// (e.g. 2>&1) can share an fd between stdout and stderr without a dup syscall -
+// reuse_stream just does Arc::clone. Dropping an Arc after dup2 in the child only
+// decrements the refcount rather than closing the fd, which is important when two
+// child_ends reference the same underlying file. For pipeline members that share a
+// Redirection::File via Arc, we also avoid dup by reusing the same Arc directly.
+fn setup_streams(
+    stdin: Arc<Redirection>,
+    stdout: Arc<Redirection>,
+    stderr: Arc<Redirection>,
+) -> io::Result<(
+    (Option<File>, Option<File>, Option<File>),
+    (
+        Option<Arc<Redirection>>,
+        Option<Arc<Redirection>>,
+        Option<Arc<Redirection>>,
+    ),
+)> {
     #[derive(PartialEq, Eq, Copy, Clone)]
     enum MergeKind {
         ErrToOut, // 2>&1
         OutToErr, // 1>&2
         None,
     }
-    let mut merge: MergeKind = MergeKind::None;
 
-    let (mut child_stdin, mut child_stdout, mut child_stderr) = (None, None, None);
-
-    match stdin {
-        Redirection::Pipe => prepare_pipe(true, parent_stdin, &mut child_stdin)?,
-        Redirection::File(file) => prepare_file(file, &mut child_stdin)?,
-        Redirection::SharedFile(file) => prepare_shared_file(file, &mut child_stdin)?,
-        Redirection::Null => prepare_null_file(true, &mut child_stdin)?,
-        Redirection::Merge => {
+    if matches!(&*stdin, Redirection::Merge) {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            "Redirection::Merge not valid for stdin",
+        ));
+    }
+    let merge = match (
+        matches!(&*stdout, Redirection::Merge),
+        matches!(&*stderr, Redirection::Merge),
+    ) {
+        (false, false) => MergeKind::None,
+        (false, true) => MergeKind::ErrToOut,
+        (true, false) => MergeKind::OutToErr,
+        (true, true) => {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
-                "Redirection::Merge not valid for stdin",
+                "Redirection::Merge not valid for both stdout and stderr",
             ));
         }
-        Redirection::None => (),
     };
-    match stdout {
-        Redirection::Pipe => prepare_pipe(false, parent_stdout, &mut child_stdout)?,
-        Redirection::File(file) => prepare_file(file, &mut child_stdout)?,
-        Redirection::SharedFile(file) => prepare_shared_file(file, &mut child_stdout)?,
-        Redirection::Null => prepare_null_file(false, &mut child_stdout)?,
-        Redirection::Merge => merge = MergeKind::OutToErr,
-        Redirection::None => (),
+
+    let (parent_stdin, child_stdin) = prepare_child_stream(stdin, true)?;
+    let (parent_stdout, mut child_stdout) = if merge == MergeKind::OutToErr {
+        (None, None)
+    } else {
+        prepare_child_stream(stdout, false)?
     };
-    match stderr {
-        Redirection::Pipe => prepare_pipe(false, parent_stderr, &mut child_stderr)?,
-        Redirection::File(file) => prepare_file(file, &mut child_stderr)?,
-        Redirection::SharedFile(file) => prepare_shared_file(file, &mut child_stderr)?,
-        Redirection::Null => prepare_null_file(false, &mut child_stderr)?,
-        Redirection::Merge => {
-            if merge != MergeKind::None {
-                return Err(io::Error::new(
-                    ErrorKind::InvalidInput,
-                    "Redirection::Merge not valid for both stdout and stderr",
-                ));
-            }
-            merge = MergeKind::ErrToOut;
-        }
-        Redirection::None => (),
+    let (parent_stderr, mut child_stderr) = if merge == MergeKind::ErrToOut {
+        (None, None)
+    } else {
+        prepare_child_stream(stderr, false)?
     };
 
     match merge {
@@ -197,7 +222,10 @@ fn setup_streams(
         MergeKind::None => (),
     }
 
-    Ok((child_stdin, child_stdout, child_stderr))
+    Ok((
+        (parent_stdin, parent_stdout, parent_stderr),
+        (child_stdin, child_stdout, child_stderr),
+    ))
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -208,13 +236,14 @@ pub(crate) enum StandardStream {
     Error = 2,
 }
 
-fn get_standard_stream(which: StandardStream) -> io::Result<Arc<File>> {
-    static STREAMS: [OnceLock<Arc<File>>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
+fn get_redirection_to_standard_stream(which: StandardStream) -> io::Result<Arc<Redirection>> {
+    static STREAMS: [OnceLock<Arc<Redirection>>; 3] =
+        [OnceLock::new(), OnceLock::new(), OnceLock::new()];
     let lock = &STREAMS[which as usize];
     if let Some(stream) = lock.get() {
         return Ok(Arc::clone(stream));
     }
-    let stream = os::make_standard_stream(which)?;
+    let stream = os::make_redirection_to_standard_stream(which)?;
     Ok(Arc::clone(lock.get_or_init(|| stream)))
 }
 
@@ -231,7 +260,7 @@ pub(crate) mod os {
     use std::io::{self, Read, Write};
     use std::os::unix::io::AsRawFd;
 
-    pub use crate::posix::make_standard_stream;
+    pub use crate::posix::make_redirection_to_standard_stream;
 
     /// Read exactly N bytes, or return None on immediate EOF. Similar to
     /// read_exact(), but distinguishes between no read and partial read
@@ -256,7 +285,11 @@ pub(crate) mod os {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn os_start(
         argv: Vec<OsString>,
-        child_ends: (Option<Arc<File>>, Option<Arc<File>>, Option<Arc<File>>),
+        child_ends: (
+            Option<Arc<Redirection>>,
+            Option<Arc<Redirection>>,
+            Option<Arc<Redirection>>,
+        ),
         detached: bool,
         executable: Option<&OsStr>,
         env: Option<&[(OsString, OsString)]>,
@@ -292,6 +325,10 @@ pub(crate) mod os {
             }
         }
 
+        // Close the parent's copies of child-end fds promptly after fork,
+        // before blocking on exec_fail_pipe.
+        drop(child_ends);
+
         drop(exec_fail_pipe.1);
         match read_exact_or_eof::<4>(&mut exec_fail_pipe.0)? {
             None => Ok(Process::new(pid, (), detached)),
@@ -319,18 +356,22 @@ pub(crate) mod os {
         formatted
     }
 
-    fn dup2_if_needed(file: Option<Arc<File>>, target_fd: i32) -> io::Result<()> {
-        if let Some(f) = file
-            && f.as_raw_fd() != target_fd
+    fn dup2_if_needed(end: Option<Arc<Redirection>>, target_fd: i32) -> io::Result<()> {
+        if let Some(r) = &end
+            && child_file(r).as_raw_fd() != target_fd
         {
-            posix::dup2(f.as_raw_fd(), target_fd)?;
+            posix::dup2(child_file(r).as_raw_fd(), target_fd)?;
         }
         Ok(())
     }
 
     fn do_exec(
         just_exec: impl FnOnce() -> io::Result<()>,
-        child_ends: (Option<Arc<File>>, Option<Arc<File>>, Option<Arc<File>>),
+        child_ends: (
+            Option<Arc<Redirection>>,
+            Option<Arc<Redirection>>,
+            Option<Arc<Redirection>>,
+        ),
         cwd: Option<&OsStr>,
         setuid: Option<u32>,
         setgid: Option<u32>,
@@ -391,19 +432,23 @@ pub(crate) mod os {
     use std::os::windows::io::{AsRawHandle, RawHandle};
 
     use crate::win32;
-    pub use crate::win32::make_standard_stream;
+    pub use crate::win32::make_redirection_to_standard_stream;
 
     pub(crate) fn os_start(
         argv: Vec<OsString>,
-        child_ends: (Option<Arc<File>>, Option<Arc<File>>, Option<Arc<File>>),
+        child_ends: (
+            Option<Arc<Redirection>>,
+            Option<Arc<Redirection>>,
+            Option<Arc<Redirection>>,
+        ),
         detached: bool,
         executable: Option<&OsStr>,
         env: Option<&[(OsString, OsString)]>,
         cwd: Option<&OsStr>,
         creation_flags: u32,
     ) -> io::Result<Process> {
-        fn raw(opt: Option<&Arc<File>>) -> Option<RawHandle> {
-            opt.map(|f| f.as_raw_handle())
+        fn raw(opt: Option<&Arc<Redirection>>) -> Option<RawHandle> {
+            opt.map(|r| child_file(r).as_raw_handle())
         }
 
         let (mut child_stdin, mut child_stdout, mut child_stderr) = child_ends;
@@ -411,7 +456,7 @@ pub(crate) mod os {
         ensure_child_stream(&mut child_stdout, StandardStream::Output)?;
         ensure_child_stream(&mut child_stderr, StandardStream::Error)?;
         let cmdline = assemble_cmdline(argv)?;
-        let env_block = env.map(|e| format_env_block(e));
+        let env_block = env.map(format_env_block);
         let executable_located = executable.map(|e| locate_in_path(e.to_owned()));
         let (handle, pid) = win32::CreateProcess(
             executable_located.as_ref().map(OsString::as_ref),
@@ -462,11 +507,11 @@ pub(crate) mod os {
     }
 
     fn ensure_child_stream(
-        stream: &mut Option<Arc<File>>,
+        stream: &mut Option<Arc<Redirection>>,
         which: StandardStream,
     ) -> io::Result<()> {
         if stream.is_none() {
-            *stream = Some(get_standard_stream(which)?);
+            *stream = Some(get_redirection_to_standard_stream(which)?);
         }
         Ok(())
     }

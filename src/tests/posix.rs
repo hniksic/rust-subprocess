@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crate::unix::{PipelineExt, ProcessExt, StartedExt};
 use crate::{Exec, ExecExt, ExitStatus, Redirection};
 
@@ -225,4 +227,25 @@ fn pipeline_setpgid_rejects_exec_setpgid() {
     let err = result.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     assert!(err.to_string().contains("setpgid"));
+}
+
+#[test]
+fn null_redirect_does_not_leak_fd() {
+    // Regression test for issue #81. When bash spawns a background
+    // process ("sleep 100 &"), it won't return from "wait" until the
+    // backgrounded child also closes its inherited file descriptors. If
+    // we leak the /dev/null fds to the child, the backgrounded sleep
+    // keeps them open and join() hangs.
+    let start = Instant::now();
+    let status = Exec::cmd("bash")
+        .args(&["-c", "sleep 100 &"])
+        .stdout(Redirection::Null)
+        .stderr(Redirection::Null)
+        .join()
+        .unwrap();
+    assert!(status.success());
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "join() took too long, /dev/null fds may have leaked"
+    );
 }

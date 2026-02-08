@@ -1,6 +1,6 @@
 use std::env;
 use std::io::{self, ErrorKind};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::{Exec, Redirection};
@@ -23,9 +23,9 @@ fn reject_empty_argv() {
     // test the empty argv rejection at the spawn level directly.
     let test = crate::spawn::spawn(
         vec![],
-        Redirection::None,
-        Redirection::None,
-        Redirection::None,
+        Arc::new(Redirection::None),
+        Arc::new(Redirection::None),
+        Arc::new(Redirection::None),
         false,
         None,
         None,
@@ -68,9 +68,9 @@ fn merge_on_stdin_rejected() {
     // for Exec, so we test Merge on stdin at the spawn level directly.
     let result = crate::spawn::spawn(
         vec!["true".into()],
-        Redirection::Merge,
-        Redirection::None,
-        Redirection::None,
+        Arc::new(Redirection::Merge),
+        Arc::new(Redirection::None),
+        Arc::new(Redirection::None),
         false,
         None,
         None,

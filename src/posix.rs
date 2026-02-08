@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use libc::{c_char, c_int};
 
+use crate::exec::Redirection;
 use crate::process::ExitStatus;
 use crate::spawn::StandardStream;
 
@@ -277,8 +278,9 @@ pub fn dup2(oldfd: i32, newfd: i32) -> Result<()> {
     Ok(())
 }
 
-pub fn make_standard_stream(which: StandardStream) -> Result<Arc<File>> {
-    let stream = Arc::new(unsafe { File::from_raw_fd(which as RawFd) });
+pub fn make_redirection_to_standard_stream(which: StandardStream) -> Result<Arc<Redirection>> {
+    let file = unsafe { File::from_raw_fd(which as RawFd) };
+    let stream = Arc::new(Redirection::File(file));
     // Leak the Arc so the object we return doesn't close the
     // underlying file descriptor. We didn't open it, and it is shared
     // by everything else, so we are not allowed to close it either.

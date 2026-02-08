@@ -1,6 +1,5 @@
 use std::fs::{self, File};
 use std::io::{self, ErrorKind, prelude::*};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
@@ -216,26 +215,6 @@ fn merge_err_to_out_file() {
         .unwrap();
     assert!(status.success());
     assert_eq!(fs::read_to_string(&tmpname).unwrap(), "foobar");
-}
-
-#[test]
-fn shared_file_output() {
-    let tmpdir = TempDir::new().unwrap();
-    let tmpname = tmpdir.path().join("output");
-    let file = Arc::new(File::create(&tmpname).unwrap());
-    let status = Exec::cmd("sh")
-        .args(&["-c", "printf out; printf err >&2"])
-        .stdout(Redirection::SharedFile(Arc::clone(&file)))
-        .stderr(Redirection::SharedFile(file))
-        .start()
-        .unwrap()
-        .wait()
-        .unwrap();
-    assert!(status.success());
-    let content = fs::read_to_string(&tmpname).unwrap();
-    // Both stdout and stderr should go to the same file
-    assert!(content.contains("out"), "stdout missing from shared file");
-    assert!(content.contains("err"), "stderr missing from shared file");
 }
 
 #[test]

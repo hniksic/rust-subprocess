@@ -51,12 +51,13 @@ use crate::exec::{
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Clone)]
 #[must_use]
 pub struct Pipeline {
     execs: Vec<Exec>,
-    stdin: Redirection,
-    stdout: Redirection,
-    stderr: Redirection,
+    stdin: Arc<Redirection>,
+    stdout: Arc<Redirection>,
+    stderr: Arc<Redirection>,
     stdin_data: Option<Vec<u8>>,
     check_success: bool,
     detached: bool,
@@ -82,9 +83,9 @@ impl Pipeline {
     pub fn new() -> Pipeline {
         Pipeline {
             execs: vec![],
-            stdin: Redirection::None,
-            stdout: Redirection::None,
-            stderr: Redirection::None,
+            stdin: Arc::new(Redirection::None),
+            stdout: Arc::new(Redirection::None),
+            stderr: Arc::new(Redirection::None),
             stdin_data: None,
             check_success: false,
             detached: false,
@@ -129,9 +130,9 @@ impl Pipeline {
     /// [`Redirection`]: enum.Redirection.html
     pub fn stdin(mut self, stdin: impl InputRedirection) -> Pipeline {
         match stdin.into_input_redirection() {
-            InputRedirectionKind::AsRedirection(r) => self.stdin = r,
+            InputRedirectionKind::AsRedirection(r) => self.stdin = Arc::new(r),
             InputRedirectionKind::FeedData(data) => {
-                self.stdin = Redirection::Pipe;
+                self.stdin = Arc::new(Redirection::Pipe);
                 self.stdin_data = Some(data);
             }
         };
@@ -147,7 +148,7 @@ impl Pipeline {
     ///
     /// [`Redirection`]: enum.Redirection.html
     pub fn stdout(mut self, stdout: impl OutputRedirection) -> Pipeline {
-        self.stdout = stdout.into_output_redirection();
+        self.stdout = Arc::new(stdout.into_output_redirection());
         self
     }
 
@@ -171,7 +172,7 @@ impl Pipeline {
     ///   with `capture()` or `communicate()`
     /// * `Redirection::Merge` - redirect stderr to stdout, like `2>&1` for each
     ///   command
-    /// * `Redirection::File(f)` / `Redirection::SharedFile(arc)` - redirect to a file
+    /// * `Redirection::File(f)` - redirect to a file
     /// * `Redirection::Null` - suppress stderr
     ///
     /// Note that this differs from the shell's `cmd1 | cmd2 2>file`, which only
@@ -183,7 +184,7 @@ impl Pipeline {
     ///
     /// [`Redirection`]: enum.Redirection.html
     pub fn stderr_all(mut self, stderr: impl OutputRedirection) -> Pipeline {
-        self.stderr = stderr.into_output_redirection();
+        self.stderr = Arc::new(stderr.into_output_redirection());
         self
     }
 
@@ -225,26 +226,23 @@ impl Pipeline {
     /// Convert pipeline-level stderr redirection into a per-command form, applying it
     /// to all commands. Returns the read end of the pipe if stderr was set to Pipe.
     fn setup_stderr(&mut self) -> io::Result<Option<File>> {
-        let (redirection, stderr_read) =
-            match std::mem::replace(&mut self.stderr, Redirection::None) {
-                Redirection::None => return Ok(None),
-                Redirection::Pipe => {
-                    let (stderr_read, stderr_write) = crate::spawn::make_pipe()?;
-                    (
-                        Redirection::SharedFile(Arc::new(stderr_write)),
-                        Some(stderr_read),
-                    )
-                }
-                Redirection::File(f) => (Redirection::SharedFile(Arc::new(f)), None),
-                other => (other, None),
-            };
-        // unwrap(): after the above conversion, redirection to apply to each cmd is
-        // SharedFile, Merge, or Null, all of which are infallible to clone.
-        self.execs = self
-            .execs
-            .drain(..)
-            .map(|cmd| cmd.stderr(redirection.try_clone().unwrap()))
-            .collect();
+        let stderr_arc = std::mem::replace(&mut self.stderr, Arc::new(Redirection::None));
+        if matches!(*stderr_arc, Redirection::None) {
+            return Ok(None);
+        }
+
+        // For Pipe, create a pipe and distribute the write end as a File
+        // redirection. For everything else, use the redirection as-is.
+        // Either way, share the same error redirection across all commands.
+        let (shared, stderr_read) = if matches!(*stderr_arc, Redirection::Pipe) {
+            let (stderr_read, stderr_write) = crate::spawn::make_pipe()?;
+            (Arc::new(Redirection::File(stderr_write)), Some(stderr_read))
+        } else {
+            (stderr_arc, None)
+        };
+        for exec in &mut self.execs {
+            exec.stderr_redirect = Arc::clone(&shared);
+        }
         Ok(stderr_read)
     }
 
@@ -304,11 +302,9 @@ impl Pipeline {
             self.execs = self.execs.into_iter().map(|cmd| cmd.detached()).collect();
         }
 
-        let first_cmd = self.execs.remove(0);
-        self.execs.insert(0, first_cmd.stdin(self.stdin));
+        self.execs.first_mut().unwrap().stdin_redirect = self.stdin;
 
-        let last_cmd = self.execs.remove(self.execs.len() - 1);
-        self.execs.push(last_cmd.stdout(self.stdout));
+        self.execs.last_mut().unwrap().stdout_redirect = self.stdout;
 
         let cnt = self.execs.len();
         let mut processes = Vec::<Process>::new();
@@ -443,12 +439,10 @@ impl Pipeline {
     /// method doesn't wait for the pipeline to finish, effectively detaching it.
     pub fn communicate(mut self) -> io::Result<Communicator<Vec<u8>>> {
         self = self.detached();
-        let setup_stdout = matches!(self.stdout, Redirection::None);
-        let setup_stderr = matches!(self.stderr, Redirection::None);
-        if setup_stdout {
+        if matches!(*self.stdout, Redirection::None) {
             self = self.stdout(Redirection::Pipe);
         }
-        if setup_stderr {
+        if matches!(*self.stderr, Redirection::None) {
             self = self.stderr_all(Redirection::Pipe);
         }
         Ok(self.start()?.communicate())
@@ -464,39 +458,13 @@ impl Pipeline {
     /// This method actually waits for the processes to finish, rather than simply
     /// waiting for the output to close.  If this is undesirable, use `detached()`.
     pub fn capture(mut self) -> io::Result<Capture> {
-        let setup_stdout = matches!(self.stdout, Redirection::None);
-        let setup_stderr = matches!(self.stderr, Redirection::None);
-        if setup_stdout {
+        if matches!(*self.stdout, Redirection::None) {
             self = self.stdout(Redirection::Pipe);
         }
-        if setup_stderr {
+        if matches!(*self.stderr, Redirection::None) {
             self = self.stderr_all(Redirection::Pipe);
         }
         self.start()?.capture()
-    }
-
-    /// Returns a copy of this `Pipeline`.
-    ///
-    /// This can fail if a `Redirection::File` is present because duplicating the
-    /// underlying file descriptor is an OS operation that can fail.
-    pub fn try_clone(&self) -> io::Result<Pipeline> {
-        let execs = self
-            .execs
-            .iter()
-            .map(|cmd| cmd.try_clone())
-            .collect::<io::Result<Vec<_>>>()?;
-        Ok(Pipeline {
-            execs,
-            stdin: self.stdin.try_clone()?,
-            stdout: self.stdout.try_clone()?,
-            stderr: self.stderr.try_clone()?,
-            stdin_data: self.stdin_data.clone(),
-            check_success: self.check_success,
-            detached: self.detached,
-            cwd: self.cwd.clone(),
-            #[cfg(unix)]
-            setpgid: self.setpgid,
-        })
     }
 }
 
@@ -550,9 +518,9 @@ impl FromIterator<Exec> for Pipeline {
     fn from_iter<I: IntoIterator<Item = Exec>>(iter: I) -> Self {
         Pipeline {
             execs: iter.into_iter().collect(),
-            stdin: Redirection::None,
-            stdout: Redirection::None,
-            stderr: Redirection::None,
+            stdin: Arc::new(Redirection::None),
+            stdout: Arc::new(Redirection::None),
+            stderr: Arc::new(Redirection::None),
             stdin_data: None,
             check_success: false,
             detached: false,

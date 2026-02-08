@@ -35,6 +35,7 @@ use winapi::um::{fileapi, handleapi, processenv, processthreadsapi, synchapi};
 pub use winapi::shared::winerror::{ERROR_ACCESS_DENIED, ERROR_BAD_PATHNAME};
 pub const STILL_ACTIVE: u32 = 259;
 
+use crate::exec::Redirection;
 use crate::spawn::StandardStream;
 
 #[derive(Debug)]
@@ -603,10 +604,10 @@ unsafe fn GetStdHandle(which: StandardStream) -> Result<RawHandle> {
     Ok(raw_handle)
 }
 
-pub fn make_standard_stream(which: StandardStream) -> Result<Arc<File>> {
+pub fn make_redirection_to_standard_stream(which: StandardStream) -> Result<Arc<Redirection>> {
     unsafe {
         let raw = GetStdHandle(which)?;
-        let stream = Arc::new(File::from_raw_handle(raw));
+        let stream = Arc::new(Redirection::File(File::from_raw_handle(raw)));
         // Leak the Arc so the object we return doesn't close the std handle.
         mem::forget(Arc::clone(&stream));
         Ok(stream)

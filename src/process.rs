@@ -444,17 +444,17 @@ mod os {
 
         pub(super) fn os_terminate(&self) -> io::Result<()> {
             let mut state = self.state.lock().unwrap();
-            if let ProcessState::Running = *state {
-                if let Err(err) = win32::TerminateProcess(&self.ext.0, 1) {
-                    if err.raw_os_error() != Some(win32::ERROR_ACCESS_DENIED as i32) {
-                        return Err(err);
-                    }
-                    let rc = win32::GetExitCodeProcess(&self.ext.0)?;
-                    if rc == win32::STILL_ACTIVE {
-                        return Err(err);
-                    }
-                    *state = ProcessState::Finished(ExitStatus::from_raw(rc));
+            if let ProcessState::Running = *state
+                && let Err(err) = win32::TerminateProcess(&self.ext.0, 1)
+            {
+                if err.raw_os_error() != Some(win32::ERROR_ACCESS_DENIED as i32) {
+                    return Err(err);
                 }
+                let rc = win32::GetExitCodeProcess(&self.ext.0)?;
+                if rc == win32::STILL_ACTIVE {
+                    return Err(err);
+                }
+                *state = ProcessState::Finished(ExitStatus::from_raw(rc));
             }
             Ok(())
         }

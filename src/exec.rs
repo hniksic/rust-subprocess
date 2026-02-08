@@ -72,31 +72,11 @@ pub enum Redirection {
     /// its own, without any intervention by the parent.
     File(File),
 
-    /// Like `File`, but the file may be shared among multiple redirections without
-    /// duplicating the file descriptor.
-    SharedFile(Arc<File>),
-
     /// Redirect the stream to the null device (`/dev/null` on Unix, `nul` on Windows).
     ///
     /// This is equivalent to `Redirection::File` with a null device file, but more
     /// convenient and portable.
     Null,
-}
-
-impl Redirection {
-    /// Clone the underlying `Redirection`, or return an error.
-    ///
-    /// Can fail in `File` variant.
-    pub fn try_clone(&self) -> io::Result<Redirection> {
-        Ok(match *self {
-            Redirection::None => Redirection::None,
-            Redirection::Pipe => Redirection::Pipe,
-            Redirection::Merge => Redirection::Merge,
-            Redirection::File(ref f) => Redirection::File(f.try_clone()?),
-            Redirection::SharedFile(ref f) => Redirection::SharedFile(Arc::clone(f)),
-            Redirection::Null => Redirection::Null,
-        })
-    }
 }
 
 /// A builder for creating subprocesses.
@@ -174,15 +154,16 @@ impl Redirection {
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Clone)]
 #[must_use]
 pub struct Exec {
     command: OsString,
     args: Vec<OsString>,
     check_success: bool,
     stdin_data: Option<Vec<u8>>,
-    stdin_redirect: Redirection,
-    stdout_redirect: Redirection,
-    stderr_redirect: Redirection,
+    pub(crate) stdin_redirect: Arc<Redirection>,
+    pub(crate) stdout_redirect: Arc<Redirection>,
+    pub(crate) stderr_redirect: Arc<Redirection>,
     detached: bool,
     executable: Option<OsString>,
     env: Option<Vec<(OsString, OsString)>>,
@@ -213,9 +194,9 @@ impl Exec {
             args: vec![],
             check_success: false,
             stdin_data: None,
-            stdin_redirect: Redirection::None,
-            stdout_redirect: Redirection::None,
-            stderr_redirect: Redirection::None,
+            stdin_redirect: Arc::new(Redirection::None),
+            stdout_redirect: Arc::new(Redirection::None),
+            stderr_redirect: Arc::new(Redirection::None),
             detached: false,
             executable: None,
             env: None,
@@ -351,11 +332,11 @@ impl Exec {
     pub fn stdin(mut self, stdin: impl InputRedirection) -> Exec {
         match stdin.into_input_redirection() {
             InputRedirectionKind::AsRedirection(new) => {
-                self.stdin_redirect = new;
+                self.stdin_redirect = Arc::new(new);
                 self.stdin_data = None;
             }
             InputRedirectionKind::FeedData(data) => {
-                self.stdin_redirect = Redirection::Pipe;
+                self.stdin_redirect = Arc::new(Redirection::Pipe);
                 self.stdin_data = Some(data);
             }
         }
@@ -371,7 +352,7 @@ impl Exec {
     ///
     /// [`Redirection`]: enum.Redirection.html
     pub fn stdout(mut self, stdout: impl OutputRedirection) -> Exec {
-        self.stdout_redirect = stdout.into_output_redirection();
+        self.stdout_redirect = Arc::new(stdout.into_output_redirection());
         self
     }
 
@@ -384,7 +365,7 @@ impl Exec {
     ///
     /// [`Redirection`]: enum.Redirection.html
     pub fn stderr(mut self, stderr: impl OutputRedirection) -> Exec {
-        self.stderr_redirect = stderr.into_output_redirection();
+        self.stderr_redirect = Arc::new(stderr.into_output_redirection());
         self
     }
 
@@ -514,10 +495,10 @@ impl Exec {
     /// effectively detaching it.
     pub fn communicate(mut self) -> io::Result<Communicator<Vec<u8>>> {
         self = self.detached();
-        if matches!(self.stdout_redirect, Redirection::None) {
+        if matches!(*self.stdout_redirect, Redirection::None) {
             self = self.stdout(Redirection::Pipe);
         }
-        if matches!(self.stderr_redirect, Redirection::None) {
+        if matches!(*self.stderr_redirect, Redirection::None) {
             self = self.stderr(Redirection::Pipe);
         }
         Ok(self.start()?.communicate())
@@ -538,10 +519,10 @@ impl Exec {
     /// This method waits for the process to finish, rather than simply waiting for its
     /// standard streams to close. If this is undesirable, use `detached()`.
     pub fn capture(mut self) -> io::Result<Capture> {
-        if matches!(self.stdout_redirect, Redirection::None) {
+        if matches!(*self.stdout_redirect, Redirection::None) {
             self = self.stdout(Redirection::Pipe);
         }
-        if matches!(self.stderr_redirect, Redirection::None) {
+        if matches!(*self.stderr_redirect, Redirection::None) {
             self = self.stderr(Redirection::Pipe);
         }
         self.start()?.capture()
@@ -596,11 +577,11 @@ impl Exec {
     }
 
     pub(crate) fn stdin_is_set(&self) -> bool {
-        !matches!(self.stdin_redirect, Redirection::None)
+        !matches!(*self.stdin_redirect, Redirection::None)
     }
 
     pub(crate) fn stdout_is_set(&self) -> bool {
-        !matches!(self.stdout_redirect, Redirection::None)
+        !matches!(*self.stdout_redirect, Redirection::None)
     }
 
     #[cfg(unix)]
@@ -611,36 +592,6 @@ impl Exec {
     #[cfg(unix)]
     pub(crate) fn set_pgid_value(&mut self, pgid: u32) {
         self.setpgid = Some(pgid);
-    }
-}
-
-impl Exec {
-    /// Returns a copy of this `Exec`.
-    ///
-    /// This can fail if a `Redirection::File` is present because duplicating the
-    /// underlying file descriptor is an OS operation that can fail.
-    pub fn try_clone(&self) -> io::Result<Exec> {
-        Ok(Exec {
-            command: self.command.clone(),
-            args: self.args.clone(),
-            check_success: self.check_success,
-            stdin_data: self.stdin_data.clone(),
-            stdin_redirect: self.stdin_redirect.try_clone()?,
-            stdout_redirect: self.stdout_redirect.try_clone()?,
-            stderr_redirect: self.stderr_redirect.try_clone()?,
-            detached: self.detached,
-            executable: self.executable.clone(),
-            env: self.env.clone(),
-            cwd: self.cwd.clone(),
-            #[cfg(unix)]
-            setuid: self.setuid,
-            #[cfg(unix)]
-            setgid: self.setgid,
-            #[cfg(unix)]
-            setpgid: self.setpgid,
-            #[cfg(windows)]
-            creation_flags: self.creation_flags,
-        })
     }
 }
 
