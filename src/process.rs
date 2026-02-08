@@ -129,6 +129,9 @@ impl Process {
     /// Terminate the subprocess.
     ///
     /// On Unix, this sends SIGTERM. On Windows, this calls `TerminateProcess`.
+    ///
+    /// If the process has already been reaped, this is a no-op to avoid signaling a
+    /// potentially reused PID.
     pub fn terminate(&self) -> io::Result<()> {
         self.0.os_terminate()
     }
@@ -136,6 +139,9 @@ impl Process {
     /// Kill the subprocess.
     ///
     /// On Unix, this sends SIGKILL. On Windows, this calls `TerminateProcess`.
+    ///
+    /// If the process has already been reaped, this is a no-op to avoid signaling a
+    /// potentially reused PID.
     pub fn kill(&self) -> io::Result<()> {
         self.0.os_kill()
     }

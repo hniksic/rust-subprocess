@@ -49,7 +49,8 @@ impl Job {
     /// Terminates all processes in the pipeline.
     ///
     /// Delegates to [`Process::terminate()`] on each process, which sends `SIGTERM` on
-    /// Unix and calls `TerminateProcess` on Windows.
+    /// Unix and calls `TerminateProcess` on Windows. Already reaped processes are
+    /// silently skipped.
     pub fn terminate(&self) -> io::Result<()> {
         for p in &self.processes {
             p.terminate()?;
@@ -93,7 +94,8 @@ impl Job {
     /// Kill all processes in the pipeline.
     ///
     /// Delegates to [`Process::kill()`] on each process, which sends `SIGKILL` on Unix
-    /// and calls `TerminateProcess` on Windows.
+    /// and calls `TerminateProcess` on Windows. Already reaped processes are silently
+    /// skipped.
     pub fn kill(&self) -> io::Result<()> {
         for p in &self.processes {
             p.kill()?;
