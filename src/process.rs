@@ -1,5 +1,6 @@
 use std::fmt;
 use std::io;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -43,19 +44,26 @@ impl ExitStatus {
 /// Unlike `std::process::Child`, all methods on `Process` take `&self` rather than `&mut
 /// self`, so a `Process` can be shared between threads without external synchronization.
 ///
+/// `Process` is cheaply cloneable. Clones share the same underlying process handle, so
+/// e.g. calling `wait()` on one clone will also make the exit status available to all
+/// other clones.
+///
 /// # Drop behavior
 ///
-/// When a `Process` is dropped, it waits for the child process to finish unless
-/// [`detach`](Self::detach) has been called. Because `Process` does not own any pipes to
-/// the child, callers must ensure that any pipes connected to the child's stdin are
-/// dropped *before* the `Process` is dropped. Otherwise, the child may block waiting for
-/// input while the `Process` drop waits for the child to exit, resulting in a deadlock.
-/// [`Started`] handles this automatically via field declaration order.
+/// When the last clone of a `Process` is dropped, it waits for the child process to
+/// finish unless [`detach`](Self::detach) has been called. Because `Process` does not own
+/// any pipes to the child, callers must ensure that any pipes connected to the child's
+/// stdin are dropped *before* the `Process` is dropped. Otherwise, the child may block
+/// waiting for input while the `Process` drop waits for the child to exit, resulting in a
+/// deadlock. [`Started`] handles this automatically via field declaration order.
 ///
 /// [`Exec::start`]: crate::Exec::start
 /// [`Pipeline::start`]: crate::Pipeline::start
 /// [`Started`]: crate::Started
-pub struct Process {
+#[derive(Clone)]
+pub struct Process(Arc<InnerProcess>);
+
+struct InnerProcess {
     pid: u32,
     #[allow(dead_code)]
     ext: os::ExtProcessState,
@@ -71,17 +79,17 @@ enum ProcessState {
 
 impl Process {
     pub(crate) fn new(pid: u32, ext: os::ExtProcessState, detached: bool) -> Process {
-        Process {
+        Process(Arc::new(InnerProcess {
             pid,
             ext,
             state: Mutex::new(ProcessState::Running),
             detached: AtomicBool::new(detached),
-        }
+        }))
     }
 
     /// Returns the PID of the subprocess.
     pub fn pid(&self) -> u32 {
-        self.pid
+        self.0.pid
     }
 
     /// Returns the exit status, if the process is known to have finished.
@@ -89,7 +97,7 @@ impl Process {
     /// This does not perform any system calls. To check whether the process has finished,
     /// use [`poll`](Self::poll) or [`wait`](Self::wait).
     pub fn exit_status(&self) -> Option<ExitStatus> {
-        let state = self.state.lock().unwrap();
+        let state = self.0.state.lock().unwrap();
         match *state {
             ProcessState::Finished(status) => Some(status),
             ProcessState::Running => None,
@@ -108,44 +116,44 @@ impl Process {
     ///
     /// If the process has already finished, returns the cached exit status immediately.
     pub fn wait(&self) -> io::Result<ExitStatus> {
-        self.os_wait()
+        self.0.os_wait()
     }
 
     /// Wait for the process to finish, timing out after the specified duration.
     ///
     /// Returns `Ok(None)` if the timeout elapsed before the process finished.
     pub fn wait_timeout(&self, dur: Duration) -> io::Result<Option<ExitStatus>> {
-        self.os_wait_timeout(dur)
+        self.0.os_wait_timeout(dur)
     }
 
     /// Terminate the subprocess.
     ///
     /// On Unix, this sends SIGTERM. On Windows, this calls `TerminateProcess`.
     pub fn terminate(&self) -> io::Result<()> {
-        self.os_terminate()
+        self.0.os_terminate()
     }
 
     /// Kill the subprocess.
     ///
     /// On Unix, this sends SIGKILL. On Windows, this calls `TerminateProcess`.
     pub fn kill(&self) -> io::Result<()> {
-        self.os_kill()
+        self.0.os_kill()
     }
 
     /// Mark the process as detached.
     ///
     /// A detached process will not be waited on when the `Process` is dropped.
     pub fn detach(&self) {
-        self.detached.store(true, Ordering::Relaxed);
+        self.0.detached.store(true, Ordering::Relaxed);
     }
 }
 
-impl Drop for Process {
+impl Drop for InnerProcess {
     fn drop(&mut self) {
         if !self.detached.load(Ordering::Relaxed) {
             let state = self.state.get_mut().unwrap();
             if matches!(*state, ProcessState::Running) {
-                self.wait().ok();
+                let _ = self.os_wait();
             }
         }
     }
@@ -153,11 +161,11 @@ impl Drop for Process {
 
 impl fmt::Debug for Process {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let state = self.state.lock().unwrap();
+        let state = self.0.state.lock().unwrap();
         f.debug_struct("Process")
-            .field("pid", &self.pid)
+            .field("pid", &self.0.pid)
             .field("state", &*state)
-            .field("detached", &self.detached.load(Ordering::Relaxed))
+            .field("detached", &self.0.detached.load(Ordering::Relaxed))
             .finish()
     }
 }
@@ -221,7 +229,7 @@ mod os {
         }
     }
 
-    impl Process {
+    impl InnerProcess {
         pub(super) fn os_wait(&self) -> io::Result<ExitStatus> {
             let mut state = self.state.lock().unwrap();
             loop {
@@ -276,6 +284,22 @@ mod os {
             self.send_signal(posix::SIGKILL)
         }
 
+        fn send_signal(&self, signal: i32) -> io::Result<()> {
+            let state = self.state.lock().unwrap();
+            match *state {
+                ProcessState::Finished(_) => Ok(()),
+                ProcessState::Running => posix::kill(self.pid, signal),
+            }
+        }
+
+        fn send_signal_group(&self, signal: i32) -> io::Result<()> {
+            let state = self.state.lock().unwrap();
+            match *state {
+                ProcessState::Finished(_) => Ok(()),
+                ProcessState::Running => posix::killpg(self.pid, signal),
+            }
+        }
+
         fn waitpid_into(state: &mut ProcessState, pid: u32, block: bool) -> io::Result<()> {
             if matches!(*state, ProcessState::Finished(_)) {
                 return Ok(());
@@ -298,7 +322,6 @@ mod os {
 
     pub mod ext {
         use super::*;
-        use crate::posix;
 
         /// Unix-specific extension methods for [`Process`].
         pub trait ProcessExt {
@@ -327,19 +350,11 @@ mod os {
 
         impl ProcessExt for Process {
             fn send_signal(&self, signal: i32) -> io::Result<()> {
-                let state = self.state.lock().unwrap();
-                match *state {
-                    ProcessState::Finished(_) => Ok(()),
-                    ProcessState::Running => posix::kill(self.pid, signal),
-                }
+                self.0.send_signal(signal)
             }
 
             fn send_signal_group(&self, signal: i32) -> io::Result<()> {
-                let state = self.state.lock().unwrap();
-                match *state {
-                    ProcessState::Finished(_) => Ok(()),
-                    ProcessState::Running => posix::killpg(self.pid, signal),
-                }
+                self.0.send_signal_group(signal)
             }
         }
     }
@@ -393,7 +408,7 @@ mod os {
         }
     }
 
-    impl Process {
+    impl InnerProcess {
         pub(super) fn os_wait(&self) -> io::Result<ExitStatus> {
             {
                 let state = self.state.lock().unwrap();
