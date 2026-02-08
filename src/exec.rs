@@ -893,8 +893,7 @@ pub trait InputRedirection: sealed::InputRedirectionSealed {
     fn into_input_redirection(self) -> InputRedirectionKind;
 }
 
-/// Trait for types that can be used to redirect standard output or
-/// standard error.
+/// Trait for types that can be used to redirect standard output or standard error.
 ///
 /// This is a sealed trait that cannot be implemented outside this crate.
 pub trait OutputRedirection: sealed::OutputRedirectionSealed {
@@ -976,14 +975,11 @@ pub mod unix {
         /// Delegates to [`ProcessExt::send_signal`] on each process.
         fn send_signal(&self, signal: i32) -> io::Result<()>;
 
-        /// Send the specified signal to the process group of the first
-        /// process.
+        /// Send the specified signal to the process group of the first process.
         ///
-        /// When used with [`PipelineExt::setpgid`], all pipeline
-        /// processes share the first process's group, so signaling
-        /// it reaches the entire pipeline. For a single process
-        /// started with [`ExecExt::setpgid`], this signals its
-        /// group.
+        /// When used with [`PipelineExt::setpgid`], all pipeline processes share the
+        /// first process's group, so signaling it reaches the entire pipeline. For a
+        /// single process started with [`ExecExt::setpgid`], this signals its group.
         fn send_signal_group(&self, signal: i32) -> io::Result<()>;
     }
 
@@ -1007,30 +1003,27 @@ pub mod unix {
     pub trait ExecExt {
         /// Set the user ID for the spawned process.
         ///
-        /// The child process will run with the specified user ID, which
-        /// affects file access permissions and process ownership. This
-        /// calls `setuid(2)` in the child process after `fork()` but
-        /// before `exec()`.
+        /// The child process will run with the specified user ID, which affects file
+        /// access permissions and process ownership. This calls `setuid(2)` in the child
+        /// process after `fork()` but before `exec()`.
         fn setuid(self, uid: u32) -> Self;
 
         /// Set the group ID for the spawned process.
         ///
-        /// The child process will run with the specified group ID, which
-        /// affects file access permissions based on group ownership. This
-        /// calls `setgid(2)` in the child process after `fork()` but
-        /// before `exec()`.
+        /// The child process will run with the specified group ID, which affects file
+        /// access permissions based on group ownership. This calls `setgid(2)` in the
+        /// child process after `fork()` but before `exec()`.
         fn setgid(self, gid: u32) -> Self;
 
         /// Put the subprocess into its own process group.
         ///
-        /// This calls `setpgid(0, 0)` before execing the child
-        /// process, making it the leader of a new process group.
-        /// Useful for a single process that spawns children, allowing
-        /// them all to be signaled as a group with
+        /// This calls `setpgid(0, 0)` before execing the child process, making it the
+        /// leader of a new process group.  Useful for a single process that spawns
+        /// children, allowing them all to be signaled as a group with
         /// [`ProcessExt::send_signal_group`].
         ///
-        /// For pipelines, use [`PipelineExt::setpgid`] instead, which
-        /// puts all pipeline processes into a shared group.
+        /// For pipelines, use [`PipelineExt::setpgid`] instead, which puts all pipeline
+        /// processes into a shared group.
         ///
         /// [`ProcessExt::send_signal_group`]: crate::unix::ProcessExt::send_signal_group
         /// [`PipelineExt::setpgid`]: PipelineExt::setpgid
@@ -1058,13 +1051,11 @@ pub mod unix {
     pub trait PipelineExt {
         /// Put all pipeline processes into a shared process group.
         ///
-        /// The first process becomes the group leader (via
-        /// `setpgid(0, 0)`) and subsequent processes join its group.
-        /// This allows signaling the entire pipeline as a unit using
-        /// [`StartedExt::send_signal_group`].
+        /// The first process becomes the group leader (via `setpgid(0, 0)`) and
+        /// subsequent processes join its group.  This allows signaling the entire
+        /// pipeline as a unit using [`StartedExt::send_signal_group`].
         ///
-        /// For single processes that spawn children, use
-        /// [`ExecExt::setpgid`] instead.
+        /// For single processes that spawn children, use [`ExecExt::setpgid`] instead.
         fn setpgid(self) -> Self;
     }
 
