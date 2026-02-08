@@ -39,7 +39,7 @@ impl ExitStatus {
 ///
 /// `Process` is a lightweight handle that tracks a child process's lifecycle.  It is
 /// created internally by [`Exec::start`] and [`Pipeline::start`] and appears as part of
-/// the [`Started`] struct.
+/// the [`Job`] struct.
 ///
 /// Unlike `std::process::Child`, all methods on `Process` take `&self` rather than `&mut
 /// self`, so a `Process` can be shared between threads without external synchronization.
@@ -55,11 +55,11 @@ impl ExitStatus {
 /// any pipes to the child, callers must ensure that any pipes connected to the child's
 /// stdin are dropped *before* the `Process` is dropped. Otherwise, the child may block
 /// waiting for input while the `Process` drop waits for the child to exit, resulting in a
-/// deadlock. [`Started`] handles this automatically via field declaration order.
+/// deadlock. [`Job`] handles this automatically via field declaration order.
 ///
 /// [`Exec::start`]: crate::Exec::start
 /// [`Pipeline::start`]: crate::Pipeline::start
-/// [`Started`]: crate::Started
+/// [`Job`]: crate::Job
 #[derive(Clone)]
 pub struct Process(Arc<InnerProcess>);
 

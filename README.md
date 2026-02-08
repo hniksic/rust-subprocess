@@ -33,9 +33,9 @@ library is fine for simple use cases, but it doesn't cover common scenarios such
 * **Waiting with a timeout** - `std::process::Child` offers either blocking `wait()` or
   non-blocking `try_wait()`, but nothing in-between.  `subprocess` provides timeout
   variants of its methods, such as
-  [`join_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Started.html#method.join_timeout)
+  [`join_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html#method.join_timeout)
   and
-  [`capture_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Started.html#method.capture_timeout).
+  [`capture_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html#method.capture_timeout).
 
 * **Sending signals** (Unix) - `std::process::Child::kill()` only sends `SIGKILL`.
   `subprocess` lets you [send any
@@ -69,7 +69,7 @@ The API has two layers:
   builder-pattern API for configuring processes and pipelines.  Convenience methods like
   `join()` and `capture()` configure, start, and collect results in one call.
 
-* **[`Started`](https://docs.rs/subprocess/latest/subprocess/struct.Started.html)** - handle
+* **[`Job`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html)** - handle
   for a running process or pipeline, returned by `start()`.  Provides timeout-aware methods
   like `join_timeout()` and `capture_timeout()`, as well as `communicate()`.
   [`Capture`](https://docs.rs/subprocess/latest/subprocess/struct.Capture.html) is

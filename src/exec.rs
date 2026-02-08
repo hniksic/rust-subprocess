@@ -39,9 +39,9 @@ pub enum Redirection {
     /// Do nothing with the stream.
     ///
     /// The stream is typically inherited from the parent. The corresponding pipe field in
-    /// [`Started`] will be `None`.
+    /// [`Job`] will be `None`.
     ///
-    /// [`Started`]: struct.Started.html
+    /// [`Job`]: struct.Job.html
     None,
 
     /// Redirect the stream to a pipe.
@@ -405,15 +405,15 @@ impl Exec {
         )
     }
 
-    /// Starts the process and returns a `Started` handle with the running process and its
+    /// Starts the process and returns a `Job` handle with the running process and its
     /// pipe ends.
-    pub fn start(mut self) -> io::Result<Started> {
+    pub fn start(mut self) -> io::Result<Job> {
         let stdin_data = self.stdin_data.take().unwrap_or_default();
         let check_success = self.check_success;
 
         let result = self.spawn()?;
 
-        Ok(Started {
+        Ok(Job {
             stdin: result.stdin,
             stdout: result.stdout,
             stderr: result.stderr,
@@ -615,7 +615,7 @@ impl fmt::Debug for Exec {
 /// Created by [`Exec::start`] or [`Pipeline::start`].
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct Started {
+pub struct Job {
     // Pipe fields are declared before `processes` so that they are dropped
     // first, allowing children to receive EOF and exit before
     // `Process::drop` waits on them.
@@ -634,7 +634,7 @@ pub struct Started {
     pub processes: Vec<Process>,
 }
 
-impl Started {
+impl Job {
     /// Creates a [`Communicator`] from the pipe ends.
     ///
     /// The communicator takes ownership of `stdin`, `stdout`, and `stderr`, leaving them
@@ -798,7 +798,7 @@ impl Started {
 }
 
 #[derive(Debug)]
-pub(crate) struct ReadAdapter(pub(crate) Started);
+pub(crate) struct ReadAdapter(pub(crate) Job);
 
 impl Read for ReadAdapter {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -807,7 +807,7 @@ impl Read for ReadAdapter {
 }
 
 #[derive(Debug)]
-pub(crate) struct ReadErrAdapter(pub(crate) Started);
+pub(crate) struct ReadErrAdapter(pub(crate) Job);
 
 impl Read for ReadErrAdapter {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -816,7 +816,7 @@ impl Read for ReadErrAdapter {
 }
 
 #[derive(Debug)]
-pub(crate) struct WriteAdapter(pub(crate) Started);
+pub(crate) struct WriteAdapter(pub(crate) Job);
 
 impl Write for WriteAdapter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -963,13 +963,13 @@ impl OutputRedirection for File {
 
 #[cfg(unix)]
 pub mod unix {
-    use super::{Exec, Started};
+    use super::{Exec, Job};
     use crate::pipeline::Pipeline;
     use crate::unix::ProcessExt;
     use std::io;
 
-    /// Unix-specific extension methods for [`Started`].
-    pub trait StartedExt {
+    /// Unix-specific extension methods for [`Job`].
+    pub trait JobExt {
         /// Send the specified signal to all processes in the pipeline.
         ///
         /// Delegates to [`ProcessExt::send_signal`] on each process.
@@ -983,7 +983,7 @@ pub mod unix {
         fn send_signal_group(&self, signal: i32) -> io::Result<()>;
     }
 
-    impl StartedExt for Started {
+    impl JobExt for Job {
         fn send_signal(&self, signal: i32) -> io::Result<()> {
             for p in &self.processes {
                 p.send_signal(signal)?;
@@ -1053,7 +1053,7 @@ pub mod unix {
         ///
         /// The first process becomes the group leader (via `setpgid(0, 0)`) and
         /// subsequent processes join its group.  This allows signaling the entire
-        /// pipeline as a unit using [`StartedExt::send_signal_group`].
+        /// pipeline as a unit using [`JobExt::send_signal_group`].
         ///
         /// For single processes that spawn children, use [`ExecExt::setpgid`] instead.
         fn setpgid(self) -> Self;

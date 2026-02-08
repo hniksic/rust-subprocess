@@ -396,10 +396,10 @@ use win32::RawCommunicator;
 /// parallel operation prevents deadlock that would occur if the subprocess produces output
 /// while waiting for more input.
 ///
-/// Create a `Communicator` by calling [`Started::communicate`], then call [`read`] or
+/// Create a `Communicator` by calling [`Job::communicate`], then call [`read`] or
 /// [`read_string`] to perform the data exchange.
 ///
-/// [`Started::communicate`]: crate::Started::communicate
+/// [`Job::communicate`]: crate::Job::communicate
 /// [`read`]: #method.read
 /// [`read_string`]: #method.read_string
 #[must_use]

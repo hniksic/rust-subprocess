@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::unix::{PipelineExt, ProcessExt, StartedExt};
+use crate::unix::{PipelineExt, ProcessExt, JobExt};
 use crate::{Exec, ExecExt, ExitStatus, Redirection};
 
 #[test]
@@ -179,7 +179,7 @@ fn exit_status_display() {
     assert_eq!(ExitStatus::from_raw(9).to_string(), "signal 9");
 }
 
-// --- StartedExt tests ---
+// --- JobExt tests ---
 
 #[test]
 fn started_send_signal() {

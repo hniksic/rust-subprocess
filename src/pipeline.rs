@@ -13,7 +13,7 @@ use crate::process::Process;
 
 use crate::exec::{
     Capture, Exec, InputRedirection, InputRedirectionKind, OutputRedirection, ReadAdapter,
-    ReadErrAdapter, Started, WriteAdapter,
+    ReadErrAdapter, Job, WriteAdapter,
 };
 
 /// A builder for pipelines of subprocesses connected via pipes.
@@ -180,7 +180,7 @@ impl Pipeline {
     /// cmd2) 2>file`, but without the overhead of a subshell.
     ///
     /// If you pass `Redirection::Pipe`, the shared stderr read end
-    /// will be available via [`Started::stderr`].
+    /// will be available via [`Job::stderr`].
     ///
     /// [`Redirection`]: enum.Redirection.html
     pub fn stderr_all(mut self, stderr: impl OutputRedirection) -> Pipeline {
@@ -248,7 +248,7 @@ impl Pipeline {
 
     // Terminators:
 
-    /// Starts all commands in the pipeline and returns a [`Started`] with the running
+    /// Starts all commands in the pipeline and returns a [`Job`] with the running
     /// processes and their pipe ends.
     ///
     /// If some command fails to start, the remaining commands will not be started, and
@@ -256,9 +256,9 @@ impl Pipeline {
     /// will be waited to finish (but will probably exit immediately due to missing
     /// output), except for the ones for which `detached()` was called.  This is
     /// equivalent to what the shell does.
-    pub fn start(mut self) -> io::Result<Started> {
+    pub fn start(mut self) -> io::Result<Job> {
         if self.execs.is_empty() {
-            return Ok(Started {
+            return Ok(Job {
                 stdin: None,
                 stdout: None,
                 stderr: None,
@@ -348,7 +348,7 @@ impl Pipeline {
             processes.push(result.process);
         }
 
-        Ok(Started {
+        Ok(Job {
             stdin: pipeline_stdin,
             stdout: pipeline_stdout,
             stderr,

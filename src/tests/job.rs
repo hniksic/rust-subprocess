@@ -6,7 +6,7 @@ use tempfile::TempDir;
 
 use crate::{Exec, Redirection};
 
-// --- Single-command Started tests ---
+// --- Single-command Job tests ---
 
 #[test]
 fn exec_start() {
@@ -71,7 +71,7 @@ fn exec_start_stderr() {
 
 #[test]
 fn exec_start_stdin_data_capture() {
-    // stdin_data set via .stdin("data") is moved into Started and correctly
+    // stdin_data set via .stdin("data") is moved into Job and correctly
     // fed through communicate in the capture path.
     let c = Exec::cmd("cat")
         .stdin("hello from stdin_data")
@@ -231,7 +231,7 @@ fn broken_pipe_on_stdin() {
     handle.wait().unwrap();
 }
 
-// --- Process lifecycle tests (via Started) ---
+// --- Process lifecycle tests (via Job) ---
 
 #[test]
 fn terminate() {
@@ -382,7 +382,7 @@ fn detach_does_not_wait_on_drop() {
     );
 }
 
-// --- Started timeout tests ---
+// --- Job timeout tests ---
 
 #[test]
 fn capture_timeout() {
@@ -430,7 +430,7 @@ fn exec_wait_timeout_terminate() {
     assert!(!status.success());
 }
 
-// --- Started convenience method tests ---
+// --- Job convenience method tests ---
 
 #[test]
 fn started_pid() {
@@ -480,7 +480,7 @@ fn started_wait_timeout_some() {
     assert!(result.unwrap().success());
 }
 
-// --- Pipeline Started tests ---
+// --- Pipeline Job tests ---
 
 #[test]
 fn pipeline_detached() {

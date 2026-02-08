@@ -4,7 +4,7 @@
 
 #[cfg(unix)]
 fn main() -> std::io::Result<()> {
-    use subprocess::unix::StartedExt;
+    use subprocess::unix::JobExt;
     use subprocess::{Exec, ExecExt};
 
     // Start a long-running process
