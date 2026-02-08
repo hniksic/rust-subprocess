@@ -6,6 +6,20 @@ use std::ops::BitOr;
 use std::path::Path;
 use std::sync::Arc;
 
+#[cfg(unix)]
+mod os {
+    #[derive(Clone, Default)]
+    pub struct PipelineOsOptions {
+        pub setpgid: bool,
+    }
+}
+
+#[cfg(windows)]
+mod os {
+    #[derive(Clone, Default)]
+    pub struct PipelineOsOptions;
+}
+
 use crate::communicate::Communicator;
 use crate::exec::Redirection;
 use crate::process::ExitStatus;
@@ -63,8 +77,8 @@ pub struct Pipeline {
     check_success: bool,
     detached: bool,
     cwd: Option<OsString>,
-    #[cfg(unix)]
-    setpgid: bool,
+    #[allow(dead_code)]
+    os_options: os::PipelineOsOptions,
 }
 
 impl Default for Pipeline {
@@ -91,8 +105,7 @@ impl Pipeline {
             check_success: false,
             detached: false,
             cwd: None,
-            #[cfg(unix)]
-            setpgid: false,
+            os_options: Default::default(),
         }
     }
 
@@ -219,7 +232,7 @@ impl Pipeline {
 
     #[cfg(unix)]
     pub(crate) fn set_setpgid(&mut self, value: bool) {
-        self.setpgid = value;
+        self.os_options.setpgid = value;
     }
 
     fn check_no_stdin_data(&self, meth: &str) {
@@ -327,7 +340,7 @@ impl Pipeline {
                 exec = exec.stdout(Redirection::Pipe);
             }
             #[cfg(unix)]
-            if self.setpgid {
+            if self.os_options.setpgid {
                 // spawn() uses an exec-fail pipe, so it blocks until the child has called
                 // setpgid and exec'd. By the time we fork the second child, the first
                 // child's group already exists.
@@ -341,7 +354,7 @@ impl Pipeline {
             if idx == 0 {
                 pipeline_stdin = result.stdin;
                 #[cfg(unix)]
-                if self.setpgid {
+                if self.os_options.setpgid {
                     first_pid = result.process.pid();
                 }
             }
@@ -530,8 +543,7 @@ impl FromIterator<Exec> for Pipeline {
             check_success: false,
             detached: false,
             cwd: None,
-            #[cfg(unix)]
-            setpgid: false,
+            os_options: Default::default(),
         }
     }
 }

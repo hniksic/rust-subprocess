@@ -30,14 +30,7 @@ fn reject_empty_argv() {
         None,
         None,
         None,
-        #[cfg(unix)]
-        None,
-        #[cfg(unix)]
-        None,
-        #[cfg(unix)]
-        None,
-        #[cfg(windows)]
-        0,
+        crate::spawn::OsOptions::default(),
     );
     assert!(
         matches!(&test, Err(e) if e.kind() == io::ErrorKind::InvalidInput),
@@ -75,14 +68,7 @@ fn merge_on_stdin_rejected() {
         None,
         None,
         None,
-        #[cfg(unix)]
-        None,
-        #[cfg(unix)]
-        None,
-        #[cfg(unix)]
-        None,
-        #[cfg(windows)]
-        0,
+        crate::spawn::OsOptions::default(),
     );
     assert!(
         matches!(&result, Err(e) if e.kind() == io::ErrorKind::InvalidInput),

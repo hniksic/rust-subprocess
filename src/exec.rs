@@ -165,14 +165,7 @@ pub struct Exec {
     executable: Option<OsString>,
     env: Option<Vec<(OsString, OsString)>>,
     cwd: Option<OsString>,
-    #[cfg(unix)]
-    setuid: Option<u32>,
-    #[cfg(unix)]
-    setgid: Option<u32>,
-    #[cfg(unix)]
-    setpgid: Option<u32>,
-    #[cfg(windows)]
-    creation_flags: u32,
+    os_options: crate::spawn::OsOptions,
 }
 
 impl Exec {
@@ -198,14 +191,7 @@ impl Exec {
             executable: None,
             env: None,
             cwd: None,
-            #[cfg(unix)]
-            setuid: None,
-            #[cfg(unix)]
-            setgid: None,
-            #[cfg(unix)]
-            setpgid: None,
-            #[cfg(windows)]
-            creation_flags: 0,
+            os_options: Default::default(),
         }
     }
 
@@ -399,14 +385,7 @@ impl Exec {
             self.executable.as_deref(),
             self.env.as_deref(),
             self.cwd.as_deref(),
-            #[cfg(unix)]
-            self.setuid,
-            #[cfg(unix)]
-            self.setgid,
-            #[cfg(unix)]
-            self.setpgid,
-            #[cfg(windows)]
-            self.creation_flags,
+            self.os_options,
         )
     }
 
@@ -591,12 +570,12 @@ impl Exec {
 
     #[cfg(unix)]
     pub(crate) fn setpgid_is_set(&self) -> bool {
-        self.setpgid.is_some()
+        self.os_options.setpgid_is_set()
     }
 
     #[cfg(unix)]
     pub(crate) fn set_pgid_value(&mut self, pgid: u32) {
-        self.setpgid = Some(pgid);
+        self.os_options.set_pgid_value(pgid);
     }
 }
 
@@ -894,17 +873,17 @@ pub mod unix {
 
     impl ExecExt for Exec {
         fn setuid(mut self, uid: u32) -> Exec {
-            self.setuid = Some(uid);
+            self.os_options.setuid = Some(uid);
             self
         }
 
         fn setgid(mut self, gid: u32) -> Exec {
-            self.setgid = Some(gid);
+            self.os_options.setgid = Some(gid);
             self
         }
 
         fn setpgid(mut self) -> Exec {
-            self.setpgid = Some(0);
+            self.os_options.setpgid = Some(0);
             self
         }
     }
@@ -959,7 +938,7 @@ pub mod windows {
 
     impl ExecExt for Exec {
         fn creation_flags(mut self, flags: u32) -> Exec {
-            self.creation_flags = flags;
+            self.os_options.creation_flags = flags;
             self
         }
     }

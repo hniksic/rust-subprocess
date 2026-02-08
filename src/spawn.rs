@@ -9,6 +9,7 @@ use crate::exec::Redirection;
 use crate::process::ExtProcessState;
 use crate::process::Process;
 
+pub(crate) use os::OsOptions;
 pub use os::make_pipe;
 
 pub(crate) struct SpawnResult {
@@ -33,10 +34,7 @@ pub(crate) fn spawn(
     executable: Option<&OsStr>,
     env: Option<&[(OsString, OsString)]>,
     cwd: Option<&OsStr>,
-    #[cfg(unix)] setuid: Option<u32>,
-    #[cfg(unix)] setgid: Option<u32>,
-    #[cfg(unix)] setpgid: Option<u32>,
-    #[cfg(windows)] creation_flags: u32,
+    os_options: OsOptions,
 ) -> io::Result<SpawnResult> {
     if argv.is_empty() {
         return Err(io::Error::new(
@@ -47,22 +45,7 @@ pub(crate) fn spawn(
 
     let (parent_ends, child_ends) = setup_streams(stdin, stdout, stderr)?;
 
-    let process = os::os_start(
-        argv,
-        child_ends,
-        detached,
-        executable,
-        env,
-        cwd,
-        #[cfg(unix)]
-        setuid,
-        #[cfg(unix)]
-        setgid,
-        #[cfg(unix)]
-        setpgid,
-        #[cfg(windows)]
-        creation_flags,
-    )?;
+    let process = os::os_start(argv, child_ends, detached, executable, env, cwd, os_options)?;
 
     Ok(SpawnResult {
         process,
@@ -251,6 +234,22 @@ fn get_redirection_to_standard_stream(which: StandardStream) -> io::Result<Arc<R
 pub(crate) mod os {
     use super::*;
 
+    #[derive(Clone, Default)]
+    pub struct OsOptions {
+        pub setuid: Option<u32>,
+        pub setgid: Option<u32>,
+        pub setpgid: Option<u32>,
+    }
+
+    impl OsOptions {
+        pub fn setpgid_is_set(&self) -> bool {
+            self.setpgid.is_some()
+        }
+        pub fn set_pgid_value(&mut self, pgid: u32) {
+            self.setpgid = Some(pgid);
+        }
+    }
+
     pub const NULL_DEVICE: &str = "/dev/null";
 
     use crate::posix;
@@ -282,7 +281,6 @@ pub(crate) mod os {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn os_start(
         argv: Vec<OsString>,
         child_ends: (
@@ -294,9 +292,7 @@ pub(crate) mod os {
         executable: Option<&OsStr>,
         env: Option<&[(OsString, OsString)]>,
         cwd: Option<&OsStr>,
-        setuid: Option<u32>,
-        setgid: Option<u32>,
-        setpgid: Option<u32>,
+        os_options: OsOptions,
     ) -> io::Result<Process> {
         let mut exec_fail_pipe = posix::pipe()?;
         set_inheritable(&exec_fail_pipe.0, false)?;
@@ -314,7 +310,7 @@ pub(crate) mod os {
                 }
                 None => {
                     drop(exec_fail_pipe.0);
-                    let result = do_exec(just_exec, child_ends, cwd, setuid, setgid, setpgid);
+                    let result = do_exec(just_exec, child_ends, cwd, &os_options);
                     let error_code = match result {
                         Ok(()) => unreachable!(),
                         Err(e) => e.raw_os_error().unwrap_or(-1),
@@ -373,9 +369,7 @@ pub(crate) mod os {
             Option<Arc<Redirection>>,
         ),
         cwd: Option<&OsStr>,
-        setuid: Option<u32>,
-        setgid: Option<u32>,
-        setpgid: Option<u32>,
+        os_options: &OsOptions,
     ) -> io::Result<()> {
         if let Some(cwd) = cwd {
             std::env::set_current_dir(cwd)?;
@@ -387,13 +381,13 @@ pub(crate) mod os {
         dup2_if_needed(stderr, 2)?;
         posix::reset_sigpipe()?;
 
-        if let Some(gid) = setgid {
+        if let Some(gid) = os_options.setgid {
             posix::setgid(gid)?;
         }
-        if let Some(uid) = setuid {
+        if let Some(uid) = os_options.setuid {
             posix::setuid(uid)?;
         }
-        if let Some(pgid) = setpgid {
+        if let Some(pgid) = os_options.setpgid {
             posix::setpgid(0, pgid)?;
         }
         just_exec()?;
@@ -421,6 +415,11 @@ pub(crate) mod os {
 pub(crate) mod os {
     use super::*;
 
+    #[derive(Clone, Default)]
+    pub struct OsOptions {
+        pub creation_flags: u32,
+    }
+
     pub const NULL_DEVICE: &str = "nul";
 
     use std::collections::HashSet;
@@ -445,7 +444,7 @@ pub(crate) mod os {
         executable: Option<&OsStr>,
         env: Option<&[(OsString, OsString)]>,
         cwd: Option<&OsStr>,
-        creation_flags: u32,
+        os_options: OsOptions,
     ) -> io::Result<Process> {
         fn raw(opt: Option<&Arc<Redirection>>) -> Option<RawHandle> {
             opt.map(|r| child_file(r).as_raw_handle())
@@ -464,7 +463,7 @@ pub(crate) mod os {
             env_block.as_deref(),
             cwd,
             true,
-            creation_flags,
+            os_options.creation_flags,
             raw(child_stdin.as_ref()),
             raw(child_stdout.as_ref()),
             raw(child_stderr.as_ref()),
