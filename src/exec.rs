@@ -18,14 +18,86 @@ use std::io::ErrorKind;
 use std::io::{self, Read, Write};
 use std::ops::BitOr;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::communicate::Communicator;
-use crate::popen::{ExitStatus, Redirection};
-use crate::process::Process;
+use crate::process::{ExitStatus, Process};
 
 use crate::pipeline::Pipeline;
 use os::*;
+
+/// Instruction what to do with a stream in the child process.
+///
+/// `Redirection` values are used for the `stdin`, `stdout`, and `stderr` parameters when
+/// configuring a subprocess via [`Exec`] or [`Pipeline`].
+///
+/// [`Exec`]: struct.Exec.html
+/// [`Pipeline`]: struct.Pipeline.html
+#[derive(Debug)]
+pub enum Redirection {
+    /// Do nothing with the stream.
+    ///
+    /// The stream is typically inherited from the parent. The corresponding pipe field in
+    /// [`Started`] will be `None`.
+    ///
+    /// [`Started`]: struct.Started.html
+    None,
+
+    /// Redirect the stream to a pipe.
+    ///
+    /// This variant requests that a stream be redirected to a unidirectional pipe. One
+    /// end of the pipe is passed to the child process and configured as one of its
+    /// standard streams, and the other end is available to the parent for communicating
+    /// with the child.
+    Pipe,
+
+    /// Merge the stream to the other output stream.
+    ///
+    /// This variant is only valid when configuring redirection of standard output and
+    /// standard error. Using `Redirection::Merge` for stderr requests the child's stderr
+    /// to refer to the same underlying file as the child's stdout (which may or may not
+    /// itself be redirected), equivalent to the `2>&1` operator of the Bourne
+    /// shell. Analogously, using `Redirection::Merge` for stdout is equivalent to `1>&2`
+    /// in the shell.
+    ///
+    /// Specifying `Redirection::Merge` for stdin or specifying it for both stdout and
+    /// stderr is invalid and will cause an error.
+    Merge,
+
+    /// Redirect the stream to the specified open `File`.
+    ///
+    /// This does not create a pipe, it simply spawns the child so that the specified
+    /// stream sees that file. The child can read from or write to the provided file on
+    /// its own, without any intervention by the parent.
+    File(File),
+
+    /// Like `File`, but the file may be shared among multiple redirections without
+    /// duplicating the file descriptor.
+    SharedFile(Arc<File>),
+
+    /// Redirect the stream to the null device (`/dev/null` on Unix, `nul` on Windows).
+    ///
+    /// This is equivalent to `Redirection::File` with a null device file, but more
+    /// convenient and portable.
+    Null,
+}
+
+impl Redirection {
+    /// Clone the underlying `Redirection`, or return an error.
+    ///
+    /// Can fail in `File` variant.
+    pub fn try_clone(&self) -> io::Result<Redirection> {
+        Ok(match *self {
+            Redirection::None => Redirection::None,
+            Redirection::Pipe => Redirection::Pipe,
+            Redirection::Merge => Redirection::Merge,
+            Redirection::File(ref f) => Redirection::File(f.try_clone()?),
+            Redirection::SharedFile(ref f) => Redirection::SharedFile(Arc::clone(f)),
+            Redirection::Null => Redirection::Null,
+        })
+    }
+}
 
 /// A builder for creating subprocesses.
 ///
@@ -327,12 +399,12 @@ impl Exec {
     /// Spawn the process and return the raw spawn result.
     ///
     /// This is the low-level entry point used by both `start()` and
-    /// `Pipeline::start()`. It calls `crate::popen::spawn()` with the Exec's fields.
-    pub(crate) fn spawn(self) -> io::Result<crate::popen::SpawnResult> {
+    /// `Pipeline::start()`. It calls `crate::spawn::spawn()` with the Exec's fields.
+    pub(crate) fn spawn(self) -> io::Result<crate::spawn::SpawnResult> {
         let mut argv = self.args;
         argv.insert(0, self.command);
 
-        crate::popen::spawn(
+        crate::spawn::spawn(
             argv,
             self.stdin_redirect,
             self.stdout_redirect,

@@ -51,8 +51,8 @@
 mod communicate;
 mod exec;
 mod pipeline;
-mod popen;
 mod process;
+mod spawn;
 
 #[cfg(unix)]
 mod posix;
@@ -64,6 +64,7 @@ mod win32;
 mod tests;
 
 pub use communicate::Communicator;
+pub use exec::Redirection;
 #[cfg(unix)]
 pub use exec::unix::ExecExt;
 #[cfg(unix)]
@@ -74,7 +75,7 @@ pub use exec::unix::StartedExt;
 pub use exec::windows::ExecExt;
 pub use exec::{Capture, Exec, InputRedirection, OutputRedirection, Started};
 pub use pipeline::Pipeline;
-pub use popen::{ExitStatus, Redirection};
+pub use process::ExitStatus;
 pub use process::Process;
 
 /// Subprocess extensions for Unix platforms.

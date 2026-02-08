@@ -7,7 +7,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::communicate::Communicator;
-use crate::popen::{ExitStatus, Redirection};
+use crate::exec::Redirection;
+use crate::process::ExitStatus;
 use crate::process::Process;
 
 use crate::exec::{
@@ -228,7 +229,7 @@ impl Pipeline {
             match std::mem::replace(&mut self.stderr, Redirection::None) {
                 Redirection::None => return Ok(None),
                 Redirection::Pipe => {
-                    let (stderr_read, stderr_write) = crate::popen::make_pipe()?;
+                    let (stderr_read, stderr_write) = crate::spawn::make_pipe()?;
                     (
                         Redirection::SharedFile(Arc::new(stderr_write)),
                         Some(stderr_read),

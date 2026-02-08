@@ -4,7 +4,35 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crate::popen::ExitStatus;
+/// Exit status of a process.
+///
+/// This is an opaque type that wraps the platform's native exit status
+/// representation. Use the provided methods to query the exit status.
+///
+/// On Unix, the raw value is the status from `waitpid()`. On Windows, it is the exit code
+/// from `GetExitCodeProcess()`.
+#[derive(Eq, PartialEq, Copy, Clone)]
+pub struct ExitStatus(pub(crate) Option<os::RawExitStatus>);
+
+impl ExitStatus {
+    /// Create an `ExitStatus` from the raw platform value.
+    pub(crate) fn from_raw(raw: os::RawExitStatus) -> ExitStatus {
+        ExitStatus(Some(raw))
+    }
+
+    /// True if the exit status of the process is 0.
+    pub fn success(&self) -> bool {
+        self.code() == Some(0)
+    }
+
+    /// True if the subprocess was killed by a signal with the specified
+    /// number.
+    ///
+    /// Always returns `false` on Windows.
+    pub fn is_killed_by(&self, signum: i32) -> bool {
+        self.signal() == Some(signum)
+    }
+}
 
 /// A handle to a running or finished subprocess.
 ///
@@ -140,6 +168,58 @@ mod os {
     use crate::posix;
 
     pub type ExtProcessState = ();
+    pub type RawExitStatus = i32;
+
+    impl ExitStatus {
+        /// Returns the exit code if the process exited normally.
+        ///
+        /// On Unix, this returns `Some` only if the process exited voluntarily (not
+        /// killed by a signal).
+        pub fn code(&self) -> Option<u32> {
+            let raw = self.0?;
+            libc::WIFEXITED(raw).then(|| libc::WEXITSTATUS(raw) as u32)
+        }
+
+        /// Returns the signal number if the process was killed by a signal.
+        pub fn signal(&self) -> Option<i32> {
+            let raw = self.0?;
+            libc::WIFSIGNALED(raw).then(|| libc::WTERMSIG(raw))
+        }
+    }
+
+    impl fmt::Display for ExitStatus {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self.0 {
+                Some(raw) if libc::WIFEXITED(raw) => {
+                    write!(f, "exit code {}", libc::WEXITSTATUS(raw))
+                }
+                Some(raw) if libc::WIFSIGNALED(raw) => {
+                    write!(f, "signal {}", libc::WTERMSIG(raw))
+                }
+                Some(raw) => {
+                    write!(f, "unrecognized wait status: {} {:#x}", raw, raw)
+                }
+                None => write!(f, "undetermined exit status"),
+            }
+        }
+    }
+
+    impl fmt::Debug for ExitStatus {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self.0 {
+                Some(raw) if libc::WIFEXITED(raw) => {
+                    write!(f, "ExitStatus(Exited({}))", libc::WEXITSTATUS(raw))
+                }
+                Some(raw) if libc::WIFSIGNALED(raw) => {
+                    write!(f, "ExitStatus(Signal({}))", libc::WTERMSIG(raw))
+                }
+                Some(raw) => {
+                    write!(f, "ExitStatus(Unknown({} {:#x}))", raw, raw)
+                }
+                None => write!(f, "ExitStatus(Undetermined)"),
+            }
+        }
+    }
 
     impl Process {
         pub(super) fn os_wait(&self) -> io::Result<ExitStatus> {
@@ -273,6 +353,45 @@ mod os {
 
     #[derive(Debug)]
     pub struct ExtProcessState(pub(crate) win32::Handle);
+
+    pub type RawExitStatus = u32;
+
+    impl ExitStatus {
+        /// Returns the exit code if the process exited normally.
+        ///
+        /// On Windows, this always returns `Some` for a determined exit
+        /// status.
+        pub fn code(&self) -> Option<u32> {
+            self.0
+        }
+
+        /// Returns the signal number if the process was killed by a signal.
+        ///
+        /// On Windows, this always returns `None`.
+        pub fn signal(&self) -> Option<i32> {
+            None
+        }
+    }
+
+    impl fmt::Display for ExitStatus {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self.0 {
+                Some(code) => write!(f, "exit code {}", code),
+                None => write!(f, "undetermined exit status"),
+            }
+        }
+    }
+
+    impl fmt::Debug for ExitStatus {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self.0 {
+                Some(code) => {
+                    write!(f, "ExitStatus(Exited({}))", code)
+                }
+                None => write!(f, "ExitStatus(Undetermined)"),
+            }
+        }
+    }
 
     impl Process {
         pub(super) fn os_wait(&self) -> io::Result<ExitStatus> {

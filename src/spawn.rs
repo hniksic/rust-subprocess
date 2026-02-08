@@ -1,89 +1,15 @@
 use std::ffi::{OsStr, OsString};
-use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::ErrorKind;
 use std::sync::{Arc, OnceLock};
 
+use crate::exec::Redirection;
 #[cfg(windows)]
 use crate::process::ExtProcessState;
 use crate::process::Process;
 
 pub use os::make_pipe;
-
-/// Instruction what to do with a stream in the child process.
-///
-/// `Redirection` values are used for the `stdin`, `stdout`, and `stderr`
-/// parameters when configuring a subprocess via [`Exec`] or [`Pipeline`].
-///
-/// [`Exec`]: struct.Exec.html
-/// [`Pipeline`]: struct.Pipeline.html
-#[derive(Debug)]
-pub enum Redirection {
-    /// Do nothing with the stream.
-    ///
-    /// The stream is typically inherited from the parent. The corresponding
-    /// pipe field in [`Started`] will be `None`.
-    ///
-    /// [`Started`]: struct.Started.html
-    None,
-
-    /// Redirect the stream to a pipe.
-    ///
-    /// This variant requests that a stream be redirected to a unidirectional
-    /// pipe. One end of the pipe is passed to the child process and
-    /// configured as one of its standard streams, and the other end is
-    /// available to the parent for communicating with the child.
-    Pipe,
-
-    /// Merge the stream to the other output stream.
-    ///
-    /// This variant is only valid when configuring redirection of standard
-    /// output and standard error. Using `Redirection::Merge` for stderr
-    /// requests the child's stderr to refer to the same underlying file as
-    /// the child's stdout (which may or may not itself be redirected),
-    /// equivalent to the `2>&1` operator of the Bourne shell. Analogously,
-    /// using `Redirection::Merge` for stdout is equivalent to `1>&2` in the
-    /// shell.
-    ///
-    /// Specifying `Redirection::Merge` for stdin or specifying it for both
-    /// stdout and stderr is invalid and will cause an error.
-    Merge,
-
-    /// Redirect the stream to the specified open `File`.
-    ///
-    /// This does not create a pipe, it simply spawns the child so that the
-    /// specified stream sees that file. The child can read from or write to
-    /// the provided file on its own, without any intervention by the parent.
-    File(File),
-
-    /// Like `File`, but the file may be shared among multiple redirections
-    /// without duplicating the file descriptor.
-    SharedFile(Arc<File>),
-
-    /// Redirect the stream to the null device (`/dev/null` on Unix, `nul`
-    /// on Windows).
-    ///
-    /// This is equivalent to `Redirection::File` with a null device file,
-    /// but more convenient and portable.
-    Null,
-}
-
-impl Redirection {
-    /// Clone the underlying `Redirection`, or return an error.
-    ///
-    /// Can fail in `File` variant.
-    pub fn try_clone(&self) -> io::Result<Redirection> {
-        Ok(match *self {
-            Redirection::None => Redirection::None,
-            Redirection::Pipe => Redirection::Pipe,
-            Redirection::Merge => Redirection::Merge,
-            Redirection::File(ref f) => Redirection::File(f.try_clone()?),
-            Redirection::SharedFile(ref f) => Redirection::SharedFile(Arc::clone(f)),
-            Redirection::Null => Redirection::Null,
-        })
-    }
-}
 
 pub(crate) struct SpawnResult {
     pub process: Process,
@@ -274,36 +200,6 @@ fn setup_streams(
     Ok((child_stdin, child_stdout, child_stderr))
 }
 
-/// Exit status of a process.
-///
-/// This is an opaque type that wraps the platform's native exit status
-/// representation. Use the provided methods to query the exit status.
-///
-/// On Unix, the raw value is the status from `waitpid()`. On Windows, it is the exit code
-/// from `GetExitCodeProcess()`.
-#[derive(Eq, PartialEq, Copy, Clone)]
-pub struct ExitStatus(pub(crate) Option<os::RawExitStatus>);
-
-impl ExitStatus {
-    /// Create an `ExitStatus` from the raw platform value.
-    pub(crate) fn from_raw(raw: os::RawExitStatus) -> ExitStatus {
-        ExitStatus(Some(raw))
-    }
-
-    /// True if the exit status of the process is 0.
-    pub fn success(&self) -> bool {
-        self.code() == Some(0)
-    }
-
-    /// True if the subprocess was killed by a signal with the specified
-    /// number.
-    ///
-    /// Always returns `false` on Windows.
-    pub fn is_killed_by(&self, signum: i32) -> bool {
-        self.signal() == Some(signum)
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 #[allow(dead_code)]
 pub(crate) enum StandardStream {
@@ -477,59 +373,6 @@ pub(crate) mod os {
     /// This is a safe wrapper over `libc::pipe`.
     pub fn make_pipe() -> io::Result<(File, File)> {
         posix::pipe()
-    }
-
-    pub type RawExitStatus = i32;
-
-    impl ExitStatus {
-        /// Returns the exit code if the process exited normally.
-        ///
-        /// On Unix, this returns `Some` only if the process exited voluntarily (not
-        /// killed by a signal).
-        pub fn code(&self) -> Option<u32> {
-            let raw = self.0?;
-            libc::WIFEXITED(raw).then(|| libc::WEXITSTATUS(raw) as u32)
-        }
-
-        /// Returns the signal number if the process was killed by a signal.
-        pub fn signal(&self) -> Option<i32> {
-            let raw = self.0?;
-            libc::WIFSIGNALED(raw).then(|| libc::WTERMSIG(raw))
-        }
-    }
-
-    impl fmt::Display for ExitStatus {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            match self.0 {
-                Some(raw) if libc::WIFEXITED(raw) => {
-                    write!(f, "exit code {}", libc::WEXITSTATUS(raw))
-                }
-                Some(raw) if libc::WIFSIGNALED(raw) => {
-                    write!(f, "signal {}", libc::WTERMSIG(raw))
-                }
-                Some(raw) => {
-                    write!(f, "unrecognized wait status: {} {:#x}", raw, raw)
-                }
-                None => write!(f, "undetermined exit status"),
-            }
-        }
-    }
-
-    impl fmt::Debug for ExitStatus {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            match self.0 {
-                Some(raw) if libc::WIFEXITED(raw) => {
-                    write!(f, "ExitStatus(Exited({}))", libc::WEXITSTATUS(raw))
-                }
-                Some(raw) if libc::WIFSIGNALED(raw) => {
-                    write!(f, "ExitStatus(Signal({}))", libc::WTERMSIG(raw))
-                }
-                Some(raw) => {
-                    write!(f, "ExitStatus(Unknown({} {:#x}))", raw, raw)
-                }
-                None => write!(f, "ExitStatus(Undetermined)"),
-            }
-        }
     }
 }
 
@@ -718,44 +561,5 @@ pub(crate) mod os {
             i += 1;
         }
         cmdline.push('"' as u16);
-    }
-
-    pub type RawExitStatus = u32;
-
-    impl ExitStatus {
-        /// Returns the exit code if the process exited normally.
-        ///
-        /// On Windows, this always returns `Some` for a determined exit
-        /// status.
-        pub fn code(&self) -> Option<u32> {
-            self.0
-        }
-
-        /// Returns the signal number if the process was killed by a signal.
-        ///
-        /// On Windows, this always returns `None`.
-        pub fn signal(&self) -> Option<i32> {
-            None
-        }
-    }
-
-    impl fmt::Display for ExitStatus {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            match self.0 {
-                Some(code) => write!(f, "exit code {}", code),
-                None => write!(f, "undetermined exit status"),
-            }
-        }
-    }
-
-    impl fmt::Debug for ExitStatus {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            match self.0 {
-                Some(code) => {
-                    write!(f, "ExitStatus(Exited({}))", code)
-                }
-                None => write!(f, "ExitStatus(Undetermined)"),
-            }
-        }
     }
 }

@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 
 use libc::{c_char, c_int};
 
-use crate::popen::{ExitStatus, StandardStream};
+use crate::process::ExitStatus;
+use crate::spawn::StandardStream;
 
 pub use libc::ECHILD;
 

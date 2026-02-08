@@ -35,7 +35,7 @@ use winapi::um::{fileapi, handleapi, processenv, processthreadsapi, synchapi};
 pub use winapi::shared::winerror::{ERROR_ACCESS_DENIED, ERROR_BAD_PATHNAME};
 pub const STILL_ACTIVE: u32 = 259;
 
-use crate::popen::StandardStream;
+use crate::spawn::StandardStream;
 
 #[derive(Debug)]
 pub struct Handle(RawHandle);
