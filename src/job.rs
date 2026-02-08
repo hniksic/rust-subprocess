@@ -7,7 +7,7 @@ use crate::communicate::Communicator;
 use crate::exec::Capture;
 use crate::process::{ExitStatus, Process};
 
-/// A started process or pipeline, consisting of running processes and their pipe ends.
+/// Interface to a started process or pipeline.
 ///
 /// Created by [`Exec::start`] or [`Pipeline::start`].
 #[derive(Debug)]
@@ -82,6 +82,14 @@ impl Job {
         self.processes.last().unwrap().pid()
     }
 
+    /// Returns the PIDs of all processes in the pipeline, in pipeline order.
+    ///
+    /// If the job was started by a single process, this will return its pid. It will be
+    /// empty for a job started by an empty pipeline.
+    pub fn pids(&self) -> Vec<u32> {
+        self.processes.iter().map(|p| p.pid()).collect()
+    }
+
     /// Kill all processes in the pipeline.
     ///
     /// Delegates to [`Process::kill()`] on each process, which sends `SIGKILL` on Unix
@@ -91,6 +99,15 @@ impl Job {
             p.kill()?;
         }
         Ok(())
+    }
+
+    /// Detach all processes in the pipeline.
+    ///
+    /// After detaching, the processes will not be waited for in drop.
+    pub fn detach(&self) {
+        for p in &self.processes {
+            p.detach();
+        }
     }
 
     /// Poll all processes for completion without blocking.
