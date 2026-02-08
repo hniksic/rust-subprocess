@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::unix::{PipelineExt, ProcessExt, JobExt};
+use crate::unix::{JobExt, PipelineExt, ProcessExt};
 use crate::{Exec, ExecExt, ExitStatus, Redirection};
 
 #[test]

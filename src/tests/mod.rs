@@ -1,13 +1,13 @@
 mod communicate;
 mod exec;
+mod job;
 mod pipeline;
 #[cfg(unix)]
 mod posix;
-mod job;
 #[cfg(windows)]
 mod win32;
 
-use crate::{Capture, Communicator, Exec, ExitStatus, Pipeline, Process, Redirection, Job};
+use crate::{Capture, Communicator, Exec, ExitStatus, Job, Pipeline, Process, Redirection};
 
 fn assert_send_sync<T: Send + Sync>() {}
 

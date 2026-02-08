@@ -13,8 +13,9 @@ use crate::process::Process;
 
 use crate::exec::{
     Capture, Exec, InputRedirection, InputRedirectionKind, OutputRedirection, ReadAdapter,
-    ReadErrAdapter, Job, WriteAdapter,
+    ReadErrAdapter, WriteAdapter,
 };
+use crate::job::Job;
 
 /// A builder for pipelines of subprocesses connected via pipes.
 ///

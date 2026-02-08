@@ -50,6 +50,7 @@
 
 mod communicate;
 mod exec;
+mod job;
 mod pipeline;
 mod process;
 mod spawn;
@@ -68,12 +69,13 @@ pub use exec::Redirection;
 #[cfg(unix)]
 pub use exec::unix::ExecExt;
 #[cfg(unix)]
-pub use exec::unix::PipelineExt;
-#[cfg(unix)]
 pub use exec::unix::JobExt;
+#[cfg(unix)]
+pub use exec::unix::PipelineExt;
 #[cfg(windows)]
 pub use exec::windows::ExecExt;
-pub use exec::{Capture, Exec, InputRedirection, OutputRedirection, Job};
+pub use exec::{Capture, Exec, InputRedirection, OutputRedirection};
+pub use job::Job;
 pub use pipeline::Pipeline;
 pub use process::ExitStatus;
 pub use process::Process;
@@ -81,8 +83,8 @@ pub use process::Process;
 /// Subprocess extensions for Unix platforms.
 #[cfg(unix)]
 pub mod unix {
-    pub use super::exec::unix::PipelineExt;
     pub use super::exec::unix::JobExt;
+    pub use super::exec::unix::PipelineExt;
     pub use super::process::ProcessExt;
 }
 
