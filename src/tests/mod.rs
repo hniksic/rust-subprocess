@@ -14,8 +14,7 @@ fn assert_send_sync<T: Send + Sync>() {}
 #[test]
 fn public_types_are_send_and_sync() {
     assert_send_sync::<Process>();
-    assert_send_sync::<Communicator<Vec<u8>>>();
-    assert_send_sync::<Communicator<&[u8]>>();
+    assert_send_sync::<Communicator>();
     assert_send_sync::<Capture>();
     assert_send_sync::<ExitStatus>();
     assert_send_sync::<Exec>();

@@ -438,7 +438,7 @@ impl Pipeline {
     /// Compared to `capture()`, this offers more choice in how communication is
     /// performed, such as read size limit and timeout.  Unlike `capture()`, this
     /// method doesn't wait for the pipeline to finish, effectively detaching it.
-    pub fn communicate(mut self) -> io::Result<Communicator<Vec<u8>>> {
+    pub fn communicate(mut self) -> io::Result<Communicator> {
         self = self.detached();
         if matches!(*self.stdout, Redirection::None) {
             self = self.stdout(Redirection::Pipe);

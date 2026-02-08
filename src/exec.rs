@@ -490,7 +490,7 @@ impl Exec {
     ///
     /// Unlike `capture()`, this method doesn't wait for the process to finish,
     /// effectively detaching it.
-    pub fn communicate(mut self) -> io::Result<Communicator<Vec<u8>>> {
+    pub fn communicate(mut self) -> io::Result<Communicator> {
         self = self.detached();
         if matches!(*self.stdout_redirect, Redirection::None) {
             self = self.stdout(Redirection::Pipe);

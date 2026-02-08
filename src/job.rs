@@ -37,7 +37,7 @@ impl Job {
     /// The communicator takes ownership of `stdin`, `stdout`, and `stderr`, leaving them
     /// as `None`. Only streams that were redirected to a pipe will be available to the
     /// communicator.
-    pub fn communicate(&mut self) -> Communicator<Vec<u8>> {
+    pub fn communicate(&mut self) -> Communicator {
         Communicator::new(
             self.stdin.take(),
             self.stdout.take(),

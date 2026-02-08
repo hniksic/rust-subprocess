@@ -389,6 +389,15 @@ use posix::RawCommunicator;
 #[cfg(windows)]
 use win32::RawCommunicator;
 
+/// Wrapper around boxed input data that implements `AsRef<[u8]>`.
+struct BoxedInput(Box<dyn AsRef<[u8]> + Send + Sync>);
+
+impl AsRef<[u8]> for BoxedInput {
+    fn as_ref(&self) -> &[u8] {
+        (*self.0).as_ref()
+    }
+}
+
 /// Send input to a subprocess and capture its output, without deadlock.
 ///
 /// `Communicator` writes the provided input data to the subprocess's stdin (which is then
@@ -403,22 +412,30 @@ use win32::RawCommunicator;
 /// [`read`]: #method.read
 /// [`read_string`]: #method.read_string
 #[must_use]
-#[derive(Debug)]
-pub struct Communicator<I> {
-    inner: RawCommunicator<I>,
+pub struct Communicator {
+    inner: RawCommunicator<BoxedInput>,
     size_limit: Option<usize>,
     time_limit: Option<Duration>,
 }
 
-impl<I: AsRef<[u8]>> Communicator<I> {
+impl std::fmt::Debug for Communicator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Communicator")
+            .field("size_limit", &self.size_limit)
+            .field("time_limit", &self.time_limit)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Communicator {
     pub(crate) fn new(
         stdin: Option<File>,
         stdout: Option<File>,
         stderr: Option<File>,
-        input_data: I,
-    ) -> Communicator<I> {
+        input_data: impl AsRef<[u8]> + Send + Sync + 'static,
+    ) -> Communicator {
         Communicator {
-            inner: RawCommunicator::new(stdin, stdout, stderr, input_data),
+            inner: RawCommunicator::new(stdin, stdout, stderr, BoxedInput(Box::new(input_data))),
             size_limit: None,
             time_limit: None,
         }
@@ -530,13 +547,13 @@ impl<I: AsRef<[u8]>> Communicator<I> {
     ///
     /// On Windows, when capturing both stdout and stderr, the limit is approximate
     /// and may be exceeded by several kilobytes.
-    pub fn limit_size(mut self, size: usize) -> Communicator<I> {
+    pub fn limit_size(mut self, size: usize) -> Communicator {
         self.size_limit = Some(size);
         self
     }
 
     /// Limit the amount of time the next `read()` will spend reading from the subprocess.
-    pub fn limit_time(mut self, time: Duration) -> Communicator<I> {
+    pub fn limit_time(mut self, time: Duration) -> Communicator {
         self.time_limit = Some(time);
         self
     }
