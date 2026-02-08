@@ -562,7 +562,8 @@ pub(crate) mod os {
         Ok(OsString::from_wide(&cmdline))
     }
 
-    // Translated from ArgvQuote at http://tinyurl.com/zmgtnls
+    // Translated from ArgvQuote at
+    // https://learn.microsoft.com/en-us/archive/blogs/twistylittlepassagesallalike/everyone-quotes-command-line-arguments-the-wrong-way
     fn append_quoted(arg: &OsStr, cmdline: &mut Vec<u16>) {
         if !arg.is_empty()
             && !arg.encode_wide().any(|c| {
