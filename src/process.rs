@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// On Unix, the raw value is the status from `waitpid()`. On Windows, it is the exit code
 /// from `GetExitCodeProcess()`.
-#[derive(Eq, PartialEq, Copy, Clone)]
+#[derive(Eq, PartialEq, Hash, Copy, Clone)]
 pub struct ExitStatus(pub(crate) Option<os::RawExitStatus>);
 
 impl ExitStatus {
