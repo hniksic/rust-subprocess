@@ -12,8 +12,8 @@ use crate::process::ExitStatus;
 use crate::process::Process;
 
 use crate::exec::{
-    Capture, Exec, InputRedirection, InputRedirectionKind, OutputRedirection, ReadAdapter,
-    ReadErrAdapter, WriteAdapter,
+    Capture, Exec, InputData, InputRedirection, InputRedirectionKind, OutputRedirection,
+    ReadAdapter, ReadErrAdapter, WriteAdapter,
 };
 use crate::job::Job;
 
@@ -59,7 +59,7 @@ pub struct Pipeline {
     stdin: Arc<Redirection>,
     stdout: Arc<Redirection>,
     stderr: Arc<Redirection>,
-    stdin_data: Option<Vec<u8>>,
+    stdin_data: Option<InputData>,
     check_success: bool,
     detached: bool,
     cwd: Option<OsString>,
@@ -124,11 +124,15 @@ impl Pipeline {
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-    /// * a `Vec<u8>`, `&str`, or `&[u8]`, which will set up a `Redirection::Pipe` for
-    ///   stdin, making sure that `capture` feeds that data into the standard input of the
-    ///   subprocess.
+    /// * a `Vec<u8>`, `&str`, `&[u8]`, `Box<[u8]>`, or `[u8; N]`, which will set up a
+    ///   `Redirection::Pipe` for stdin, making sure that `capture` feeds that data into
+    ///   the standard input of the subprocess;
+    /// * an [`InputData`], which wraps any `AsRef<[u8]>` value and passes it through
+    ///   without copying. Use this for zero-copy feeding of types like `bytes::Bytes`,
+    ///   `memmap2::Mmap`, or other owned byte containers.
     ///
     /// [`Redirection`]: enum.Redirection.html
+    /// [`InputData`]: struct.InputData.html
     pub fn stdin(mut self, stdin: impl InputRedirection) -> Pipeline {
         match stdin.into_input_redirection() {
             InputRedirectionKind::AsRedirection(r) => self.stdin = Arc::new(r),
@@ -263,7 +267,7 @@ impl Pipeline {
                 stdin: None,
                 stdout: None,
                 stderr: None,
-                stdin_data: vec![],
+                stdin_data: InputData::default(),
                 check_success: self.check_success,
                 processes: vec![],
             });

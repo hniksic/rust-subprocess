@@ -157,7 +157,7 @@ pub struct Exec {
     command: OsString,
     args: Vec<OsString>,
     check_success: bool,
-    stdin_data: Option<Vec<u8>>,
+    stdin_data: Option<InputData>,
     pub(crate) stdin_redirect: Arc<Redirection>,
     pub(crate) stdout_redirect: Arc<Redirection>,
     pub(crate) stderr_redirect: Arc<Redirection>,
@@ -321,11 +321,19 @@ impl Exec {
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-    /// * a `Vec<u8>`, `&str`, or `&[u8]`, which will set up a `Redirection::Pipe` for
-    ///   stdin, making sure that `capture` feeds that data into the standard input of the
-    ///   subprocess.
+    /// * a `Vec<u8>`, `&str`, `&[u8]`, `Box<[u8]>`, or `[u8; N]`, which will set up a
+    ///   `Redirection::Pipe` for stdin, making sure that `capture` feeds that data into the
+    ///   standard input of the subprocess;
+    /// * an [`InputData`], which wraps any `AsRef<[u8]>` value and passes it through
+    ///   without copying. Use this for zero-copy feeding of types like `bytes::Bytes`,
+    ///   `memmap2::Mmap`, or other owned byte containers.
+    ///
+    /// Note that `&str` and `&[u8]` arguments must be `'static` (like string literals
+    /// and byte literals). For non-static data, convert to `Vec<u8>` or use
+    /// [`InputData::new`].
     ///
     /// [`Redirection`]: enum.Redirection.html
+    /// [`InputData`]: struct.InputData.html
     pub fn stdin(mut self, stdin: impl InputRedirection) -> Exec {
         match stdin.into_input_redirection() {
             InputRedirectionKind::AsRedirection(new) => {
@@ -655,10 +663,59 @@ impl Capture {
     }
 }
 
+/// Type-erased container for input data fed to a subprocess's stdin.
+///
+/// `InputData` wraps any `AsRef<[u8]>` value behind an `Arc`, providing cheap cloning
+/// (needed because `Exec` and `Pipeline` are `Clone`) and zero-copy pass-through for
+/// owned types like `Vec<u8>`, `bytes::Bytes`, or memory-mapped files (`memmap2::Mmap`).
+///
+/// To create an `InputData` from a custom type:
+///
+/// ```ignore
+/// # use subprocess::InputData;
+/// let data = InputData::new(bytes::Bytes::from_static(b"hello"));
+/// assert_eq!(data.as_ref(), b"hello");
+/// ```
+///
+/// `InputData` implements `Default` (empty input) and `AsRef<[u8]>`.
+#[derive(Clone)]
+pub struct InputData(Arc<dyn AsRef<[u8]> + Send + Sync>);
+
+impl InputData {
+    /// Create `InputData` from any value that implements
+    /// `AsRef<[u8]> + Send + Sync + 'static`.
+    pub fn new(data: impl AsRef<[u8]> + Send + Sync + 'static) -> Self {
+        InputData(Arc::new(data))
+    }
+}
+
+impl Default for InputData {
+    fn default() -> Self {
+        InputData(Arc::new(Vec::<u8>::new()))
+    }
+}
+
+impl AsRef<[u8]> for InputData {
+    fn as_ref(&self) -> &[u8] {
+        (*self.0).as_ref()
+    }
+}
+
+impl fmt::Debug for InputData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let data = self.as_ref();
+        if data.len() <= 64 {
+            write!(f, "InputData({:?})", data)
+        } else {
+            write!(f, "InputData([{} bytes])", data.len())
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum InputRedirectionKind {
     AsRedirection(Redirection),
-    FeedData(Vec<u8>),
+    FeedData(InputData),
 }
 
 mod sealed {
@@ -702,31 +759,52 @@ impl InputRedirection for File {
     }
 }
 
-impl sealed::InputRedirectionSealed for Vec<u8> {}
-impl InputRedirection for Vec<u8> {
+impl sealed::InputRedirectionSealed for InputData {}
+impl InputRedirection for InputData {
     fn into_input_redirection(self) -> InputRedirectionKind {
         InputRedirectionKind::FeedData(self)
     }
 }
 
-impl sealed::InputRedirectionSealed for &str {}
-impl InputRedirection for &str {
+impl sealed::InputRedirectionSealed for Vec<u8> {}
+impl InputRedirection for Vec<u8> {
     fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(self.as_bytes().to_vec())
+        InputRedirectionKind::FeedData(InputData::new(self))
     }
 }
 
-impl sealed::InputRedirectionSealed for &[u8] {}
-impl InputRedirection for &[u8] {
+impl sealed::InputRedirectionSealed for &'static str {}
+impl InputRedirection for &'static str {
     fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(self.to_vec())
+        InputRedirectionKind::FeedData(InputData::new(self.as_bytes()))
     }
 }
 
-impl<const N: usize> sealed::InputRedirectionSealed for &[u8; N] {}
-impl<const N: usize> InputRedirection for &[u8; N] {
+impl sealed::InputRedirectionSealed for &'static [u8] {}
+impl InputRedirection for &'static [u8] {
     fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(self.to_vec())
+        InputRedirectionKind::FeedData(InputData::new(self))
+    }
+}
+
+impl<const N: usize> sealed::InputRedirectionSealed for &'static [u8; N] {}
+impl<const N: usize> InputRedirection for &'static [u8; N] {
+    fn into_input_redirection(self) -> InputRedirectionKind {
+        InputRedirectionKind::FeedData(InputData::new(self))
+    }
+}
+
+impl<const N: usize> sealed::InputRedirectionSealed for [u8; N] {}
+impl<const N: usize> InputRedirection for [u8; N] {
+    fn into_input_redirection(self) -> InputRedirectionKind {
+        InputRedirectionKind::FeedData(InputData::new(self))
+    }
+}
+
+impl sealed::InputRedirectionSealed for Box<[u8]> {}
+impl InputRedirection for Box<[u8]> {
+    fn into_input_redirection(self) -> InputRedirectionKind {
+        InputRedirectionKind::FeedData(InputData::new(self))
     }
 }
 

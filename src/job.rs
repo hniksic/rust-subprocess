@@ -4,7 +4,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::time::{Duration, Instant};
 
 use crate::communicate::Communicator;
-use crate::exec::Capture;
+use crate::exec::{Capture, InputData};
 use crate::process::{ExitStatus, Process};
 
 /// Interface to a started process or pipeline.
@@ -24,7 +24,7 @@ pub struct Job {
     pub stderr: Option<File>,
     /// Data to feed to the first process's stdin, set by [`Exec::stdin`]
     /// or [`Pipeline::stdin`].
-    pub stdin_data: Vec<u8>,
+    pub stdin_data: InputData,
     /// Whether to return an error on non-zero exit status.
     pub check_success: bool,
     /// Started processes, in pipeline order.

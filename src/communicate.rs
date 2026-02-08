@@ -1,3 +1,4 @@
+use crate::exec::InputData;
 use std::fs::File;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
@@ -389,15 +390,6 @@ use posix::RawCommunicator;
 #[cfg(windows)]
 use win32::RawCommunicator;
 
-/// Wrapper around boxed input data that implements `AsRef<[u8]>`.
-struct BoxedInput(Box<dyn AsRef<[u8]> + Send + Sync>);
-
-impl AsRef<[u8]> for BoxedInput {
-    fn as_ref(&self) -> &[u8] {
-        (*self.0).as_ref()
-    }
-}
-
 /// Send input to a subprocess and capture its output, without deadlock.
 ///
 /// `Communicator` writes the provided input data to the subprocess's stdin (which is then
@@ -413,7 +405,7 @@ impl AsRef<[u8]> for BoxedInput {
 /// [`read_string`]: #method.read_string
 #[must_use]
 pub struct Communicator {
-    inner: RawCommunicator<BoxedInput>,
+    inner: RawCommunicator<InputData>,
     size_limit: Option<usize>,
     time_limit: Option<Duration>,
 }
@@ -432,10 +424,10 @@ impl Communicator {
         stdin: Option<File>,
         stdout: Option<File>,
         stderr: Option<File>,
-        input_data: impl AsRef<[u8]> + Send + Sync + 'static,
+        input_data: InputData,
     ) -> Communicator {
         Communicator {
-            inner: RawCommunicator::new(stdin, stdout, stderr, BoxedInput(Box::new(input_data))),
+            inner: RawCommunicator::new(stdin, stdout, stderr, input_data),
             size_limit: None,
             time_limit: None,
         }
