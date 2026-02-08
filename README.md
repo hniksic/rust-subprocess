@@ -16,14 +16,15 @@ tested on Linux, macOS, and Windows.
 The [`std::process`](https://doc.rust-lang.org/std/process/index.html) module in the standard
 library is fine for simple use cases, but it doesn't cover common scenarios such as:
 
-* **Avoiding deadlock** when communicating with a subprocess - if you need to write to a
-  subprocess's stdin while also reading its stdout and stderr, naive sequential operation can
-  block forever.  `subprocess` handles this correctly using
+* **Shell-style pipelines** - `subprocess` lets you create pipelines using the `|` operator:
+  `Exec::cmd("find") | Exec::cmd("grep") | Exec::cmd("wc")`. There is no difference
+  between interacting with pipelines and with a single process.
+
+* **Deadlock-free capture** when feeding subprocess input - if you need to write to a
+  subprocess's stdin while also reading its stdout and stderr, naive sequential operation
+  can block forever.  `subprocess` handles this correctly using
   [poll-based](https://docs.rs/subprocess/latest/subprocess/struct.Communicator.html) I/O
   multiplexing.
-
-* **Shell-style pipelines** - `subprocess` lets you create pipelines using the `|` operator:
-  `Exec::cmd("find") | Exec::cmd("grep") | Exec::cmd("wc")`.
 
 * **Flexible redirections** - shell-style `2>&1` is supported with
   [`Redirection::Merge`](https://docs.rs/subprocess/latest/subprocess/enum.Redirection.html#variant.Merge),
@@ -36,6 +37,12 @@ library is fine for simple use cases, but it doesn't cover common scenarios such
   [`join_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html#method.join_timeout)
   and
   [`capture_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html#method.capture_timeout).
+
+* **Thread-friendly process handles** - `std::process::Child` requires `&mut self` for
+  `wait()` and `kill()`, making multi-threaded use awkward.  `subprocess`'s
+  [`Process`](https://docs.rs/subprocess/latest/subprocess/struct.Process.html) is cheaply
+  cloneable and all its methods take `&self`, so you can hand out clones to different threads
+  that independently wait for exit, poll status, or send signals.
 
 * **Sending signals** (Unix) - `std::process::Child::kill()` only sends `SIGKILL`.
   `subprocess` lets you [send any
@@ -53,10 +60,11 @@ library is fine for simple use cases, but it doesn't cover common scenarios such
 
 | Need | std::process | subprocess |
 |------|-------------|------------|
-| Wait with timeout | Loop with `try_wait()` + sleep | `wait_timeout(duration)` |
-| Write stdin while reading stdout | Manual threading or async | `capture()` handles it |
 | Pipelines | Manual pipe setup | `cmd1 \| cmd2 \| cmd3` |
+| Write stdin while capturing stdout | Manual threading or async | `capture()` handles it |
+| Wait with timeout | Loop with `try_wait()` + sleep | `wait_timeout(duration)` |
 | Merge stderr into stdout | Not supported | `Redirection::Merge` |
+| Share process handle across threads | `Arc<Mutex<Child>>` | Clone the `Process` handle |
 | Send SIGTERM (Unix) | Only `kill()` (SIGKILL) | `send_signal(SIGTERM)` |
 | Auto-cleanup on drop | No (zombies possible) | Yes (waits by default) |
 
@@ -77,7 +85,7 @@ The API has two layers:
 
 ## Examples
 
-### Basic execution
+### Execution
 
 Execute a command and wait for it to complete:
 
@@ -113,8 +121,6 @@ let out_and_err = Exec::cmd("cargo").arg("check")
   .stdout_str();
 ```
 
-### Feeding input
-
 `capture()` can simultaneously feed data to stdin and read stdout/stderr, avoiding the
 deadlock that would result from doing these sequentially:
 
@@ -124,15 +130,6 @@ let lines = Exec::cmd("sqlite3")
     .stdin("SELECT name FROM users WHERE active = 1;")
     .capture()?
     .stdout_str();
-```
-
-### Streaming
-
-Get stdout as a `Read` trait object (like C's `popen`):
-
-```rust
-let stream = Exec::cmd("find").arg("/").stream_stdout()?;
-// Use stream.read_to_string(), BufReader::new(stream).lines(), etc.
 ```
 
 ### Pipelines
@@ -147,6 +144,15 @@ let dir_checksum = (Exec::shell("find . -type f") | Exec::cmd("sort") | Exec::cm
 
 Pipeline supports the same methods for interacting with the subprocess as with a single
 started command.
+
+### Streaming
+
+Get stdout as a `Read` trait object (like C's `popen`):
+
+```rust
+let stream = Exec::cmd("find").arg("/").stream_stdout()?;
+// Use stream.read_to_string(), BufReader::new(stream).lines(), etc.
+```
 
 ### Timeouts
 
