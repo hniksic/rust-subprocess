@@ -231,13 +231,12 @@ fn pipeline_setpgid_rejects_exec_setpgid() {
 
 #[test]
 fn null_redirect_does_not_leak_fd() {
-    // Regression test for issue #81. When bash spawns a background
-    // process ("sleep 100 &"), it won't return from "wait" until the
-    // backgrounded child also closes its inherited file descriptors. If
-    // we leak the /dev/null fds to the child, the backgrounded sleep
-    // keeps them open and join() hangs.
+    // Regression test for issue #81. When bash spawns a background process ("sleep 100
+    // &"), it won't return from "wait" until the backgrounded child also closes its
+    // inherited file descriptors. If we leak the /dev/null fds to the child, the
+    // backgrounded sleep keeps them open and join() hangs.
     let start = Instant::now();
-    let status = Exec::cmd("bash")
+    let status = Exec::cmd("sh")
         .args(&["-c", "sleep 100 &"])
         .stdout(Redirection::Null)
         .stderr(Redirection::Null)
