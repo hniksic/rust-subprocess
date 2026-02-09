@@ -13,50 +13,27 @@ tested on Linux, macOS, and Windows.
 
 ## Why subprocess?
 
-The [`std::process`](https://doc.rust-lang.org/std/process/index.html) module in the standard
-library is fine for simple use cases, but it doesn't cover common scenarios such as:
+Compared to [`std::process`](https://doc.rust-lang.org/std/process/index.html), the crate
+provides additional features:
 
-* **Shell-style pipelines** - `subprocess` lets you create pipelines using the `|` operator:
-  `Exec::cmd("find") | Exec::cmd("grep") | Exec::cmd("wc")`. There is no difference
-  between interacting with pipelines and with a single process.
+* **The capture and communicate** [family of methods](Job::capture) for deadlock-free
+  capturing of subprocess output/error, while simultaneously feeding data to its standard
+  input.  Capturing supports optional timeout and read size limit.
 
-* **Deadlock-free capture** when feeding subprocess input - if you need to write to a
-  subprocess's stdin while also reading its stdout and stderr, naive sequential operation
-  can block forever.  `subprocess` handles this correctly using
-  [poll-based](https://docs.rs/subprocess/latest/subprocess/struct.Communicator.html) I/O
-  multiplexing.
+* **OS-level pipelines** using the `|` operator: `Exec::cmd("find") | Exec::cmd("grep") |
+  Exec::cmd("wc")`. There is no difference between interacting with pipelines and with a
+  single process.
 
-* **Flexible redirections** - shell-style `2>&1` is supported with
-  [`Redirection::Merge`](https://docs.rs/subprocess/latest/subprocess/enum.Redirection.html#variant.Merge),
-  and `>/dev/null` with
-  [`Redirection::Null`](https://docs.rs/subprocess/latest/subprocess/enum.Redirection.html#variant.Null).
+* **Flexible redirection** options, such as connecting standard streams to arbitrary sources,
+  including those implemented in Rust, or merging output streams like shell's `2>&1` and
+  `1>&2` operators.
 
-* **Waiting with a timeout** - `std::process::Child` offers either blocking `wait()` or
-  non-blocking `try_wait()`, but nothing in-between.  `subprocess` provides timeout
-  variants of its methods, such as
+* **Non-blocking and timeout methods** to wait on the process: `subprocess` provides
+  timeout variants of its methods, such as
+  [`wait_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html#method.wait_timeout),
   [`join_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html#method.join_timeout)
   and
   [`capture_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html#method.capture_timeout).
-
-* **Thread-friendly process handles** - `std::process::Child` requires `&mut self` for
-  `wait()` and `kill()`, making multi-threaded use awkward.  `subprocess`'s
-  [`Process`](https://docs.rs/subprocess/latest/subprocess/struct.Process.html) is cheaply
-  cloneable and all its methods take `&self`, so you can hand out clones to different threads
-  that independently wait for exit, poll status, or send signals.
-
-* **Sending signals** (Unix) - `std::process::Child::kill()` only sends `SIGKILL`.
-  `subprocess` lets you [send any
-  signal](https://docs.rs/subprocess/latest/subprocess/unix/trait.ProcessExt.html#tymethod.send_signal)
-  including `SIGTERM`, and can [signal process
-  groups](https://docs.rs/subprocess/latest/subprocess/unix/trait.ProcessExt.html#tymethod.send_signal_group)
-  to terminate an entire process tree.
-
-* **Preventing zombies** - `subprocess` automatically waits on child processes when they go
-  out of scope (with
-  [`detach()`](https://docs.rs/subprocess/latest/subprocess/struct.Process.html#method.detach)
-  to opt out), whereas `std::process::Child` does not, risking zombie process accumulation.
-
-## Comparison with std::process
 
 | Need | std::process | subprocess |
 |------|-------------|------------|
@@ -75,13 +52,16 @@ The API has two layers:
 * **[`Exec`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html) /
   [`Pipeline`](https://docs.rs/subprocess/latest/subprocess/struct.Pipeline.html)** -
   builder-pattern API for configuring processes and pipelines.  Convenience methods like
-  `join()` and `capture()` configure, start, and collect results in one call.
+  [`join()`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html#method.join)
+  and
+  [`start()`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html#method.capture)`
+  configure, start, and collect results in one call.
 
-* **[`Job`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html)** - handle
-  for a running process or pipeline, returned by `start()`.  Provides timeout-aware methods
-  like `join_timeout()` and `capture_timeout()`, as well as `communicate()`.
-  [`Capture`](https://docs.rs/subprocess/latest/subprocess/struct.Capture.html) is
-  returned by `capture()` and holds the collected stdout, stderr, and exit status. 
+* **[`Job`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html)** - interface to
+  a started process or pipeline, returned by
+  [`start()`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html#method.start).
+  Contains input and output streams, and provides methods for inspecting the process
+  status and capturing output, and timeout-aware waiting methods.
 
 ## Examples
 
