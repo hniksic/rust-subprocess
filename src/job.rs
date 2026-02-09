@@ -147,8 +147,14 @@ impl Job {
 
     /// Closes the pipe ends, waits for all processes to finish, and returns the exit
     /// status of the last process.
+    ///
+    /// If input or output was redirected to pipe, this close input and drain the output
+    /// as needed.
     pub fn join(mut self) -> io::Result<ExitStatus> {
-        self.communicate()?.read()?;
+        // Communicator::read_to() feeds stdin to the subprocess and drains its
+        // output/error, if configured as pipe.
+        self.communicate()?
+            .read_to(std::io::sink(), std::io::sink())?;
         let status = self.wait()?;
         if self.check_success && !status.success() {
             return Err(io::Error::other(format!("command failed: {status}")));
@@ -162,7 +168,9 @@ impl Job {
     /// within the given duration.
     pub fn join_timeout(mut self, timeout: Duration) -> io::Result<ExitStatus> {
         let deadline = Instant::now() + timeout;
-        self.communicate()?.limit_time(timeout).read()?;
+        self.communicate()?
+            .limit_time(timeout)
+            .read_to(std::io::sink(), std::io::sink())?;
         let status = self
             .wait_timeout(deadline.saturating_duration_since(Instant::now()))?
             .ok_or_else(|| io::Error::from(ErrorKind::TimedOut))?;
