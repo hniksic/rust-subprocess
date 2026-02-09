@@ -13,7 +13,7 @@ use crate::process::ExitStatus;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -177,9 +177,9 @@ impl Exec {
     /// streams will be modified.
     ///
     /// [`Exec::shell`]: struct.Exec.html#method.shell
-    pub fn cmd(command: impl AsRef<OsStr>) -> Exec {
+    pub fn cmd(command: impl Into<OsString>) -> Exec {
         Exec {
-            command: command.as_ref().to_owned(),
+            command: command.into(),
             args: vec![],
             check_success: false,
             stdin_data: None,
@@ -208,20 +208,19 @@ impl Exec {
     /// string run by the shell, such as `Exec::shell(format!("sort {}", filename))`. Such
     /// code is prone to errors and, if `filename` comes from an untrusted source, to
     /// shell injection attacks. Instead, use `Exec::cmd("sort").arg(filename)`.
-    pub fn shell(cmdstr: impl AsRef<OsStr>) -> Exec {
+    pub fn shell(cmdstr: impl Into<OsString>) -> Exec {
         Exec::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
     }
 
     /// Appends `arg` to argument list.
-    pub fn arg(mut self, arg: impl AsRef<OsStr>) -> Exec {
-        self.args.push(arg.as_ref().to_owned());
+    pub fn arg(mut self, arg: impl Into<OsString>) -> Exec {
+        self.args.push(arg.into());
         self
     }
 
     /// Extends the argument list with `args`.
-    pub fn args(mut self, args: impl IntoIterator<Item = impl AsRef<OsStr>>) -> Exec {
-        self.args
-            .extend(args.into_iter().map(|x| x.as_ref().to_owned()));
+    pub fn args(mut self, args: impl IntoIterator<Item = impl Into<OsString>>) -> Exec {
+        self.args.extend(args.into_iter().map(|x| x.into()));
         self
     }
 
@@ -260,9 +259,8 @@ impl Exec {
     ///
     /// Other environment variables are by default inherited from the current process. If
     /// this is undesirable, call `env_clear` first.
-    pub fn env(mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Exec {
-        self.ensure_env()
-            .push((key.as_ref().to_owned(), value.as_ref().to_owned()));
+    pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Exec {
+        self.ensure_env().push((key.into(), value.into()));
         self
     }
 
@@ -275,20 +273,19 @@ impl Exec {
     /// this is undesirable, call `env_clear` first.
     pub fn env_extend(
         mut self,
-        vars: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
+        vars: impl IntoIterator<Item = (impl Into<OsString>, impl Into<OsString>)>,
     ) -> Exec {
-        self.ensure_env().extend(
-            vars.into_iter()
-                .map(|(k, v)| (k.as_ref().to_owned(), v.as_ref().to_owned())),
-        );
+        self.ensure_env()
+            .extend(vars.into_iter().map(|(k, v)| (k.into(), v.into())));
         self
     }
 
     /// Removes an environment variable from the child process.
     ///
     /// Other environment variables are inherited by default.
-    pub fn env_remove(mut self, key: impl AsRef<OsStr>) -> Exec {
-        self.ensure_env().retain(|(k, _v)| k != key.as_ref());
+    pub fn env_remove(mut self, key: impl Into<OsString>) -> Exec {
+        let key = key.into();
+        self.ensure_env().retain(|(k, _v)| *k != key);
         self
     }
 
