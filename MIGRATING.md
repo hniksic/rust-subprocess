@@ -1,14 +1,14 @@
 # Migrating from subprocess 0.2 to 1.0
 
-subprocess 1.0 is an evolution of the public API. The core capabilities are the same -
-spawning processes, building pipelines, deadlock-free capture - but the interface cleans
-up non-standing warts accumulated over the years.
+subprocess 1.0 is an incompatible change to the public API of the crate. The core
+capabilities are the same - spawning processes, building pipelines, deadlock-free
+capture - but the release cleans up long-standing API warts accumulated over the years.
 
 This guide covers the breaking changes and shows how to update your code.
 
-## What's new
+## What's changed
 
-Before diving into the migration details, here's what you get with 1.0:
+Before diving into the migration details, here is a summary of changes:
 
 - **Popen type is removed.** `Popen` mixed process creation, pipe ownership, and awaiting
   in one type. Setup is now done through the builder API, which was already
@@ -32,7 +32,8 @@ Before diving into the migration details, here's what you get with 1.0:
 
 ## Error types
 
-Custom error types have been removed. All fallible operations return `std::io::Error`.
+Custom error types `PopenError` and `CommunicateError` have been removed. All fallible
+operations return `std::io::Error`.
 
 ```rust
 // 0.2
@@ -42,14 +43,6 @@ fn run() -> subprocess::Result<()> { /* ... */ }
 // 1.0
 fn run() -> std::io::Result<()> { /* ... */ }
 ```
-
-`CommunicateError` is gone too -- communicator methods return `std::io::Error`.
-
-## ExitStatus
-
-`ExitStatus` was a four-variant enum exposing platform details. It's now
-an opaque newtype with accessor methods, matching the conventions of
-`std::process::ExitStatus`.
 
 ## Popen and PopenConfig
 
@@ -116,6 +109,11 @@ let capture = Exec::cmd("cmd").capture()?;
 let status = Exec::cmd("cmd").join()?;
 ```
 
+## ExitStatus
+
+`ExitStatus` was a four-variant enum exposing platform details. It's now an opaque newtype
+with accessor methods, matching the conventions of `std::process::ExitStatus`.
+
 ## Pipeline changes
 
 ### Creation
@@ -139,7 +137,7 @@ let p = Exec::cmd("find") | Exec::cmd("sort") | Exec::cmd("uniq");
 
 You can now additionally write:
 
-```
+```rust
 let p = Pipeline::new()
     .pipe(Exec::cmd("find"))
     .pipe(Exec::cmd("sort"))
@@ -200,11 +198,10 @@ let capture = Exec::cmd("slow")
     .capture()?;
 
 // 1.0
-let job = Exec::cmd("slow").start()?;
-let capture = job.capture_timeout(Duration::from_secs(5))?;
-
-// Also available:
-let status = job.join_timeout(Duration::from_secs(5))?;
+let capture = Exec::cmd("slow")
+    .stdout(Redirection::Pipe)
+    .start()?
+    .capture_timeout(Duration::from_secs(5))?;
 ```
 
 ## Exit status checking
@@ -256,33 +253,23 @@ let mut comm = Exec::cmd("cat").stdin("input").communicate()?;
 
 ## Stdin data
 
-Passing data to stdin is more flexible. The `InputRedirection` enum is
-now a sealed trait implemented for common byte types:
+Passing data to stdin is more flexible. The following are supported:
 
 ```rust
-Exec::cmd("cat").stdin("hello");              // &str
-Exec::cmd("cat").stdin(b"hello".as_slice());  // &[u8]
-Exec::cmd("cat").stdin(vec![1, 2, 3]);        // Vec<u8>
-Exec::cmd("cat").stdin(b"hello");             // &[u8; N]
+Exec::cmd("cat").stdin("hello");                        // &str
+Exec::cmd("cat").stdin(b"hello".as_slice());            // &[u8]
+Exec::cmd("cat").stdin(vec![1, 2, 3]);                  // Vec<u8>
+Exec::cmd("cat").stdin(b"hello");                       // &[u8; N]
+Exec::cmd("cat").stdin(InputData::from_bytes(bytes));   // any impl AsRef<[u8]>
+Exec::cmd("cat").stdin(InputData::from_reader(source)); // any impl std::io::Read
 ```
 
-None of these allocate. 
-
-For custom input sources, use `InputData`:
-
-```rust
-use subprocess::InputData;
-
-// From a reader
-let data = InputData::from_reader(my_file);
-Exec::cmd("cat").stdin(data);
-```
+All of these take ownership of the data without additional allocations.
 
 ## Exec and Pipeline are no longer Clone
 
-In 0.2, `Exec` and `Pipeline` implemented `Clone`, which could panic if duplicating a file
-descriptor failed. In 1.0, they no longer implement `Clone`. If you need multiple similar
-commands, construct them separately.
+In 0.2, `Exec` and `Pipeline` implemented `Clone` with the implementation panicking in
+case of error. In 1.0, they no longer implement `Clone`.
 
 ## &mut self -> &self on Process
 

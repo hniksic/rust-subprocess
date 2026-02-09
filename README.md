@@ -11,22 +11,24 @@ with [API documentation on docs.rs](https://docs.rs/subprocess/).
 The crate has minimal dependencies (only `libc` on Unix and `winapi` on Windows), and is
 tested on Linux, macOS, and Windows.
 
+If you're upgrading from version 0.2, see the [migration guide](MIGRATING.md).
+
 ## Why subprocess?
 
 Compared to [`std::process`](https://doc.rust-lang.org/std/process/index.html), the crate
 provides additional features:
 
-* **The capture and communicate** [family of methods](Job::capture) for deadlock-free
-  capturing of subprocess output/error, while simultaneously feeding data to its standard
-  input.  Capturing supports optional timeout and read size limit.
+* **Capture and communicate** [family of
+  methods](https://docs.rs/subprocess/latest/subprocess/struct.Job.html#method.capture)
+  for deadlock-free capturing of subprocess output/error, while simultaneously feeding
+  data to its standard input.  Capturing supports optional timeout and read size limit.
 
 * **OS-level pipelines** using the `|` operator: `Exec::cmd("find") | Exec::cmd("grep") |
   Exec::cmd("wc")`. There is no difference between interacting with pipelines and with a
   single process.
 
-* **Flexible redirection** options, such as connecting standard streams to arbitrary sources,
-  including those implemented in Rust, or merging output streams like shell's `2>&1` and
-  `1>&2` operators.
+* **Flexible redirection** options, such as connecting standard input to arbitrary data
+  sources, and merging output streams like shell's `2>&1` and `1>&2` operators.
 
 * **Non-blocking and timeout methods** to wait on the process: `subprocess` provides
   timeout variants of its methods, such as
@@ -35,33 +37,30 @@ provides additional features:
   and
   [`capture_timeout()`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html#method.capture_timeout).
 
-| Need | std::process | subprocess |
-|------|-------------|------------|
-| Pipelines | Manual pipe setup | `cmd1 \| cmd2 \| cmd3` |
-| Write stdin while capturing stdout | Manual threading or async | `capture()` handles it |
-| Wait with timeout | Loop with `try_wait()` + sleep | `wait_timeout(duration)` |
-| Merge stderr into stdout | Not supported | `Redirection::Merge` |
-| Share process handle across threads | `Arc<Mutex<Child>>` | Clone the `Process` handle |
-| Send SIGTERM (Unix) | Only `kill()` (SIGKILL) | `send_signal(SIGTERM)` |
-| Auto-cleanup on drop | No (zombies possible) | Yes (waits by default) |
+* Various conveniences, such as `checked()` to flag non-zero exit status as error,
+  thread-safe and cloneable process handle with `&self` methods, support for `setpgid()`
+  on individual commands and on the pipeline, and many others.
 
 ## API Overview
 
-The API has two layers:
+The API consists of two main components:
 
 * **[`Exec`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html) /
   [`Pipeline`](https://docs.rs/subprocess/latest/subprocess/struct.Pipeline.html)** -
-  builder-pattern API for configuring processes and pipelines.  Convenience methods like
+  builder-pattern API for configuring processes and pipelines.  Once configured,
+  [`start()`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html#method.start)
+  starts the process or pipeline. Includes convenience methods like
   [`join()`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html#method.join)
   and
-  [`start()`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html#method.capture)`
-  configure, start, and collect results in one call.
+  [`capture()`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html#method.capture)
+  that start, collect results, and wait for the process to finish in one call.
 
 * **[`Job`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html)** - interface to
   a started process or pipeline, returned by
   [`start()`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html#method.start).
-  Contains input and output streams, and provides methods for inspecting the process
-  status and capturing output, and timeout-aware waiting methods.
+  Holds input, output, and error pipes, as well as the handles to underlying
+  process(es). Provides methods for waiting on the process and capturing or streaming its
+  output.
 
 ## Examples
 
@@ -74,7 +73,7 @@ Exec::cmd("umount").arg(dirname).checked().join()?;
 ```
 
 `join()` starts the command and waits for it to finish, returning the exit
-status. `checked()` ensures error is returned for non-zero exit status.
+status. `checked()` ensures an error is returned for non-zero exit status.
 
 To prevent quoting issues and shell injection attacks, `subprocess` doesn't spawn a shell
 unless explicitly requested.  To execute a command through the OS shell, use
@@ -86,7 +85,7 @@ Exec::shell("shutdown -h now").join()?;
 
 ### Capturing output
 
-Capture the stdout and stderr of a command, and print the stdout:
+Capture the stdout and stderr of a command, and use the stdout:
 
 ```rust
 let rustver = Exec::shell("rustc --version").capture()?.stdout_str();
@@ -96,9 +95,9 @@ Capture stdout and stderr merged together:
 
 ```rust
 let out_and_err = Exec::cmd("cargo").arg("check")
-  .stderr(Redirection::Merge)  // 2>&1
-  .capture()?
-  .stdout_str();
+    .stderr(Redirection::Merge)  // 2>&1
+    .capture()?
+    .stdout_str();
 ```
 
 `capture()` can simultaneously feed data to stdin and read stdout/stderr, avoiding the
@@ -127,11 +126,32 @@ started command.
 
 ### Streaming
 
-Get stdout as a `Read` trait object (like C's `popen`):
+Get stdout as an object that implements `std::io::Read` (like C's `popen`):
 
 ```rust
 let stream = Exec::cmd("find").arg("/").stream_stdout()?;
 // Use stream.read_to_string(), BufReader::new(stream).lines(), etc.
+```
+
+### Arbitrary input to subprocess
+
+In addition to static data, you can feed to stdin of the subprocess any data represented
+in a slice (such as in a memory-mapped file or shared `bytes::Bytes` container), or even
+generated dynamically:
+
+```rust
+use subprocess::InputData;
+
+let bytes = bytes::Bytes::from("Hello world");
+let gzipped_bytes = Exec::cmd("gzip")
+    .stdin(InputData::from_bytes(bytes))
+    .capture()?
+    .stdout;
+
+let lazy_source = std::io::repeat(b'x').take(5_000_000);
+let gzipped_stream = Exec::cmd("gzip")
+    .stdin(InputData::from_reader(lazy_source))
+    .stream_stdout()?;
 ```
 
 ### Timeouts
@@ -140,6 +160,7 @@ Capture with timeout:
 
 ```rust
 let response = Exec::cmd("curl").arg("-s").arg(url)
+    .stdout(Redirection::Pipe)
     .start()?
     .capture_timeout(Duration::from_secs(10))?
     .stdout_str();
@@ -149,7 +170,7 @@ let response = Exec::cmd("curl").arg("-s").arg(url)
 with a time or size limit:
 
 ```rust
-let mut comm = Exec::cmd("ping").arg("example.com").detached().communicate()?;
+let mut comm = Exec::cmd("ping").arg("example.com").communicate()?;
 let (out, _) = comm
     .limit_time(Duration::from_secs(5))
     .read_string()?;
@@ -160,12 +181,12 @@ let (out, _) = comm
 Give the process some time to run, then terminate if needed:
 
 ```rust
-let mut started = Exec::cmd("sleep").arg("10").start()?;
-match started.wait_timeout(Duration::from_secs(1))? {
+let mut job = Exec::cmd("sleep").arg("10").start()?;
+match job.wait_timeout(Duration::from_secs(1))? {
     Some(status) => println!("finished: {:?}", status),
     None => {
-        started.terminate()?;
-        started.wait()?;
+        job.terminate()?;
+        job.wait()?;
     }
 }
 ```
