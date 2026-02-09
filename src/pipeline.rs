@@ -66,11 +66,10 @@ use crate::job::Job;
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone)]
 #[must_use]
 pub struct Pipeline {
     execs: Vec<Exec>,
-    stdin: Arc<Redirection>,
+    stdin_redirect: Arc<Redirection>,
     stdout: Arc<Redirection>,
     stderr: Arc<Redirection>,
     stdin_data: Option<InputData>,
@@ -98,7 +97,7 @@ impl Pipeline {
     pub fn new() -> Pipeline {
         Pipeline {
             execs: vec![],
-            stdin: Arc::new(Redirection::None),
+            stdin_redirect: Arc::new(Redirection::None),
             stdout: Arc::new(Redirection::None),
             stderr: Arc::new(Redirection::None),
             stdin_data: None,
@@ -131,30 +130,36 @@ impl Pipeline {
         self
     }
 
-    /// Specifies how to set up the standard input of the first command in the pipeline.
+    /// Specifies how to set up the standard input of the first command in
+    /// the pipeline.
     ///
     /// Argument can be:
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
     /// * a `Vec<u8>`, `&str`, `&[u8]`, `Box<[u8]>`, or `[u8; N]`, which will set up a
-    ///   `Redirection::Pipe` for stdin, making sure that `capture` feeds that data into
-    ///   the standard input of the subprocess;
-    /// * an [`InputData`], which wraps any `AsRef<[u8]>` value and passes it through
-    ///   without copying. Use this for zero-copy feeding of types like `bytes::Bytes`,
-    ///   `memmap2::Mmap`, or other owned byte containers.
+    ///   `Redirection::Pipe` for stdin, feeding that data into the standard input of the
+    ///   subprocess;
+    /// * an [`InputData`], which also sets up a pipe, but wraps any reader and feeds its
+    ///   content to the standard input of the subprocess. Use [`InputData::from_bytes`]
+    ///   for in-memory byte containers not covered by the above, like `bytes::Bytes` or
+    ///   `memmap2::Mmap`. Use [`InputData::from_reader`] for a custom `Read` that
+    ///   generates or transforms data.
     ///
-    /// If the child exits before consuming all input, the `BrokenPipe` error is
-    /// silently ignored. Use the exit status and output to check if the child
-    /// processed the input correctly.
+    /// If the child exits before consuming all input, the `BrokenPipe` error is silently
+    /// ignored. Use the exit status and output to check if the child processed the input
+    /// correctly.
     ///
     /// [`Redirection`]: enum.Redirection.html
     /// [`InputData`]: struct.InputData.html
     pub fn stdin(mut self, stdin: impl InputRedirection) -> Pipeline {
         match stdin.into_input_redirection() {
-            InputRedirectionKind::AsRedirection(r) => self.stdin = Arc::new(r),
+            InputRedirectionKind::AsRedirection(r) => {
+                self.stdin_redirect = Arc::new(r);
+                self.stdin_data = None;
+            }
             InputRedirectionKind::FeedData(data) => {
-                self.stdin = Arc::new(Redirection::Pipe);
+                self.stdin_redirect = Arc::new(Redirection::Pipe);
                 self.stdin_data = Some(data);
             }
         };
@@ -324,7 +329,7 @@ impl Pipeline {
             self.execs = self.execs.into_iter().map(|cmd| cmd.detached()).collect();
         }
 
-        self.execs.first_mut().unwrap().stdin_redirect = self.stdin;
+        self.execs.first_mut().unwrap().stdin_redirect = self.stdin_redirect;
 
         self.execs.last_mut().unwrap().stdout_redirect = self.stdout;
 
@@ -540,7 +545,7 @@ impl FromIterator<Exec> for Pipeline {
     fn from_iter<I: IntoIterator<Item = Exec>>(iter: I) -> Self {
         Pipeline {
             execs: iter.into_iter().collect(),
-            stdin: Arc::new(Redirection::None),
+            stdin_redirect: Arc::new(Redirection::None),
             stdout: Arc::new(Redirection::None),
             stderr: Arc::new(Redirection::None),
             stdin_data: None,

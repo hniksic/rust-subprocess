@@ -151,7 +151,6 @@ pub enum Redirection {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone)]
 #[must_use]
 pub struct Exec {
     command: OsString,
@@ -308,19 +307,17 @@ impl Exec {
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
     /// * a `Vec<u8>`, `&str`, `&[u8]`, `Box<[u8]>`, or `[u8; N]`, which will set up a
-    ///   `Redirection::Pipe` for stdin, making sure that `capture` feeds that data into the
-    ///   standard input of the subprocess;
-    /// * an [`InputData`], which wraps any `AsRef<[u8]>` value and passes it through
-    ///   without copying. Use this for zero-copy feeding of types like `bytes::Bytes`,
-    ///   `memmap2::Mmap`, or other owned byte containers.
+    ///   `Redirection::Pipe` for stdin, feeding that data into the standard input of the
+    ///   subprocess;
+    /// * an [`InputData`], which also sets up a pipe, but wraps any reader and feeds its
+    ///   content to the standard input of the subprocess. Use [`InputData::from_bytes`]
+    ///   for in-memory byte containers not covered by the above, like `bytes::Bytes` or
+    ///   `memmap2::Mmap`. Use [`InputData::from_reader`] for a custom `Read` that
+    ///   generates or transforms data.
     ///
-    /// Note that `&str` and `&[u8]` arguments must be `'static` (like string literals
-    /// and byte literals). For non-static data, convert to `Vec<u8>` or use
-    /// [`InputData::new`].
-    ///
-    /// If the child exits before consuming all input, the `BrokenPipe` error is
-    /// silently ignored. Use the exit status and output to check if the child
-    /// processed the input correctly.
+    /// If the child exits before consuming all input, the `BrokenPipe` error is silently
+    /// ignored. Use the exit status and output to check if the child processed the input
+    /// correctly.
     ///
     /// [`Redirection`]: enum.Redirection.html
     /// [`InputData`]: struct.InputData.html
@@ -646,52 +643,48 @@ impl Capture {
     }
 }
 
-/// Type-erased container for input data fed to a subprocess's stdin.
+/// Type-erased readable source for input data fed to a subprocess's stdin.
 ///
-/// `InputData` wraps any `AsRef<[u8]>` value behind an `Arc`, providing cheap cloning
-/// (needed because `Exec` and `Pipeline` are `Clone`) and zero-copy pass-through for
-/// owned types like `Vec<u8>`, `bytes::Bytes`, or memory-mapped files (`memmap2::Mmap`).
+/// `InputData` wraps a reader, so it can supply stdin data from any readable source:
+/// in-memory bytes, a custom `Read` implementation that generates or transforms data,
+/// etc.
 ///
-/// To create an `InputData` from a custom type:
-///
-/// ```ignore
-/// # use subprocess::InputData;
-/// let data = InputData::new(bytes::Bytes::from_static(b"hello"));
-/// assert_eq!(data.as_ref(), b"hello");
-/// ```
-///
-/// `InputData` implements `Default` (empty input) and `AsRef<[u8]>`.
-#[derive(Clone)]
-pub struct InputData(Arc<dyn AsRef<[u8]> + Send + Sync>);
+/// Use [`InputData::from_bytes`] for in-memory byte data (`Vec<u8>`, `bytes::Bytes`,
+/// `memmap2::Mmap`, etc.) and [`InputData::from_reader`] for a custom `Read`
+/// implementation.
+pub struct InputData(Box<dyn Read + Send + Sync>);
 
 impl InputData {
-    /// Create `InputData` from any value that implements
-    /// `AsRef<[u8]> + Send + Sync + 'static`.
-    pub fn new(data: impl AsRef<[u8]> + Send + Sync + 'static) -> Self {
-        InputData(Arc::new(data))
+    /// Create `InputData` from in-memory byte data.
+    ///
+    /// Accepts any type that implements `AsRef<[u8]>`, such as `Vec<u8>`, `Box<[u8]>`,
+    /// `bytes::Bytes`, or `memmap2::Mmap`.
+    pub fn from_bytes(data: impl AsRef<[u8]> + Send + Sync + 'static) -> Self {
+        InputData(Box::new(io::Cursor::new(data)))
+    }
+
+    /// Create `InputData` from a custom `Read` implementation that generates or
+    /// transforms data on the fly.
+    pub fn from_reader(reader: impl Read + Send + Sync + 'static) -> Self {
+        InputData(Box::new(reader))
+    }
+}
+
+impl Read for InputData {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
     }
 }
 
 impl Default for InputData {
     fn default() -> Self {
-        InputData(Arc::new(Vec::<u8>::new()))
-    }
-}
-
-impl AsRef<[u8]> for InputData {
-    fn as_ref(&self) -> &[u8] {
-        (*self.0).as_ref()
+        InputData(Box::new(io::empty()))
     }
 }
 
 impl fmt::Debug for InputData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let data = self.as_ref();
-        if data.len() <= 64 {
-            write!(f, "InputData({:?})", data)
-        } else {
-            write!(f, "InputData([{} bytes])", data.len())
-        }
+        f.write_str("InputData(..)")
     }
 }
 
@@ -752,42 +745,42 @@ impl InputRedirection for InputData {
 impl sealed::InputRedirectionSealed for Vec<u8> {}
 impl InputRedirection for Vec<u8> {
     fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(InputData::new(self))
+        InputRedirectionKind::FeedData(InputData::from_bytes(self))
     }
 }
 
 impl sealed::InputRedirectionSealed for &'static str {}
 impl InputRedirection for &'static str {
     fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(InputData::new(self.as_bytes()))
+        InputRedirectionKind::FeedData(InputData::from_bytes(self))
     }
 }
 
 impl sealed::InputRedirectionSealed for &'static [u8] {}
 impl InputRedirection for &'static [u8] {
     fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(InputData::new(self))
+        InputRedirectionKind::FeedData(InputData::from_bytes(self))
     }
 }
 
 impl<const N: usize> sealed::InputRedirectionSealed for &'static [u8; N] {}
 impl<const N: usize> InputRedirection for &'static [u8; N] {
     fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(InputData::new(self))
+        InputRedirectionKind::FeedData(InputData::from_bytes(self))
     }
 }
 
 impl<const N: usize> sealed::InputRedirectionSealed for [u8; N] {}
 impl<const N: usize> InputRedirection for [u8; N] {
     fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(InputData::new(self))
+        InputRedirectionKind::FeedData(InputData::from_bytes(self))
     }
 }
 
 impl sealed::InputRedirectionSealed for Box<[u8]> {}
 impl InputRedirection for Box<[u8]> {
     fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(InputData::new(self))
+        InputRedirectionKind::FeedData(InputData::from_bytes(self))
     }
 }
 

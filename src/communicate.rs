@@ -78,14 +78,14 @@ mod posix {
 
         fn do_read(
             source_ref: &mut Option<&File>,
-            dest: &mut Vec<u8>,
+            dest: &mut impl Write,
             size_limit: Option<usize>,
             total_read: usize,
-        ) -> io::Result<()> {
+        ) -> io::Result<usize> {
             let mut buf = &mut [0u8; 4096][..];
             if let Some(size_limit) = size_limit {
                 if total_read >= size_limit {
-                    return Ok(());
+                    return Ok(0);
                 }
                 if size_limit - total_read < buf.len() {
                     buf = &mut buf[0..size_limit - total_read];
@@ -93,11 +93,11 @@ mod posix {
             }
             let n = source_ref.unwrap().read(buf)?;
             if n != 0 {
-                dest.extend_from_slice(&buf[..n]);
+                dest.write_all(&buf[..n])?;
             } else {
                 *source_ref = None;
             }
-            Ok(())
+            Ok(n)
         }
 
         pub fn read(
@@ -105,28 +105,18 @@ mod posix {
             input: &mut impl Read,
             deadline: Option<Instant>,
             size_limit: Option<usize>,
-            outret: &mut Option<Vec<u8>>,
-            errret: &mut Option<Vec<u8>>,
+            out_sink: &mut impl Write,
+            err_sink: &mut impl Write,
         ) -> io::Result<()> {
             const INPUT_BUF_SIZE: usize = 64 * 1024;
 
-            let outvec = if self.stdout.is_some() {
-                outret.insert(vec![])
-            } else {
-                &mut vec![]
-            };
-            let errvec = if self.stderr.is_some() {
-                errret.insert(vec![])
-            } else {
-                &mut vec![]
-            };
             let mut stdout_live = self.stdout.as_ref();
             let mut stderr_live = self.stderr.as_ref();
+            let mut total_written: usize = 0;
 
             loop {
-                let total = outvec.len() + errvec.len();
                 if let Some(size_limit) = size_limit
-                    && total >= size_limit
+                    && total_written >= size_limit
                 {
                     break;
                 }
@@ -143,6 +133,9 @@ mod posix {
                 }
                 if in_ready {
                     if self.write_buf.is_empty() {
+                        // Reset head to 0 so resize() fills contiguously,
+                        // avoiding an O(n) rotation in make_contiguous().
+                        self.write_buf.clear();
                         self.write_buf.resize(INPUT_BUF_SIZE, 0);
                         let buf = self.write_buf.make_contiguous();
                         let nread = input.read(buf)?;
@@ -152,8 +145,11 @@ mod posix {
                         // close stdin when done writing, so the child receives EOF
                         self.stdin.take();
                     } else {
+                        // Chunk size for writing must be at most PIPE_BUF to
+                        // avoid blocking despite poll() reporting readiness.
                         let (front, _) = self.write_buf.as_slices();
-                        match self.stdin.as_ref().unwrap().write(front) {
+                        let chunk = &front[..front.len().min(libc::PIPE_BUF)];
+                        match self.stdin.as_ref().unwrap().write(chunk) {
                             Ok(nwritten) => {
                                 self.write_buf.drain(..nwritten);
                             }
@@ -166,11 +162,12 @@ mod posix {
                     }
                 }
                 if out_ready {
-                    Self::do_read(&mut stdout_live, outvec, size_limit, total)?;
+                    total_written +=
+                        Self::do_read(&mut stdout_live, out_sink, size_limit, total_written)?;
                 }
                 if err_ready {
-                    let total = outvec.len() + errvec.len();
-                    Self::do_read(&mut stderr_live, errvec, size_limit, total)?;
+                    total_written +=
+                        Self::do_read(&mut stderr_live, err_sink, size_limit, total_written)?;
                 }
             }
 
@@ -186,9 +183,8 @@ mod win32 {
         PendingRead, PendingWrite, ReadFileOverlapped, WaitForMultipleObjects, WaitResult,
         WriteFileOverlapped,
     };
-    use std::cmp::min;
     use std::fs::File;
-    use std::io::{self, Read};
+    use std::io::{self, Read, Write};
     use std::os::windows::io::AsRawHandle;
     use std::time::Instant;
 
@@ -236,8 +232,7 @@ mod win32 {
         pending: &mut Option<PendingWrite>,
         data: &[u8],
     ) -> io::Result<bool> {
-        let chunk_size = min(BUFFER_SIZE, data.len());
-        let new = WriteFileOverlapped(file.as_raw_handle(), &data[..chunk_size])?;
+        let new = WriteFileOverlapped(file.as_raw_handle(), data)?;
         Ok(pending.insert(new).is_ready())
     }
 
@@ -252,12 +247,16 @@ mod win32 {
         Ok(pending.insert(new).is_ready())
     }
 
-    /// Complete a read operation and append data to dest.
-    /// Returns Ok(true) if EOF was reached, Ok(false) otherwise.
-    fn complete_read(mut pending: PendingRead, dest: &mut Vec<u8>) -> io::Result<bool> {
+    /// Complete a read operation and write data to dest.
+    /// Returns (eof, bytes_written).
+    fn complete_read(mut pending: PendingRead, dest: &mut impl Write) -> io::Result<(bool, usize)> {
         let data = pending.complete()?;
-        dest.extend_from_slice(data);
-        Ok(data.is_empty())
+        let len = data.len();
+        let eof = data.is_empty();
+        if !eof {
+            dest.write_all(data)?;
+        }
+        Ok((eof, len))
     }
 
     #[derive(Debug)]
@@ -291,8 +290,8 @@ mod win32 {
             input: &mut impl Read,
             deadline: Option<Instant>,
             size_limit: Option<usize>,
-            outret: &mut Option<Vec<u8>>,
-            errret: &mut Option<Vec<u8>>,
+            out_sink: &mut impl Write,
+            err_sink: &mut impl Write,
         ) -> io::Result<()> {
             // Note: size_limit enforcement is approximate on Windows when capturing both
             // stdout and stderr. On Unix, poll() signals readiness and we control how
@@ -304,24 +303,14 @@ mod win32 {
             // megabytes when I asked for kilobytes". The overshoot is bounded by ~2x
             // BUFFER_SIZE.
 
-            let outvec = if self.stdout.is_some() {
-                outret.insert(vec![])
-            } else {
-                &mut vec![]
-            };
-            let errvec = if self.stderr.is_some() {
-                errret.insert(vec![])
-            } else {
-                &mut vec![]
-            };
             // cleared after EOF
             let mut stdout_live = self.stdout.as_ref();
             let mut stderr_live = self.stderr.as_ref();
+            let mut total_written: usize = 0;
 
             loop {
-                let total = outvec.len() + errvec.len();
                 if let Some(size_limit) = size_limit
-                    && total >= size_limit
+                    && total_written >= size_limit
                 {
                     break;
                 }
@@ -347,7 +336,7 @@ mod win32 {
                     }
                 }
                 let read_size = size_limit
-                    .map(|l| l.saturating_sub(total))
+                    .map(|l| l.saturating_sub(total_written))
                     .unwrap_or(BUFFER_SIZE)
                     .min(BUFFER_SIZE);
                 if let Some(stdout) = stdout_live
@@ -379,15 +368,25 @@ mod win32 {
                 if in_ready {
                     let nwritten = self.stdin_pending.take().unwrap().complete()?;
                     if nwritten == 0 {
-                        // Broken pipe - the child closed its stdin.
+                        // Broken pipe - the child closed its stdin. Partial writes
+                        // can't occur because overlapped WriteFile always completes
+                        // the full buffer; 0 only comes from ERROR_BROKEN_PIPE.
                         self.stdin.take();
                     }
                 }
-                if out_ready && complete_read(self.stdout_pending.take().unwrap(), outvec)? {
-                    stdout_live = None;
+                if out_ready {
+                    let (eof, n) = complete_read(self.stdout_pending.take().unwrap(), out_sink)?;
+                    total_written += n;
+                    if eof {
+                        stdout_live = None;
+                    }
                 }
-                if err_ready && complete_read(self.stderr_pending.take().unwrap(), errvec)? {
-                    stderr_live = None;
+                if err_ready {
+                    let (eof, n) = complete_read(self.stderr_pending.take().unwrap(), err_sink)?;
+                    total_written += n;
+                    if eof {
+                        stderr_live = None;
+                    }
                 }
             }
 
@@ -418,7 +417,6 @@ use win32::RawCommunicator;
 pub struct Communicator {
     inner: RawCommunicator,
     input_data: InputData,
-    input_start: usize,
     size_limit: Option<usize>,
     time_limit: Option<Duration>,
 }
@@ -442,7 +440,6 @@ impl Communicator {
         Communicator {
             inner: RawCommunicator::new(stdin, stdout, stderr),
             input_data,
-            input_start: 0,
             size_limit: None,
             time_limit: None,
         }
@@ -481,33 +478,13 @@ impl Communicator {
     ///   be `ErrorKind::TimedOut`.
     pub fn read_to(&mut self, mut stdout: impl Write, mut stderr: impl Write) -> io::Result<()> {
         let deadline = self.time_limit.map(|timeout| Instant::now() + timeout);
-        let mut outvec = None;
-        let mut errvec = None;
-
-        let input_bytes = self.input_data.as_ref();
-        let mut remaining: &[u8] = &input_bytes[self.input_start..];
-        let result = self.inner.read(
-            &mut remaining,
+        self.inner.read(
+            &mut self.input_data,
             deadline,
             self.size_limit,
-            &mut outvec,
-            &mut errvec,
-        );
-        self.input_start = input_bytes.len() - remaining.len();
-
-        let mut flush = Ok(());
-        if let Some(out) = outvec
-            && let Err(e) = stdout.write_all(&out)
-        {
-            flush = Err(e);
-        }
-        if let Some(err) = errvec
-            && let Err(e) = stderr.write_all(&err)
-            && flush.is_ok()
-        {
-            flush = Err(e);
-        }
-        result.and(flush)
+            &mut stdout,
+            &mut stderr,
+        )
     }
 
     /// Communicate with the subprocess, return the contents of its standard output and error.
