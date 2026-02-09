@@ -356,6 +356,7 @@ mod win32 {
                     let nread = input.read(&mut buf)?;
                     if nread == 0 {
                         self.stdin.take();
+                        continue;
                     } else {
                         in_ready = start_write(stdin, &mut self.stdin_pending, &buf[..nread])?;
                     }
