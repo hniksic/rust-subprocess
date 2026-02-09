@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 mod posix {
     use crate::posix;
-    use std::cmp::min;
+    use std::collections::VecDeque;
     use std::fs::File;
     use std::io::{self, Read, Write};
     use std::time::Instant;
@@ -55,27 +55,24 @@ mod posix {
     }
 
     #[derive(Debug)]
-    pub struct RawCommunicator<I> {
+    pub struct RawCommunicator {
         stdin: Option<File>,
         stdout: Option<File>,
         stderr: Option<File>,
-        input_data: I,
-        input_start: usize,
+        write_buf: VecDeque<u8>,
     }
 
-    impl<I: AsRef<[u8]>> RawCommunicator<I> {
+    impl RawCommunicator {
         pub fn new(
             stdin: Option<File>,
             stdout: Option<File>,
             stderr: Option<File>,
-            input_data: I,
-        ) -> RawCommunicator<I> {
+        ) -> RawCommunicator {
             RawCommunicator {
                 stdin,
                 stdout,
                 stderr,
-                input_data,
-                input_start: 0,
+                write_buf: VecDeque::new(),
             }
         }
 
@@ -105,14 +102,13 @@ mod posix {
 
         pub fn read(
             &mut self,
+            input: &mut impl Read,
             deadline: Option<Instant>,
             size_limit: Option<usize>,
             outret: &mut Option<Vec<u8>>,
             errret: &mut Option<Vec<u8>>,
         ) -> io::Result<()> {
-            // Note: chunk size for writing must be smaller than the pipe buffer size.  A
-            // large enough write to a pipe deadlocks despite polling.
-            const WRITE_SIZE: usize = 4096;
+            const INPUT_BUF_SIZE: usize = 64 * 1024;
 
             let outvec = if self.stdout.is_some() {
                 outret.insert(vec![])
@@ -146,13 +142,27 @@ mod posix {
                     return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout"));
                 }
                 if in_ready {
-                    let remaining = &self.input_data.as_ref()[self.input_start..];
-                    let chunk = &remaining[..min(WRITE_SIZE, remaining.len())];
-                    let n = self.stdin.as_ref().unwrap().write(chunk)?;
-                    self.input_start += n;
-                    if self.input_start >= self.input_data.as_ref().len() {
+                    if self.write_buf.is_empty() {
+                        self.write_buf.resize(INPUT_BUF_SIZE, 0);
+                        let buf = self.write_buf.make_contiguous();
+                        let nread = input.read(buf)?;
+                        self.write_buf.truncate(nread);
+                    }
+                    if self.write_buf.is_empty() {
                         // close stdin when done writing, so the child receives EOF
                         self.stdin.take();
+                    } else {
+                        let (front, _) = self.write_buf.as_slices();
+                        match self.stdin.as_ref().unwrap().write(front) {
+                            Ok(nwritten) => {
+                                self.write_buf.drain(..nwritten);
+                            }
+                            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                                self.write_buf.clear();
+                                self.stdin.take();
+                            }
+                            Err(e) => return Err(e),
+                        }
                     }
                 }
                 if out_ready {
@@ -178,7 +188,7 @@ mod win32 {
     };
     use std::cmp::min;
     use std::fs::File;
-    use std::io;
+    use std::io::{self, Read};
     use std::os::windows::io::AsRawHandle;
     use std::time::Instant;
 
@@ -251,24 +261,21 @@ mod win32 {
     }
 
     #[derive(Debug)]
-    pub struct RawCommunicator<I> {
+    pub struct RawCommunicator {
         stdin: Option<File>,
         stdout: Option<File>,
         stderr: Option<File>,
         stdin_pending: Option<PendingWrite>,
         stdout_pending: Option<PendingRead>,
         stderr_pending: Option<PendingRead>,
-        input_data: I,
-        input_start: usize,
     }
 
-    impl<I: AsRef<[u8]>> RawCommunicator<I> {
+    impl RawCommunicator {
         pub fn new(
             stdin: Option<File>,
             stdout: Option<File>,
             stderr: Option<File>,
-            input_data: I,
-        ) -> RawCommunicator<I> {
+        ) -> RawCommunicator {
             RawCommunicator {
                 stdin,
                 stdout,
@@ -276,26 +283,26 @@ mod win32 {
                 stdin_pending: None,
                 stdout_pending: None,
                 stderr_pending: None,
-                input_data,
-                input_start: 0,
             }
         }
 
         pub fn read(
             &mut self,
+            input: &mut impl Read,
             deadline: Option<Instant>,
             size_limit: Option<usize>,
             outret: &mut Option<Vec<u8>>,
             errret: &mut Option<Vec<u8>>,
         ) -> io::Result<()> {
-            // Note: size_limit enforcement is approximate on Windows when capturing both stdout
-            // and stderr. On Unix, poll() signals readiness and we control how much to read. On
-            // Windows, completion-based I/O means data is already in our buffer when we find out
-            // about it. If both streams complete simultaneously, each may contribute a full
-            // buffer before we can enforce the limit. We tried tracking partially-consumed
-            // buffers to enforce strict limits, but the complexity wasn't worth it for a feature
-            // whose intent is "don't read megabytes when I asked for kilobytes". The overshoot
-            // is bounded by ~2x BUFFER_SIZE.
+            // Note: size_limit enforcement is approximate on Windows when capturing both
+            // stdout and stderr. On Unix, poll() signals readiness and we control how
+            // much to read. On Windows, completion-based I/O means data is already in our
+            // buffer when we find out about it. If both streams complete simultaneously,
+            // each may contribute a full buffer before we can enforce the limit. We tried
+            // tracking partially-consumed buffers to enforce strict limits, but the
+            // complexity wasn't worth it for a feature whose intent is "don't read
+            // megabytes when I asked for kilobytes". The overshoot is bounded by ~2x
+            // BUFFER_SIZE.
 
             let outvec = if self.stdout.is_some() {
                 outret.insert(vec![])
@@ -331,8 +338,13 @@ mod win32 {
                 if let Some(ref stdin) = self.stdin
                     && self.stdin_pending.is_none()
                 {
-                    let remaining = &self.input_data.as_ref()[self.input_start..];
-                    in_ready = start_write(stdin, &mut self.stdin_pending, remaining)?;
+                    let mut buf = [0u8; BUFFER_SIZE];
+                    let nread = input.read(&mut buf)?;
+                    if nread == 0 {
+                        self.stdin.take();
+                    } else {
+                        in_ready = start_write(stdin, &mut self.stdin_pending, &buf[..nread])?;
+                    }
                 }
                 let read_size = size_limit
                     .map(|l| l.saturating_sub(total))
@@ -365,10 +377,9 @@ mod win32 {
 
                 // Complete operations and process data
                 if in_ready {
-                    let nwritten = self.stdin_pending.take().unwrap().complete()? as usize;
-                    self.input_start += nwritten;
-                    if self.input_start >= self.input_data.as_ref().len() {
-                        // close stdin when done writing, so the child receives EOF
+                    let nwritten = self.stdin_pending.take().unwrap().complete()?;
+                    if nwritten == 0 {
+                        // Broken pipe - the child closed its stdin.
                         self.stdin.take();
                     }
                 }
@@ -405,7 +416,9 @@ use win32::RawCommunicator;
 /// [`read_string`]: #method.read_string
 #[must_use]
 pub struct Communicator {
-    inner: RawCommunicator<InputData>,
+    inner: RawCommunicator,
+    input_data: InputData,
+    input_start: usize,
     size_limit: Option<usize>,
     time_limit: Option<Duration>,
 }
@@ -427,7 +440,9 @@ impl Communicator {
         input_data: InputData,
     ) -> Communicator {
         Communicator {
-            inner: RawCommunicator::new(stdin, stdout, stderr, input_data),
+            inner: RawCommunicator::new(stdin, stdout, stderr),
+            input_data,
+            input_start: 0,
             size_limit: None,
             time_limit: None,
         }
@@ -469,9 +484,16 @@ impl Communicator {
         let mut outvec = None;
         let mut errvec = None;
 
-        let result = self
-            .inner
-            .read(deadline, self.size_limit, &mut outvec, &mut errvec);
+        let input_bytes = self.input_data.as_ref();
+        let mut remaining: &[u8] = &input_bytes[self.input_start..];
+        let result = self.inner.read(
+            &mut remaining,
+            deadline,
+            self.size_limit,
+            &mut outvec,
+            &mut errvec,
+        );
+        self.input_start = input_bytes.len() - remaining.len();
 
         let mut flush = Ok(());
         if let Some(out) = outvec

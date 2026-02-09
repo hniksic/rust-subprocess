@@ -144,6 +144,10 @@ impl Pipeline {
     ///   without copying. Use this for zero-copy feeding of types like `bytes::Bytes`,
     ///   `memmap2::Mmap`, or other owned byte containers.
     ///
+    /// If the child exits before consuming all input, the `BrokenPipe` error is
+    /// silently ignored. Use the exit status and output to check if the child
+    /// processed the input correctly.
+    ///
     /// [`Redirection`]: enum.Redirection.html
     /// [`InputData`]: struct.InputData.html
     pub fn stdin(mut self, stdin: impl InputRedirection) -> Pipeline {

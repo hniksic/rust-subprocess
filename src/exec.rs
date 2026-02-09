@@ -318,6 +318,10 @@ impl Exec {
     /// and byte literals). For non-static data, convert to `Vec<u8>` or use
     /// [`InputData::new`].
     ///
+    /// If the child exits before consuming all input, the `BrokenPipe` error is
+    /// silently ignored. Use the exit status and output to check if the child
+    /// processed the input correctly.
+    ///
     /// [`Redirection`]: enum.Redirection.html
     /// [`InputData`]: struct.InputData.html
     pub fn stdin(mut self, stdin: impl InputRedirection) -> Exec {

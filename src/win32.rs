@@ -400,6 +400,11 @@ pub fn WriteFileOverlapped(handle: RawHandle, data: &[u8]) -> Result<PendingWrit
         let err = Error::last_os_error();
         if err.raw_os_error() == Some(ERROR_IO_PENDING as i32) {
             // Already set to Pending
+        } else if err.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) {
+            // The read end of the pipe was closed - treat as
+            // immediate completion with 0 bytes, matching the async
+            // path in get_overlapped_result().
+            pending.state = PendingState::Completed(0);
         } else {
             return Err(err);
         }
