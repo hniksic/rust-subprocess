@@ -37,7 +37,7 @@ impl Job {
     /// The communicator takes ownership of `stdin`, `stdout`, and `stderr`, leaving them
     /// as `None`. Only streams that were redirected to a pipe will be available to the
     /// communicator.
-    pub fn communicate(&mut self) -> Communicator {
+    pub fn communicate(&mut self) -> io::Result<Communicator> {
         Communicator::new(
             self.stdin.take(),
             self.stdout.take(),
@@ -142,7 +142,7 @@ impl Job {
     /// Closes the pipe ends, waits for all processes to finish, and returns the exit
     /// status of the last process.
     pub fn join(mut self) -> io::Result<ExitStatus> {
-        self.communicate().read()?;
+        self.communicate()?.read()?;
         let status = self.wait()?;
         if self.check_success && !status.success() {
             return Err(io::Error::other(format!("command failed: {status}")));
@@ -156,7 +156,7 @@ impl Job {
     /// within the given duration.
     pub fn join_timeout(mut self, timeout: Duration) -> io::Result<ExitStatus> {
         let deadline = Instant::now() + timeout;
-        self.communicate().limit_time(timeout).read()?;
+        self.communicate()?.limit_time(timeout).read()?;
         let status = self
             .wait_timeout(deadline.saturating_duration_since(Instant::now()))?
             .ok_or_else(|| io::Error::from(ErrorKind::TimedOut))?;
@@ -171,7 +171,7 @@ impl Job {
     /// Only streams that were redirected to a pipe will produce data; non-piped streams
     /// will result in empty bytes in `Capture`.
     pub fn capture(mut self) -> io::Result<Capture> {
-        let mut comm = self.communicate();
+        let mut comm = self.communicate()?;
         let (stdout, stderr) = comm.read()?;
         let capture = Capture {
             stdout,
@@ -193,7 +193,7 @@ impl Job {
     /// within the given duration.
     pub fn capture_timeout(mut self, timeout: Duration) -> io::Result<Capture> {
         let deadline = Instant::now() + timeout;
-        let mut comm = self.communicate().limit_time(timeout);
+        let mut comm = self.communicate()?.limit_time(timeout);
         let (stdout, stderr) = comm.read()?;
         let exit_status = self
             .wait_timeout(deadline.saturating_duration_since(Instant::now()))?

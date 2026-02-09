@@ -181,7 +181,7 @@ fn merge_err_to_out_pipe() {
         .stderr(Redirection::Merge)
         .start()
         .unwrap();
-    let (out, err) = handle.communicate().read().unwrap();
+    let (out, err) = handle.communicate().unwrap().read().unwrap();
     assert_eq!(out, b"foo\nbar\n");
     assert!(err.is_empty());
     assert!(handle.wait().unwrap().success());
@@ -195,7 +195,7 @@ fn merge_out_to_err_pipe() {
         .stderr(Redirection::Pipe)
         .start()
         .unwrap();
-    let (out, err) = handle.communicate().read().unwrap();
+    let (out, err) = handle.communicate().unwrap().read().unwrap();
     assert!(out.is_empty());
     assert_eq!(err, b"foo\nbar\n");
     assert!(handle.wait().unwrap().success());
@@ -598,7 +598,7 @@ fn pipeline_start_communicate_needs_explicit_pipes() {
         .stdout(Redirection::Pipe)
         .start()
         .unwrap();
-    let mut comm = handle.communicate();
+    let mut comm = handle.communicate().unwrap();
     let (stdout, stderr) = comm.read().unwrap();
     assert_eq!(String::from_utf8_lossy(&stdout).trim(), "foo");
     assert_eq!(stderr, b"");

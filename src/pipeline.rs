@@ -472,7 +472,7 @@ impl Pipeline {
         if matches!(*self.stderr, Redirection::None) {
             self = self.stderr_all(Redirection::Pipe);
         }
-        Ok(self.start()?.communicate())
+        self.start()?.communicate()
     }
 
     /// Starts the pipeline, collects its standard output and error, and waits for all

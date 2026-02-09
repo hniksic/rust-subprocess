@@ -26,6 +26,18 @@ fn check_err<T: Ord + Default>(num: T) -> Result<T> {
     Ok(num)
 }
 
+pub fn set_nonblocking(f: &File) -> Result<()> {
+    unsafe {
+        let flags = check_err(libc::fcntl(f.as_raw_fd(), libc::F_GETFL))?;
+        check_err(libc::fcntl(
+            f.as_raw_fd(),
+            libc::F_SETFL,
+            flags | libc::O_NONBLOCK,
+        ))?;
+    }
+    Ok(())
+}
+
 pub fn pipe() -> Result<(File, File)> {
     let mut fds = [0 as c_int; 2];
     check_err(unsafe { libc::pipe(fds.as_mut_ptr()) })?;

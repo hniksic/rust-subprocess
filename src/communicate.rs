@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 mod posix {
     use crate::posix;
-    use std::collections::VecDeque;
     use std::fs::File;
     use std::io::{self, Read, Write};
     use std::time::Instant;
@@ -26,18 +25,18 @@ mod posix {
         ferr: Option<&File>,
         deadline: Option<Instant>,
     ) -> io::Result<(bool, bool, bool)> {
-        // Polling is needed to prevent deadlock when interacting with multiple streams,
-        // and for timeout.  If we're interacting with a single stream without timeout, we
-        // can skip the actual poll() syscall and just tell the caller to go ahead with
-        // reading/writing.
-        if deadline.is_none() {
-            match (&fin, &fout, &ferr) {
-                (None, None, Some(..)) => return Ok((false, false, true)),
-                (None, Some(..), None) => return Ok((false, true, false)),
-                (Some(..), None, None) => return Ok((true, false, false)),
-                _ => (),
+        // When reading from a single stream without a timeout, we can skip the poll()
+        // syscall and just let the blocking read provide backpressure. This doesn't apply
+        // to stdin because it's non-blocking, so a write without poll would busy-loop on
+        // WouldBlock.
+        if fin.is_none() && deadline.is_none() {
+            match (fout, ferr) {
+                (Some(..), None) => return Ok((false, true, false)),
+                (None, Some(..)) => return Ok((false, false, true)),
+                _ => {}
             }
         }
+
         let timeout = deadline.map(|d| d.saturating_duration_since(Instant::now()));
 
         let mut fds = [
@@ -59,7 +58,8 @@ mod posix {
         stdin: Option<File>,
         stdout: Option<File>,
         stderr: Option<File>,
-        write_buf: VecDeque<u8>,
+        write_buf: Vec<u8>,
+        write_pos: usize,
     }
 
     impl RawCommunicator {
@@ -67,13 +67,22 @@ mod posix {
             stdin: Option<File>,
             stdout: Option<File>,
             stderr: Option<File>,
-        ) -> RawCommunicator {
-            RawCommunicator {
+        ) -> io::Result<RawCommunicator> {
+            // Stdin must be non-blocking despite using poll(). poll() only tells us
+            // *some* pipe space is free, not how much. With a blocking fd, write() of
+            // more than PIPE_BUF bytes blocks until all data is written, which deadlocks
+            // when the child's stdout pipe is also full. A non-blocking fd returns a
+            // partial write count, allowing the poll loop to make progress.
+            if let Some(ref f) = stdin {
+                posix::set_nonblocking(f)?;
+            }
+            Ok(RawCommunicator {
                 stdin,
                 stdout,
                 stderr,
-                write_buf: VecDeque::new(),
-            }
+                write_buf: Vec::new(),
+                write_pos: 0,
+            })
         }
 
         fn do_read(
@@ -100,6 +109,46 @@ mod posix {
             Ok(n)
         }
 
+        fn do_write(
+            stdin: &mut Option<File>,
+            write_buf: &mut Vec<u8>,
+            write_pos: &mut usize,
+            input: &mut impl Read,
+        ) -> io::Result<()> {
+            const INPUT_BUF_SIZE: usize = 64 * 1024;
+            if *write_pos >= write_buf.len() {
+                write_buf.resize(INPUT_BUF_SIZE, 0);
+                let nread = match input.read(write_buf.as_mut_slice()) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        write_buf.clear();
+                        *write_pos = 0;
+                        return Err(e);
+                    }
+                };
+                write_buf.truncate(nread);
+                *write_pos = 0;
+            }
+            if write_buf.is_empty() {
+                // close stdin when done writing, so the child receives EOF
+                stdin.take();
+            } else {
+                match stdin.as_ref().unwrap().write(&write_buf[*write_pos..]) {
+                    Ok(nwritten) => {
+                        *write_pos += nwritten;
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                        write_buf.clear();
+                        *write_pos = 0;
+                        stdin.take();
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok(())
+        }
+
         pub fn read(
             &mut self,
             input: &mut impl Read,
@@ -108,8 +157,6 @@ mod posix {
             out_sink: &mut impl Write,
             err_sink: &mut impl Write,
         ) -> io::Result<()> {
-            const INPUT_BUF_SIZE: usize = 64 * 1024;
-
             let mut stdout_live = self.stdout.as_ref();
             let mut stderr_live = self.stderr.as_ref();
             let mut total_written: usize = 0;
@@ -132,34 +179,12 @@ mod posix {
                     return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout"));
                 }
                 if in_ready {
-                    if self.write_buf.is_empty() {
-                        // Reset head to 0 so resize() fills contiguously,
-                        // avoiding an O(n) rotation in make_contiguous().
-                        self.write_buf.clear();
-                        self.write_buf.resize(INPUT_BUF_SIZE, 0);
-                        let buf = self.write_buf.make_contiguous();
-                        let nread = input.read(buf)?;
-                        self.write_buf.truncate(nread);
-                    }
-                    if self.write_buf.is_empty() {
-                        // close stdin when done writing, so the child receives EOF
-                        self.stdin.take();
-                    } else {
-                        // Chunk size for writing must be at most PIPE_BUF to
-                        // avoid blocking despite poll() reporting readiness.
-                        let (front, _) = self.write_buf.as_slices();
-                        let chunk = &front[..front.len().min(libc::PIPE_BUF)];
-                        match self.stdin.as_ref().unwrap().write(chunk) {
-                            Ok(nwritten) => {
-                                self.write_buf.drain(..nwritten);
-                            }
-                            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
-                                self.write_buf.clear();
-                                self.stdin.take();
-                            }
-                            Err(e) => return Err(e),
-                        }
-                    }
+                    Self::do_write(
+                        &mut self.stdin,
+                        &mut self.write_buf,
+                        &mut self.write_pos,
+                        input,
+                    )?;
                 }
                 if out_ready {
                     total_written +=
@@ -274,15 +299,15 @@ mod win32 {
             stdin: Option<File>,
             stdout: Option<File>,
             stderr: Option<File>,
-        ) -> RawCommunicator {
-            RawCommunicator {
+        ) -> io::Result<RawCommunicator> {
+            Ok(RawCommunicator {
                 stdin,
                 stdout,
                 stderr,
                 stdin_pending: None,
                 stdout_pending: None,
                 stderr_pending: None,
-            }
+            })
         }
 
         pub fn read(
@@ -436,13 +461,13 @@ impl Communicator {
         stdout: Option<File>,
         stderr: Option<File>,
         input_data: InputData,
-    ) -> Communicator {
-        Communicator {
-            inner: RawCommunicator::new(stdin, stdout, stderr),
+    ) -> io::Result<Communicator> {
+        Ok(Communicator {
+            inner: RawCommunicator::new(stdin, stdout, stderr)?,
             input_data,
             size_limit: None,
             time_limit: None,
-        }
+        })
     }
 
     /// Communicate with the subprocess, writing captured data to the provided writers.

@@ -12,7 +12,7 @@ fn main() -> std::io::Result<()> {
         .stdout(Redirection::Pipe)
         .start()?;
 
-    let (stdout, _stderr) = handle.communicate().read()?;
+    let (stdout, _stderr) = handle.communicate()?.read()?;
     println!("cat said: {}", String::from_utf8_lossy(&stdout));
     handle.wait()?;
 
@@ -24,7 +24,7 @@ fn main() -> std::io::Result<()> {
         .start()?;
 
     let result = handle
-        .communicate()
+        .communicate()?
         .limit_time(Duration::from_secs(5))
         .read();
 
@@ -39,7 +39,7 @@ fn main() -> std::io::Result<()> {
     let mut handle = Exec::cmd("yes").stdout(Redirection::Pipe).start()?;
 
     let result = handle
-        .communicate()
+        .communicate()?
         .limit_size(100) // Only read first 100 bytes
         .read();
 

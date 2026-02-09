@@ -486,7 +486,7 @@ impl Exec {
         if matches!(*self.stderr_redirect, Redirection::None) {
             self = self.stderr(Redirection::Pipe);
         }
-        Ok(self.start()?.communicate())
+        self.start()?.communicate()
     }
 
     /// Starts the process, collects its output, and waits for it to finish.
