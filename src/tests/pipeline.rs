@@ -1,5 +1,6 @@
 use std::fs::{self, File};
 use std::io::{self, ErrorKind, prelude::*};
+use std::time::Duration;
 
 use tempfile::TempDir;
 
@@ -378,6 +379,119 @@ fn pipeline_single_command_with_stdin_data() {
 fn pipeline_default() {
     let c = Pipeline::default().capture().unwrap();
     assert!(c.success());
+}
+
+#[test]
+fn pipeline_empty_start() {
+    let job = Pipeline::new().start().unwrap();
+    assert!(job.processes.is_empty());
+    assert!(job.stdin.is_none());
+    assert!(job.stdout.is_none());
+    assert!(job.stderr.is_none());
+}
+
+#[test]
+fn pipeline_empty_pids() {
+    let job = Pipeline::new().start().unwrap();
+    assert!(job.pids().is_empty());
+}
+
+#[test]
+#[should_panic]
+fn pipeline_empty_pid_panics() {
+    let job = Pipeline::new().start().unwrap();
+    job.pid();
+}
+
+#[test]
+fn pipeline_empty_wait() {
+    let job = Pipeline::new().start().unwrap();
+    let status = job.wait().unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn pipeline_empty_wait_timeout() {
+    let job = Pipeline::new().start().unwrap();
+    let status = job.wait_timeout(Duration::from_secs(1)).unwrap();
+    assert!(status.unwrap().success());
+}
+
+#[test]
+fn pipeline_empty_poll() {
+    let job = Pipeline::new().start().unwrap();
+    assert!(job.poll().unwrap().success());
+}
+
+#[test]
+fn pipeline_empty_terminate() {
+    let job = Pipeline::new().start().unwrap();
+    job.terminate().unwrap();
+}
+
+#[test]
+fn pipeline_empty_kill() {
+    let job = Pipeline::new().start().unwrap();
+    job.kill().unwrap();
+}
+
+#[test]
+fn pipeline_empty_detach() {
+    let job = Pipeline::new().start().unwrap();
+    job.detach();
+}
+
+#[test]
+fn pipeline_empty_job_join() {
+    let job = Pipeline::new().start().unwrap();
+    let status = job.join().unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn pipeline_empty_job_join_timeout() {
+    let job = Pipeline::new().start().unwrap();
+    let status = job.join_timeout(Duration::from_secs(1)).unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn pipeline_empty_job_capture() {
+    let job = Pipeline::new().start().unwrap();
+    let c = job.capture().unwrap();
+    assert!(c.success());
+    assert_eq!(c.stdout_str(), "");
+    assert_eq!(c.stderr_str(), "");
+}
+
+#[test]
+fn pipeline_empty_job_capture_timeout() {
+    let job = Pipeline::new().start().unwrap();
+    let c = job.capture_timeout(Duration::from_secs(1)).unwrap();
+    assert!(c.success());
+    assert_eq!(c.stdout_str(), "");
+    assert_eq!(c.stderr_str(), "");
+}
+
+#[test]
+fn pipeline_empty_communicate() {
+    let mut comm = Pipeline::new().communicate().unwrap();
+    let (stdout, stderr) = comm.read().unwrap();
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+}
+
+#[test]
+fn pipeline_empty_checked_join() {
+    // Empty pipeline returns success, so checked doesn't trigger an error.
+    Pipeline::new().checked().join().unwrap();
+}
+
+#[test]
+fn pipeline_empty_checked_capture() {
+    let c = Pipeline::new().checked().capture().unwrap();
+    assert!(c.success());
+    assert_eq!(c.stdout_str(), "");
 }
 
 #[test]

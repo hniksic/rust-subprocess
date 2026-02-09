@@ -10,6 +10,8 @@ use crate::process::{ExitStatus, Process};
 /// Interface to a started process or pipeline.
 ///
 /// Created by [`Exec::start`] or [`Pipeline::start`].
+///
+/// When dropped, waits for all processes to finish unless [`detached`](Self::detach).
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct Job {
@@ -59,6 +61,9 @@ impl Job {
     }
 
     /// Waits for all processes to finish and returns the last process's exit status.
+    ///
+    /// If no processes have been started (empty pipeline), returns a successful exit
+    /// status.
     ///
     /// Unlike [`join`](Self::join), this does not consume `self`, does not close the pipe
     /// ends, and ignores `check_success`.
@@ -115,9 +120,10 @@ impl Job {
     /// Poll all processes for completion without blocking.
     ///
     /// Returns `Some(exit_status)` of the last process if all processes have finished, or
-    /// `None` if any process is still running.
+    /// `None` if any process is still running. If no processes have been started (empty
+    /// pipeline), returns `Some` with a successful exit status.
     pub fn poll(&self) -> Option<ExitStatus> {
-        let mut status = None;
+        let mut status = Some(ExitStatus::from_raw(0));
         for p in &self.processes {
             status = Some(p.poll()?);
         }

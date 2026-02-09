@@ -6,7 +6,7 @@
 //!
 //! Compared to `std::process`, the crate provides these additional features:
 //!
-//! * The *capture* and *communicate* [family of methods](Exec::communicate) for
+//! * The *capture* and *communicate* [family of methods](Job::capture) for
 //!   deadlock-free capturing of subprocess output/error, while simultaneously feeding
 //!   data to its standard input.  Capturing supports optional timeout and read size
 //!   limit.
