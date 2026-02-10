@@ -26,8 +26,8 @@ use crate::process::ExitStatus;
 use crate::process::Process;
 
 use crate::exec::{
-    Capture, Exec, InputData, InputRedirection, InputRedirectionKind, OutputRedirection,
-    ReadAdapter, ReadErrAdapter, WriteAdapter,
+    Capture, Exec, FromSink, FromSource, InputData, InputRedirection, ReadAdapter,
+    ReadErrAdapter, WriteAdapter,
 };
 use crate::job::Job;
 
@@ -130,10 +130,10 @@ impl Pipeline {
         self
     }
 
-    /// Specifies how to set up the standard input of the first command in
+    /// Specifies the source for the standard input of the first command in
     /// the pipeline.
     ///
-    /// Argument can be:
+    /// The source can be:
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
@@ -152,13 +152,16 @@ impl Pipeline {
     ///
     /// [`Redirection`]: enum.Redirection.html
     /// [`InputData`]: struct.InputData.html
-    pub fn stdin(mut self, stdin: impl InputRedirection) -> Pipeline {
-        match stdin.into_input_redirection() {
-            InputRedirectionKind::AsRedirection(r) => {
+    pub fn stdin<T>(mut self, stdin: T) -> Pipeline
+    where
+        InputRedirection: FromSource<T>,
+    {
+        match InputRedirection::from_source(stdin) {
+            InputRedirection::Redirection(r) => {
                 self.stdin_redirect = Arc::new(r);
                 self.stdin_data = None;
             }
-            InputRedirectionKind::FeedData(data) => {
+            InputRedirection::Data(data) => {
                 self.stdin_redirect = Arc::new(Redirection::Pipe);
                 self.stdin_data = Some(data);
             }
@@ -166,20 +169,23 @@ impl Pipeline {
         self
     }
 
-    /// Specifies how to set up the standard output of the last command in the pipeline.
+    /// Specifies the sink for the standard output of the last command in the pipeline.
     ///
-    /// Argument can be:
+    /// The sink can be:
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`.
     ///
     /// [`Redirection`]: enum.Redirection.html
-    pub fn stdout(mut self, stdout: impl OutputRedirection) -> Pipeline {
-        self.stdout = Arc::new(stdout.into_output_redirection());
+    pub fn stdout<T>(mut self, stdout: T) -> Pipeline
+    where
+        Redirection: FromSink<T>,
+    {
+        self.stdout = Arc::new(Redirection::from_sink(stdout));
         self
     }
 
-    /// Specifies how to set up the standard error of all commands in the pipeline.
+    /// Specifies the sink for the standard error of all commands in the pipeline.
     ///
     /// Unlike `stdout()`, which only affects the last command in the pipeline, this
     /// affects all commands.  The difference is because standard output is piped from one
@@ -187,7 +193,7 @@ impl Pipeline {
     /// contrast, the standard errors are not connected to each other and can be
     /// configured *en masse*.
     ///
-    /// Argument can be:
+    /// The sink can be:
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`.
@@ -210,8 +216,11 @@ impl Pipeline {
     /// will be available via [`Job::stderr`].
     ///
     /// [`Redirection`]: enum.Redirection.html
-    pub fn stderr_all(mut self, stderr: impl OutputRedirection) -> Pipeline {
-        self.stderr = Arc::new(stderr.into_output_redirection());
+    pub fn stderr_all<T>(mut self, stderr: T) -> Pipeline
+    where
+        Redirection: FromSink<T>,
+    {
+        self.stderr = Arc::new(Redirection::from_sink(stderr));
         self
     }
 

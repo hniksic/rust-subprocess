@@ -297,9 +297,9 @@ impl Exec {
         self
     }
 
-    /// Specifies how to set up the standard input of the child process.
+    /// Specifies the source for the standard input of the child process.
     ///
-    /// Argument can be:
+    /// The source can be:
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
@@ -318,13 +318,16 @@ impl Exec {
     ///
     /// [`Redirection`]: enum.Redirection.html
     /// [`InputData`]: struct.InputData.html
-    pub fn stdin(mut self, stdin: impl InputRedirection) -> Exec {
-        match stdin.into_input_redirection() {
-            InputRedirectionKind::AsRedirection(new) => {
+    pub fn stdin<T>(mut self, stdin: T) -> Exec
+    where
+        InputRedirection: FromSource<T>,
+    {
+        match InputRedirection::from_source(stdin) {
+            InputRedirection::Redirection(new) => {
                 self.stdin_redirect = Arc::new(new);
                 self.stdin_data = None;
             }
-            InputRedirectionKind::FeedData(data) => {
+            InputRedirection::Data(data) => {
                 self.stdin_redirect = Arc::new(Redirection::Pipe);
                 self.stdin_data = Some(data);
             }
@@ -332,29 +335,35 @@ impl Exec {
         self
     }
 
-    /// Specifies how to set up the standard output of the child process.
+    /// Specifies the sink for the standard output of the child process.
     ///
-    /// Argument can be:
+    /// The sink can be:
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`.
     ///
     /// [`Redirection`]: enum.Redirection.html
-    pub fn stdout(mut self, stdout: impl OutputRedirection) -> Exec {
-        self.stdout_redirect = Arc::new(stdout.into_output_redirection());
+    pub fn stdout<T>(mut self, stdout: T) -> Exec
+    where
+        Redirection: FromSink<T>,
+    {
+        self.stdout_redirect = Arc::new(Redirection::from_sink(stdout));
         self
     }
 
-    /// Specifies how to set up the standard error of the child process.
+    /// Specifies the sink for the standard error of the child process.
     ///
-    /// Argument can be:
+    /// The sink can be:
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`.
     ///
     /// [`Redirection`]: enum.Redirection.html
-    pub fn stderr(mut self, stderr: impl OutputRedirection) -> Exec {
-        self.stderr_redirect = Arc::new(stderr.into_output_redirection());
+    pub fn stderr<T>(mut self, stderr: T) -> Exec
+    where
+        Redirection: FromSink<T>,
+    {
+        self.stderr_redirect = Arc::new(Redirection::from_sink(stderr));
         self
     }
 
@@ -682,112 +691,95 @@ impl fmt::Debug for InputData {
 }
 
 #[derive(Debug)]
-pub enum InputRedirectionKind {
-    AsRedirection(Redirection),
-    FeedData(InputData),
+pub enum InputRedirection {
+    Redirection(Redirection),
+    Data(InputData),
 }
 
-mod sealed {
-    pub trait InputRedirectionSealed {}
-    pub trait OutputRedirectionSealed {}
-}
-
-/// Trait for types that can be used to redirect standard input.
+/// Trait for converting a source type into an input redirection.
 ///
-/// This is a sealed trait that cannot be implemented outside this crate.
-#[allow(private_interfaces)]
-pub trait InputRedirection: sealed::InputRedirectionSealed {
-    /// Convert to internal representation.
-    #[doc(hidden)]
-    fn into_input_redirection(self) -> InputRedirectionKind;
+/// Implemented on [`InputRedirection`] for each type accepted by
+/// [`Exec::stdin`] and [`Pipeline::stdin`](crate::Pipeline::stdin).
+pub trait FromSource<T> {
+    /// Create the input redirection from the given source.
+    fn from_source(source: T) -> Self;
 }
 
-/// Trait for types that can be used to redirect standard output or standard error.
+/// Trait for converting a sink type into an output redirection.
 ///
-/// This is a sealed trait that cannot be implemented outside this crate.
-pub trait OutputRedirection: sealed::OutputRedirectionSealed {
-    /// Convert to internal representation.
-    #[doc(hidden)]
-    fn into_output_redirection(self) -> Redirection;
+/// Implemented on [`Redirection`] for each type accepted by
+/// [`Exec::stdout`], [`Exec::stderr`], and their `Pipeline` equivalents.
+pub trait FromSink<T> {
+    /// Create the output redirection from the given sink.
+    fn from_sink(sink: T) -> Self;
 }
 
-impl sealed::InputRedirectionSealed for Redirection {}
-impl InputRedirection for Redirection {
-    fn into_input_redirection(self) -> InputRedirectionKind {
-        if let Redirection::Merge = self {
+impl FromSource<Redirection> for InputRedirection {
+    fn from_source(source: Redirection) -> Self {
+        if let Redirection::Merge = source {
             panic!("Redirection::Merge is only allowed for output streams");
         }
-        InputRedirectionKind::AsRedirection(self)
+        InputRedirection::Redirection(source)
     }
 }
 
-impl sealed::InputRedirectionSealed for File {}
-impl InputRedirection for File {
-    fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::AsRedirection(Redirection::File(self))
+impl FromSource<File> for InputRedirection {
+    fn from_source(source: File) -> Self {
+        InputRedirection::Redirection(Redirection::File(source))
     }
 }
 
-impl sealed::InputRedirectionSealed for InputData {}
-impl InputRedirection for InputData {
-    fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(self)
+impl FromSource<InputData> for InputRedirection {
+    fn from_source(source: InputData) -> Self {
+        InputRedirection::Data(source)
     }
 }
 
-impl sealed::InputRedirectionSealed for Vec<u8> {}
-impl InputRedirection for Vec<u8> {
-    fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(InputData::from_bytes(self))
+impl FromSource<Vec<u8>> for InputRedirection {
+    fn from_source(source: Vec<u8>) -> Self {
+        InputRedirection::Data(InputData::from_bytes(source))
     }
 }
 
-impl sealed::InputRedirectionSealed for &'static str {}
-impl InputRedirection for &'static str {
-    fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(InputData::from_bytes(self))
+impl FromSource<&'static str> for InputRedirection {
+    fn from_source(source: &'static str) -> Self {
+        InputRedirection::Data(InputData::from_bytes(source))
     }
 }
 
-impl sealed::InputRedirectionSealed for &'static [u8] {}
-impl InputRedirection for &'static [u8] {
-    fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(InputData::from_bytes(self))
+impl FromSource<&'static [u8]> for InputRedirection {
+    fn from_source(source: &'static [u8]) -> Self {
+        InputRedirection::Data(InputData::from_bytes(source))
     }
 }
 
-impl<const N: usize> sealed::InputRedirectionSealed for &'static [u8; N] {}
-impl<const N: usize> InputRedirection for &'static [u8; N] {
-    fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(InputData::from_bytes(self))
+impl<const N: usize> FromSource<&'static [u8; N]> for InputRedirection {
+    fn from_source(source: &'static [u8; N]) -> Self {
+        InputRedirection::Data(InputData::from_bytes(source))
     }
 }
 
-impl<const N: usize> sealed::InputRedirectionSealed for [u8; N] {}
-impl<const N: usize> InputRedirection for [u8; N] {
-    fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(InputData::from_bytes(self))
+impl<const N: usize> FromSource<[u8; N]> for InputRedirection {
+    fn from_source(source: [u8; N]) -> Self {
+        InputRedirection::Data(InputData::from_bytes(source))
     }
 }
 
-impl sealed::InputRedirectionSealed for Box<[u8]> {}
-impl InputRedirection for Box<[u8]> {
-    fn into_input_redirection(self) -> InputRedirectionKind {
-        InputRedirectionKind::FeedData(InputData::from_bytes(self))
+impl FromSource<Box<[u8]>> for InputRedirection {
+    fn from_source(source: Box<[u8]>) -> Self {
+        InputRedirection::Data(InputData::from_bytes(source))
     }
 }
 
-impl sealed::OutputRedirectionSealed for Redirection {}
-impl OutputRedirection for Redirection {
-    fn into_output_redirection(self) -> Redirection {
-        self
+impl FromSink<Redirection> for Redirection {
+    fn from_sink(sink: Redirection) -> Self {
+        sink
     }
 }
 
-impl sealed::OutputRedirectionSealed for File {}
-impl OutputRedirection for File {
-    fn into_output_redirection(self) -> Redirection {
-        Redirection::File(self)
+impl FromSink<File> for Redirection {
+    fn from_sink(sink: File) -> Self {
+        Redirection::File(sink)
     }
 }
 
