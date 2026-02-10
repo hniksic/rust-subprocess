@@ -12,7 +12,7 @@ Execution of child processes and pipelines, originally inspired by Python's subp
 """
 edition = "2024"
 
-[dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2.78"
 
 [target.'cfg(windows)'.dependencies]
