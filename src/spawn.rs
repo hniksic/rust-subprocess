@@ -139,11 +139,8 @@ fn reuse_stream(
 // Set up streams for the child process. Returns (parent_ends, child_ends).
 //
 // Child ends use Arc<Redirection> (always the File variant internally) so that Merge
-// (e.g. 2>&1) can share an fd between stdout and stderr without a dup syscall -
-// reuse_stream just does Arc::clone. Dropping an Arc after dup2 in the child only
-// decrements the refcount rather than closing the fd, which is important when two
-// child_ends reference the same underlying file. For pipeline members that share a
-// Redirection::File via Arc, we also avoid dup by reusing the same Arc directly.
+// (e.g. 2>&1) can share an fd between stdout and stderr - reuse_stream just does
+// Arc::clone.
 fn setup_streams(
     stdin: Arc<Redirection>,
     stdout: Arc<Redirection>,
@@ -258,7 +255,7 @@ pub(crate) mod os {
     use std::ffi::OsString;
     use std::fs::File;
     use std::io::{self, Read, Write};
-    use std::os::unix::io::AsRawFd;
+    use std::os::fd::{AsRawFd, FromRawFd};
 
     pub use crate::posix::make_redirection_to_standard_stream;
 
@@ -359,7 +356,29 @@ pub(crate) mod os {
         {
             posix::dup2(child_file(r).as_raw_fd(), target_fd)?;
         }
+        if let Some(end) = end {
+            prevent_dealloc(end);
+        }
         Ok(())
+    }
+
+    // Prevent deallocation of Arc while still closing the underlying resource if
+    // necessary. Needed because this runs after fork() - see prep_exec().
+    //
+    // Note that this never closes system streams returned by
+    // get_redirection_to_standard_stream() because it returns "leaked" Arcs which are
+    // immortal.
+    fn prevent_dealloc(r: Arc<Redirection>) {
+        // If Arc<Redirection> we received is the last one, manually close the File
+        // inside.
+        if Arc::strong_count(&r) == 1
+            && let Redirection::File(f) = &*r
+        {
+            // SAFETY: strong_count == 1 guarantees no other Arc clone will access or
+            // close the fd. std::mem::forget() prevents double-close.
+            let _ = unsafe { File::from_raw_fd(f.as_raw_fd()) };
+        };
+        std::mem::forget(r);
     }
 
     fn do_exec(
