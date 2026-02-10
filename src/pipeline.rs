@@ -442,7 +442,7 @@ impl Pipeline {
     /// This will automatically set up `stdin(Redirection::Pipe)`, so it is not necessary
     /// to do that beforehand.
     ///
-    /// When the trait object is dropped, it will wait for the process to finish.  If this
+    /// When the trait object is dropped, it will wait for the pipeline to finish.  If this
     /// is undesirable, use `detached()`.
     ///
     /// # Panics
@@ -456,10 +456,9 @@ impl Pipeline {
 
     /// Starts the pipeline and returns a `Communicator` handle.
     ///
-    /// Unless already configured, stdout and stderr are redirected to pipes so they
-    /// can be read from the communicator. If you need different redirection
-    /// (e.g. `stderr_all(Merge)`), set it up before calling this method and it will
-    /// be preserved.
+    /// Unless already configured, stdout and stderr are redirected to pipes.  If you
+    /// need different redirection (e.g. `stderr_all(Merge)`), set it up before
+    /// calling this method and it will be preserved.
     ///
     /// Compared to `capture()`, this offers more choice in how communication is
     /// performed, such as read size limit and timeout.  Unlike `capture()`, this
@@ -475,15 +474,17 @@ impl Pipeline {
         self.start()?.communicate()
     }
 
-    /// Starts the pipeline, collects its standard output and error, and waits for all
-    /// commands to finish.
+    /// Starts the pipeline, collects its output, and waits for it to finish.
+    ///
+    /// The return value provides the standard output and standard error as bytes or
+    /// optionally strings, as well as the exit status.
     ///
     /// Unless already configured, stdout and stderr are redirected to pipes so they
     /// can be captured. If you need different redirection (e.g. `stderr_all(Merge)`),
     /// set it up before calling this method and it will be preserved.
     ///
-    /// This method actually waits for the processes to finish, rather than simply
-    /// waiting for the output to close.  If this is undesirable, use `detached()`.
+    /// This method waits for the pipeline to finish, rather than simply waiting for
+    /// its standard streams to close.  If this is undesirable, use `detached()`.
     pub fn capture(mut self) -> io::Result<Capture> {
         if matches!(*self.stdout, Redirection::None) {
             self = self.stdout(Redirection::Pipe);

@@ -387,7 +387,7 @@ impl Exec {
         )
     }
 
-    /// Starts the process and returns a `Job` handle with the running process and its
+    /// Starts the process and returns a [`Job`] handle with the running process and its
     /// pipe ends.
     pub fn start(mut self) -> io::Result<Job> {
         let stdin_data = self.stdin_data.take().unwrap_or_default();
@@ -467,14 +467,13 @@ impl Exec {
 
     /// Starts the process and returns a `Communicator` handle.
     ///
-    /// Unless already configured, stdout and stderr are redirected to pipes. To only
-    /// communicate over specific streams, set them up explicitly and use `start()`.
+    /// Unless already configured, stdout and stderr are redirected to pipes. If you
+    /// need different redirection (e.g. `stderr(Merge)`), set it up before calling
+    /// this method and it will be preserved.
     ///
     /// Compared to `capture()`, this offers more choice in how communication is
-    /// performed, such as read size limit and timeout.
-    ///
-    /// Unlike `capture()`, this method doesn't wait for the process to finish,
-    /// effectively detaching it.
+    /// performed, such as read size limit and timeout. Unlike `capture()`, this
+    /// method doesn't wait for the process to finish, effectively detaching it.
     pub fn communicate(mut self) -> io::Result<Communicator> {
         self = self.detached();
         if matches!(*self.stdout_redirect, Redirection::None) {
@@ -491,15 +490,12 @@ impl Exec {
     /// The return value provides the standard output and standard error as bytes or
     /// optionally strings, as well as the exit status.
     ///
-    /// Unless already configured, stdout and stderr are redirected to pipes so they can
-    /// be captured. To only capture stdout, set it up explicitly and use `start()`:
+    /// Unless already configured, stdout and stderr are redirected to pipes so they
+    /// can be captured. If you need different redirection (e.g. `stderr(Merge)`),
+    /// set it up before calling this method and it will be preserved.
     ///
-    /// ```ignore
-    /// let c = Exec::cmd("foo").stdout(Redirection::Pipe).start()?.capture()?;
-    /// ```
-    ///
-    /// This method waits for the process to finish, rather than simply waiting for its
-    /// standard streams to close. If this is undesirable, use `detached()`.
+    /// This method waits for the process to finish, rather than simply waiting for
+    /// its standard streams to close. If this is undesirable, use `detached()`.
     pub fn capture(mut self) -> io::Result<Capture> {
         if matches!(*self.stdout_redirect, Redirection::None) {
             self = self.stdout(Redirection::Pipe);
