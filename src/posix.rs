@@ -38,9 +38,29 @@ pub fn set_nonblocking(f: &File) -> Result<()> {
     Ok(())
 }
 
+/// Create a pipe with both ends having `O_CLOEXEC` set.
+///
+/// Uses `pipe2(O_CLOEXEC)` where available to atomically set the flag, avoiding a race
+/// where another thread's fork()+exec() could inherit the fds between pipe() and
+/// fcntl(). Falls back to pipe()+fcntl() on platforms without pipe2.
+#[cfg(not(any(target_os = "aix", target_vendor = "apple", target_os = "haiku")))]
+pub fn pipe() -> Result<(File, File)> {
+    let mut fds = [0 as c_int; 2];
+    check_err(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) })?;
+    Ok(unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) })
+}
+
+#[cfg(any(target_os = "aix", target_vendor = "apple", target_os = "haiku"))]
 pub fn pipe() -> Result<(File, File)> {
     let mut fds = [0 as c_int; 2];
     check_err(unsafe { libc::pipe(fds.as_mut_ptr()) })?;
+    // Set CLOEXEC on both ends. There is a small race window between pipe() and fcntl()
+    // where another thread's fork()+exec() could inherit these fds - this matches what
+    // Rust stdlib does on these platforms that lack pipe2().
+    unsafe {
+        check_err(libc::fcntl(fds[0], libc::F_SETFD, libc::FD_CLOEXEC))?;
+        check_err(libc::fcntl(fds[1], libc::F_SETFD, libc::FD_CLOEXEC))?;
+    }
     Ok(unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) })
 }
 

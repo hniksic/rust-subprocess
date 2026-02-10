@@ -93,13 +93,14 @@ fn prepare_child_stream(
 }
 
 fn prepare_pipe(parent_writes: bool) -> io::Result<(File, Arc<Redirection>)> {
+    // Both ends are created with CLOEXEC. The child end survives exec because do_exec()
+    // dup2's it to fd 0/1/2, and dup2 clears CLOEXEC on the target fd.
     let (read, write) = os::make_pipe()?;
     let (parent_end, child_end) = if parent_writes {
         (write, read)
     } else {
         (read, write)
     };
-    os::set_inheritable(&parent_end, false)?;
     Ok((parent_end, Arc::new(Redirection::File(child_end))))
 }
 
@@ -294,9 +295,9 @@ pub(crate) mod os {
         cwd: Option<&OsStr>,
         os_options: OsOptions,
     ) -> io::Result<Process> {
+        // Both ends are created with CLOEXEC, so the read end auto-closes in the child on
+        // successful exec. The write end is kept open in the child to report exec errors.
         let mut exec_fail_pipe = posix::pipe()?;
-        set_inheritable(&exec_fail_pipe.0, false)?;
-        set_inheritable(&exec_fail_pipe.1, false)?;
 
         let child_env = env.map(format_env);
         let cmd_to_exec = executable.unwrap_or(&argv[0]);
@@ -395,17 +396,24 @@ pub(crate) mod os {
     }
 
     pub fn set_inheritable(f: &File, inheritable: bool) -> io::Result<()> {
-        if !inheritable {
-            let fd = f.as_raw_fd();
-            let old = posix::fcntl(fd, posix::F_GETFD, None)?;
-            posix::fcntl(fd, posix::F_SETFD, Some(old | posix::FD_CLOEXEC))?;
+        let fd = f.as_raw_fd();
+        let old = posix::fcntl(fd, posix::F_GETFD, None)?;
+        let new = if inheritable {
+            old & !posix::FD_CLOEXEC
+        } else {
+            old | posix::FD_CLOEXEC
+        };
+        if new != old {
+            posix::fcntl(fd, posix::F_SETFD, Some(new))?;
         }
         Ok(())
     }
 
     /// Create a pipe.
     ///
-    /// This is a safe wrapper over `libc::pipe`.
+    /// Child processes won't inherit these fds across exec. To pass a pipe end to a
+    /// child, dup2() it to a standard fd (which clears CLOEXEC), or call
+    /// `set_inheritable(f, true)`.
     pub fn make_pipe() -> io::Result<(File, File)> {
         posix::pipe()
     }
