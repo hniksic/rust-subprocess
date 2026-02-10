@@ -11,21 +11,21 @@ with [API documentation on docs.rs](https://docs.rs/subprocess/).
 The crate has minimal dependencies (only `libc` on Unix and `winapi` on Windows), and is
 tested on Linux, macOS, and Windows.
 
-If you're upgrading from version 0.2, see the [migration guide](MIGRATING.md).
+If you're upgrading from version 0.2, see the [migration guide](MIGRATION.md).
 
 ## Why subprocess?
 
 Compared to [`std::process`](https://doc.rust-lang.org/std/process/index.html), the crate
 provides additional features:
 
+* **OS-level pipelines** using the `|` operator: `Exec::cmd("find") | 
+  Exec::cmd("grep").arg(r"\.py$") | Exec::cmd("wc")`. There is no difference between
+  interacting with pipelines and with a single process.
+
 * **Capture and communicate** [family of
   methods](https://docs.rs/subprocess/latest/subprocess/struct.Job.html#method.capture)
   for deadlock-free capturing of subprocess output/error, while simultaneously feeding
   data to its standard input.  Capturing supports optional timeout and read size limit.
-
-* **OS-level pipelines** using the `|` operator: `Exec::cmd("find") | Exec::cmd("grep") |
-  Exec::cmd("wc")`. There is no difference between interacting with pipelines and with a
-  single process.
 
 * **Flexible redirection** options, such as connecting standard input to arbitrary data
   sources, and merging output streams like shell's `2>&1` and `1>&2` operators.
@@ -55,12 +55,17 @@ The API consists of two main components:
   [`capture()`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html#method.capture)
   that start, collect results, and wait for the process to finish in one call.
 
-* **[`Job`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html)** - interface to
-  a started process or pipeline, returned by
+* **[`Job`](https://docs.rs/subprocess/latest/subprocess/struct.Job.html)** - interacts
+  with a started process or pipeline, returned by
   [`start()`](https://docs.rs/subprocess/latest/subprocess/struct.Exec.html#method.start).
-  Holds input, output, and error pipes, as well as the handles to underlying
-  process(es). Provides methods for waiting on the process and capturing or streaming its
-  output.
+  It holds the pipe files (`stdin`, `stdout`, `stderr`) and has methods like `capture()`
+  for interacting with them. It contains a list of `Process` handles and enables batch
+  operations over processes like `wait()` and `terminate()`.
+
+- **[`Process`](https://docs.rs/subprocess/latest/subprocess/struct.Process.html)** - a
+  cheaply cloneable handle to a single running process. It provides `pid()`, `wait()`,
+  `poll()`, `terminate()`, and `kill()`. Its methods take `&self`, so you can use them on
+  `Process` shared across threads.
 
 ## Examples
 
@@ -115,8 +120,10 @@ let lines = Exec::cmd("sqlite3")
 
 Create pipelines using the `|` operator:
 
-```rust
-let dir_checksum = (Exec::shell("find . -type f") | Exec::cmd("sort") | Exec::cmd("sha1sum"))
+```
+let top_mem = (Exec::cmd("ps").args(&["aux"])
+    | Exec::cmd("sort").args(&["-k4", "-rn"])
+    | Exec::cmd("head").arg("-5"))
     .capture()?
     .stdout_str();
 ```
@@ -133,28 +140,31 @@ let stream = Exec::cmd("find").arg("/").stream_stdout()?;
 // Use stream.read_to_string(), BufReader::new(stream).lines(), etc.
 ```
 
-### Arbitrary input to subprocess
+### Arbitrary input
 
-In addition to static data, you can feed to stdin of the subprocess any data represented
-in a slice (such as in a memory-mapped file or shared `bytes::Bytes` container), or even
-generated dynamically:
+`stdin()` doesn't accept just static strings, you can give it any owned data (such as in a
+memory-mapped file or shared `bytes::Bytes` container), or generate it lazily:
 
 ```rust
 use subprocess::InputData;
 
+// send owned bytes
 let bytes = bytes::Bytes::from("Hello world");
 let gzipped_bytes = Exec::cmd("gzip")
     .stdin(InputData::from_bytes(bytes))
     .capture()?
     .stdout;
 
-let lazy_source = std::io::repeat(b'x').take(5_000_000);
+// send a gigabyte of zeros
+let lazy_source = std::io::repeat(0).take(1_000_000_000);
 let gzipped_stream = Exec::cmd("gzip")
     .stdin(InputData::from_reader(lazy_source))
     .stream_stdout()?;
 ```
 
-### Timeouts
+The data is streamed to the subprocess in chunks.
+
+### Timeout
 
 Capture with timeout:
 
@@ -181,7 +191,7 @@ let (out, _) = comm
 Give the process some time to run, then terminate if needed:
 
 ```rust
-let mut job = Exec::cmd("sleep").arg("10").start()?;
+let job = Exec::cmd("sleep").arg("10").start()?;
 match job.wait_timeout(Duration::from_secs(1))? {
     Some(status) => println!("finished: {:?}", status),
     None => {

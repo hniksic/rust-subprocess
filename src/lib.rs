@@ -6,12 +6,12 @@
 //!
 //! Compared to `std::process`, the crate provides these additional features:
 //!
+//! * Connecting multiple commands into OS-level [pipelines](Pipeline).
+//!
 //! * The *capture* and *communicate* [family of methods](Job::capture) for
 //!   deadlock-free capturing of subprocess output/error, while simultaneously feeding
 //!   data to its standard input.  Capturing supports optional timeout and read size
 //!   limit.
-//!
-//! * Connecting multiple commands into OS-level [pipelines](Pipeline).
 //!
 //! * Flexible [redirection options](Redirection), such as connecting standard streams to
 //!   arbitrary [open files](Redirection::File), or [merging](Redirection::Merge) output
