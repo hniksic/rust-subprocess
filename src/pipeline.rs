@@ -26,8 +26,8 @@ use crate::process::ExitStatus;
 use crate::process::Process;
 
 use crate::exec::{
-    Capture, Exec, FromSink, FromSource, InputData, InputRedirection, ReadAdapter,
-    ReadErrAdapter, WriteAdapter,
+    Capture, Exec, FromSink, FromSource, InputData, InputRedirection, ReadAdapter, ReadErrAdapter,
+    WriteAdapter,
 };
 use crate::job::Job;
 

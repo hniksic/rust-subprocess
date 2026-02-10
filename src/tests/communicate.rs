@@ -76,7 +76,7 @@ fn communicate_input_output_long() {
 fn communicate_timeout() {
     // A command that produces partial output then sleeps should time out,
     // and the partial output should still be available.
-    let mut handle = Exec::cmd("sh")
+    let mut job = Exec::cmd("sh")
         .args(&["-c", "printf foo; sleep 1"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
@@ -84,7 +84,7 @@ fn communicate_timeout() {
         .unwrap();
     let mut out = vec![];
     let mut err = vec![];
-    let result = handle
+    let result = job
         .communicate()
         .unwrap()
         .limit_time(Duration::from_millis(100))
@@ -92,23 +92,23 @@ fn communicate_timeout() {
     assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
     assert_eq!(out, b"foo");
     assert_eq!(err, vec![]);
-    handle.processes[0].kill().unwrap();
+    job.kill().unwrap();
 }
 
 #[test]
 fn communicate_size_limit_small() {
     // Read with a small size limit, then continue reading in chunks.
-    let mut handle = Exec::cmd("sh")
+    let mut job = Exec::cmd("sh")
         .args(&["-c", "printf '%5s' a"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
         .unwrap();
-    let mut comm = handle.communicate().unwrap().limit_size(2);
+    let mut comm = job.communicate().unwrap().limit_size(2);
     assert_eq!(comm.read().unwrap(), (vec![32; 2], vec![]));
     assert_eq!(comm.read().unwrap(), (vec![32; 2], vec![]));
     assert_eq!(comm.read().unwrap(), (vec![b'a'], vec![]));
-    handle.processes[0].kill().unwrap();
+    job.kill().unwrap();
 }
 
 fn check_vec(v: &[u8], size: usize, content: u8) {
@@ -119,13 +119,13 @@ fn check_vec(v: &[u8], size: usize, content: u8) {
 #[test]
 fn communicate_size_limit_large() {
     // Read large output in chunks using limit_size.
-    let mut handle = Exec::cmd("sh")
+    let mut job = Exec::cmd("sh")
         .args(&["-c", "printf '%20001s' a"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
         .unwrap();
-    let mut comm = handle.communicate().unwrap().limit_size(10_000);
+    let mut comm = job.communicate().unwrap().limit_size(10_000);
 
     let (out, err) = comm.read().unwrap();
     check_vec(&out, 10_000, 32);
@@ -136,20 +136,20 @@ fn communicate_size_limit_large() {
     assert_eq!(err, vec![]);
 
     assert_eq!(comm.read().unwrap(), (vec![b'a'], vec![]));
-    handle.processes[0].kill().unwrap();
+    job.kill().unwrap();
 }
 
 #[test]
 fn communicate_size_limit_different_sizes() {
     // Change the size limit between successive reads to verify that
     // the communicator respects the new limit each time.
-    let mut handle = Exec::cmd("sh")
+    let mut job = Exec::cmd("sh")
         .args(&["-c", "printf '%20001s' a"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
         .unwrap();
-    let comm = handle.communicate().unwrap();
+    let comm = job.communicate().unwrap();
 
     let mut comm = comm.limit_size(100);
     let (out, err) = comm.read().unwrap();
@@ -173,7 +173,7 @@ fn communicate_size_limit_different_sizes() {
 
     assert_eq!(comm.read().unwrap(), (vec![b'a'], vec![]));
     assert_eq!(comm.read().unwrap(), (vec![], vec![]));
-    handle.processes[0].kill().unwrap();
+    job.kill().unwrap();
 }
 
 #[test]
@@ -312,13 +312,13 @@ fn communicate_process_fails() {
 fn communicate_size_limit_zero() {
     // Size limit of 0 should return empty immediately; continue reading
     // with a larger limit to get the remaining data.
-    let mut handle = Exec::cmd("sh")
+    let mut job = Exec::cmd("sh")
         .args(&["-c", "printf 'data'"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
         .unwrap();
-    let mut comm = handle.communicate().unwrap().limit_size(0);
+    let mut comm = job.communicate().unwrap().limit_size(0);
     let (out, err) = comm.read().unwrap();
     assert!(out.is_empty());
     assert!(err.is_empty());
@@ -327,43 +327,43 @@ fn communicate_size_limit_zero() {
     let (out, err) = comm.read().unwrap();
     assert_eq!(out, b"data");
     assert_eq!(err, vec![]);
-    handle.processes[0].kill().unwrap();
+    job.kill().unwrap();
 }
 
 #[test]
 fn communicate_size_limit_stderr() {
     // Size limit should apply to the combined total of stdout + stderr.
-    let mut handle = Exec::cmd("sh")
+    let mut job = Exec::cmd("sh")
         .args(&["-c", "printf out; printf err >&2"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
         .unwrap();
-    let mut comm = handle.communicate().unwrap().limit_size(4);
+    let mut comm = job.communicate().unwrap().limit_size(4);
     let (out, err) = comm.read().unwrap();
     // Should get approximately 4 bytes total across both streams
     let total = out.len() + err.len();
     assert!(total <= 6, "got {} bytes, expected <= 6", total);
-    handle.processes[0].kill().unwrap();
+    job.kill().unwrap();
 }
 
 #[test]
 fn communicate_timeout_zero() {
     // Immediate timeout (zero duration) on a sleeping process.
-    let mut handle = Exec::cmd("sh")
+    let mut job = Exec::cmd("sh")
         .args(&["-c", "sleep 1; echo done"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
         .unwrap();
-    let result = handle
+    let result = job
         .communicate()
         .unwrap()
         .limit_time(Duration::from_secs(0))
         .read();
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
-    handle.processes[0].kill().unwrap();
+    job.kill().unwrap();
 }
 
 #[test]
@@ -413,14 +413,14 @@ fn communicate_large_bidirectional() {
 fn communicate_partial_read_continue() {
     // Read with a size limit, then continue reading in multiple chunks
     // until all data is consumed.
-    let mut handle = Exec::cmd("sh")
+    let mut job = Exec::cmd("sh")
         .args(&["-c", "printf 'abcdefghij'"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
         .unwrap();
 
-    let mut comm = handle.communicate().unwrap().limit_size(3);
+    let mut comm = job.communicate().unwrap().limit_size(3);
     let (out1, _) = comm.read().unwrap();
     assert_eq!(out1.len(), 3);
 
@@ -438,7 +438,7 @@ fn communicate_partial_read_continue() {
     combined.extend(out3);
     assert_eq!(combined, b"abcdefghij");
 
-    handle.processes[0].kill().unwrap();
+    job.kill().unwrap();
 }
 
 #[test]

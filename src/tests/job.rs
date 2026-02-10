@@ -253,68 +253,62 @@ fn terminate_twice() {
 
 #[test]
 fn terminate_after_exit() {
-    let handle = Exec::cmd("true").start().unwrap();
-    handle.processes[0].wait().unwrap();
+    let job = Exec::cmd("true").start().unwrap();
+    job.wait().unwrap();
     // Should be no-op, not error
-    handle.processes[0].terminate().unwrap();
-    handle.processes[0].kill().unwrap();
+    job.terminate().unwrap();
+    job.kill().unwrap();
 }
 
 #[test]
 fn pid_while_running() {
-    let handle = Exec::cmd("sleep").arg("10").start().unwrap();
+    let job = Exec::cmd("sleep").arg("10").start().unwrap();
     // pid() returns u32 always, verify it is nonzero while running
+    assert!(job.pid() > 0, "pid() should be nonzero while running");
     assert!(
-        handle.processes[0].pid() > 0,
-        "pid() should be nonzero while running"
-    );
-    assert!(
-        handle.processes[0].exit_status().is_none(),
+        job.processes[0].exit_status().is_none(),
         "exit_status() should be None while running"
     );
-    handle.processes[0].terminate().unwrap();
-    handle.processes[0].wait().unwrap();
+    job.terminate().unwrap();
+    job.wait().unwrap();
     // pid is still available after exit
+    assert!(job.pid() > 0, "pid() should still be nonzero after exit");
     assert!(
-        handle.processes[0].pid() > 0,
-        "pid() should still be nonzero after exit"
-    );
-    assert!(
-        handle.processes[0].exit_status().is_some(),
+        job.processes[0].exit_status().is_some(),
         "exit_status() should be Some after exit"
     );
 }
 
 #[test]
 fn poll_running_process() {
-    let handle = Exec::cmd("sleep").arg("10").start().unwrap();
+    let job = Exec::cmd("sleep").arg("10").start().unwrap();
     assert!(
-        handle.processes[0].poll().is_none(),
+        job.poll().is_none(),
         "poll() should return None for running process"
     );
-    handle.processes[0].terminate().unwrap();
-    handle.processes[0].wait().unwrap();
+    job.terminate().unwrap();
+    job.wait().unwrap();
     assert!(
-        handle.processes[0].poll().is_some(),
+        job.poll().is_some(),
         "poll() should return Some after process finished"
     );
 }
 
 #[test]
 fn poll_finished_process() {
-    let handle = Exec::cmd("true").start().unwrap();
-    handle.processes[0].wait().unwrap();
-    assert!(handle.processes[0].poll().unwrap().success());
+    let job = Exec::cmd("true").start().unwrap();
+    job.wait().unwrap();
+    assert!(job.poll().unwrap().success());
     // Multiple polls should return the same result
-    assert!(handle.processes[0].poll().unwrap().success());
+    assert!(job.poll().unwrap().success());
 }
 
 #[test]
 fn wait_multiple_times() {
-    let handle = Exec::cmd("sh").args(&["-c", "exit 42"]).start().unwrap();
-    let s1 = handle.processes[0].wait().unwrap();
-    let s2 = handle.processes[0].wait().unwrap();
-    let s3 = handle.processes[0].wait().unwrap();
+    let job = Exec::cmd("sh").args(&["-c", "exit 42"]).start().unwrap();
+    let s1 = job.wait().unwrap();
+    let s2 = job.wait().unwrap();
+    let s3 = job.wait().unwrap();
     assert_eq!(s1.code(), Some(42));
     assert_eq!(s1, s2);
     assert_eq!(s2, s3);
@@ -322,44 +316,38 @@ fn wait_multiple_times() {
 
 #[test]
 fn wait_timeout() {
-    let handle = Exec::cmd("sleep").arg("0.5").start().unwrap();
-    let ret = handle.processes[0]
-        .wait_timeout(Duration::from_millis(100))
-        .unwrap();
+    let job = Exec::cmd("sleep").arg("0.5").start().unwrap();
+    let ret = job.wait_timeout(Duration::from_millis(100)).unwrap();
     assert!(ret.is_none());
     // Sleep for a very long time to avoid flaky failures when we get a
     // slow machine that takes too long to start sleep(1).
-    let ret = handle.processes[0]
-        .wait_timeout(Duration::from_millis(900))
-        .unwrap();
+    let ret = job.wait_timeout(Duration::from_millis(900)).unwrap();
     assert!(ret.unwrap().success());
 }
 
 #[test]
 fn wait_timeout_zero() {
-    let handle = Exec::cmd("sleep").arg("10").start().unwrap();
+    let job = Exec::cmd("sleep").arg("10").start().unwrap();
     // Zero timeout should return immediately
     let start = Instant::now();
-    let result = handle.processes[0].wait_timeout(Duration::ZERO).unwrap();
+    let result = job.wait_timeout(Duration::ZERO).unwrap();
     assert!(
         start.elapsed() < Duration::from_millis(100),
         "zero timeout took too long"
     );
     assert!(result.is_none());
-    handle.processes[0].terminate().unwrap();
-    handle.processes[0].wait().unwrap();
+    job.terminate().unwrap();
+    job.wait().unwrap();
 }
 
 #[test]
 fn wait_timeout_already_finished() {
-    let handle = Exec::cmd("true").start().unwrap();
-    handle.processes[0].wait().unwrap();
+    let job = Exec::cmd("true").start().unwrap();
+    job.wait().unwrap();
     // Timeout on finished process should return immediately with cached
     // status
     let start = Instant::now();
-    let result = handle.processes[0]
-        .wait_timeout(Duration::from_secs(10))
-        .unwrap();
+    let result = job.wait_timeout(Duration::from_secs(10)).unwrap();
     assert!(
         start.elapsed() < Duration::from_millis(100),
         "wait_timeout on finished process took too long"
@@ -434,10 +422,10 @@ fn exec_wait_timeout_terminate() {
 
 #[test]
 fn started_pid() {
-    let handle = Exec::cmd("sleep").arg("10").start().unwrap();
-    assert!(handle.pid() > 0, "pid() should be nonzero");
-    handle.processes[0].terminate().unwrap();
-    handle.processes[0].wait().unwrap();
+    let job = Exec::cmd("sleep").arg("10").start().unwrap();
+    assert!(job.pid() > 0, "pid() should be nonzero");
+    job.terminate().unwrap();
+    job.wait().unwrap();
 }
 
 #[test]
@@ -450,17 +438,11 @@ fn started_kill() {
 
 #[test]
 fn started_poll() {
-    let handle = Exec::cmd("sleep").arg("10").start().unwrap();
-    assert!(
-        handle.poll().is_none(),
-        "poll() should be None while running"
-    );
-    handle.processes[0].terminate().unwrap();
-    handle.processes[0].wait().unwrap();
-    assert!(
-        handle.poll().is_some(),
-        "poll() should be Some after finished"
-    );
+    let job = Exec::cmd("sleep").arg("10").start().unwrap();
+    assert!(job.poll().is_none(), "poll() should be None while running");
+    job.terminate().unwrap();
+    job.wait().unwrap();
+    assert!(job.poll().is_some(), "poll() should be Some after finished");
 }
 
 #[test]

@@ -1,19 +1,14 @@
 use std::time::{Duration, Instant};
 
-use crate::unix::{JobExt, PipelineExt, ProcessExt};
+use crate::unix::{JobExt, PipelineExt};
 use crate::{Exec, ExecExt, ExitStatus, Redirection};
 
 #[test]
 fn err_terminate() {
-    let handle = Exec::cmd("sleep").arg("5").start().unwrap();
-    assert!(handle.processes[0].poll().is_none());
-    handle.processes[0].terminate().unwrap();
-    assert!(
-        handle.processes[0]
-            .wait()
-            .unwrap()
-            .is_killed_by(libc::SIGTERM)
-    );
+    let job = Exec::cmd("sleep").arg("5").start().unwrap();
+    assert!(job.poll().is_none());
+    job.terminate().unwrap();
+    assert!(job.wait().unwrap().is_killed_by(libc::SIGTERM));
 }
 
 #[test]
@@ -21,24 +16,21 @@ fn waitpid_echild() {
     // Start a short-lived process and steal its child with raw waitpid
     // before our Process::wait() gets to it. The library should handle
     // the ECHILD error gracefully.
-    let handle = Exec::cmd("true").start().unwrap();
-    let pid = handle.processes[0].pid() as i32;
+    let job = Exec::cmd("true").start().unwrap();
+    let pid = job.pid() as i32;
     let mut status = 0 as libc::c_int;
     let wpid = unsafe { libc::waitpid(pid, &mut status, 0) };
     assert_eq!(wpid, pid);
     assert_eq!(status, 0);
-    let exit = handle.processes[0].wait().unwrap();
+    let exit = job.wait().unwrap();
     assert!(exit.code().is_none() && exit.signal().is_none());
 }
 
 #[test]
 fn send_signal() {
-    let handle = Exec::cmd("sleep").arg("5").start().unwrap();
-    handle.processes[0].send_signal(libc::SIGUSR1).unwrap();
-    assert_eq!(
-        handle.processes[0].wait().unwrap().signal(),
-        Some(libc::SIGUSR1)
-    );
+    let job = Exec::cmd("sleep").arg("5").start().unwrap();
+    job.send_signal(libc::SIGUSR1).unwrap();
+    assert_eq!(job.wait().unwrap().signal(), Some(libc::SIGUSR1));
 }
 
 #[test]
@@ -72,20 +64,13 @@ fn exec_setpgid() {
     // Spawn a shell in a new process group that spawns a background
     // child. Signaling the group should terminate both the shell and
     // its child.
-    let handle = Exec::cmd("sh")
+    let job = Exec::cmd("sh")
         .args(&["-c", "sleep 100 & wait"])
         .setpgid()
         .start()
         .unwrap();
-    handle.processes[0]
-        .send_signal_group(libc::SIGTERM)
-        .unwrap();
-    assert!(
-        handle.processes[0]
-            .wait()
-            .unwrap()
-            .is_killed_by(libc::SIGTERM)
-    );
+    job.send_signal_group(libc::SIGTERM).unwrap();
+    assert!(job.wait().unwrap().is_killed_by(libc::SIGTERM));
 }
 
 #[test]
@@ -93,56 +78,42 @@ fn send_signal_group() {
     // Spawn a shell in a new process group that spawns a background
     // child. Signaling the group should terminate both the shell and
     // its child.
-    let handle = Exec::cmd("sh")
+    let job = Exec::cmd("sh")
         .args(&["-c", "sleep 100 & wait"])
         .setpgid()
         .start()
         .unwrap();
-    handle.processes[0]
-        .send_signal_group(libc::SIGTERM)
-        .unwrap();
-    assert!(
-        handle.processes[0]
-            .wait()
-            .unwrap()
-            .is_killed_by(libc::SIGTERM)
-    );
+    job.send_signal_group(libc::SIGTERM).unwrap();
+    assert!(job.wait().unwrap().is_killed_by(libc::SIGTERM));
 }
 
 #[test]
 fn send_signal_group_after_finish() {
     // Signaling a finished process group should succeed (no-op).
-    let handle = Exec::cmd("true").setpgid().start().unwrap();
-    handle.processes[0].wait().unwrap();
-    handle.processes[0]
-        .send_signal_group(libc::SIGTERM)
-        .unwrap();
+    let job = Exec::cmd("true").setpgid().start().unwrap();
+    job.wait().unwrap();
+    job.send_signal_group(libc::SIGTERM).unwrap();
 }
 
 #[test]
 fn kill_process() {
     // kill() sends SIGKILL which cannot be caught.
-    let handle = Exec::cmd("sleep").arg("1000").start().unwrap();
-    handle.processes[0].kill().unwrap();
-    assert!(
-        handle.processes[0]
-            .wait()
-            .unwrap()
-            .is_killed_by(libc::SIGKILL)
-    );
+    let job = Exec::cmd("sleep").arg("1000").start().unwrap();
+    job.kill().unwrap();
+    assert!(job.wait().unwrap().is_killed_by(libc::SIGKILL));
 }
 
 #[test]
 fn kill_vs_terminate() {
     // Demonstrate that terminate (SIGTERM) and kill (SIGKILL) produce
     // different exit statuses.
-    let h1 = Exec::cmd("sleep").arg("1000").start().unwrap();
-    h1.processes[0].terminate().unwrap();
-    let status1 = h1.processes[0].wait().unwrap();
+    let j1 = Exec::cmd("sleep").arg("1000").start().unwrap();
+    j1.terminate().unwrap();
+    let status1 = j1.wait().unwrap();
 
-    let h2 = Exec::cmd("sleep").arg("1000").start().unwrap();
-    h2.processes[0].kill().unwrap();
-    let status2 = h2.processes[0].wait().unwrap();
+    let j2 = Exec::cmd("sleep").arg("1000").start().unwrap();
+    j2.kill().unwrap();
+    let status2 = j2.wait().unwrap();
 
     assert!(status1.is_killed_by(libc::SIGTERM));
     assert!(status2.is_killed_by(libc::SIGKILL));
@@ -183,21 +154,21 @@ fn exit_status_display() {
 
 #[test]
 fn started_send_signal() {
-    let handle = Exec::cmd("sleep").arg("100").start().unwrap();
-    handle.send_signal(libc::SIGTERM).unwrap();
-    let status = handle.processes[0].wait().unwrap();
+    let job = Exec::cmd("sleep").arg("100").start().unwrap();
+    job.send_signal(libc::SIGTERM).unwrap();
+    let status = job.wait().unwrap();
     assert!(status.is_killed_by(libc::SIGTERM));
 }
 
 #[test]
 fn started_send_signal_group() {
-    let handle = Exec::cmd("sh")
+    let job = Exec::cmd("sh")
         .args(&["-c", "sleep 100 & wait"])
         .setpgid()
         .start()
         .unwrap();
-    handle.send_signal_group(libc::SIGKILL).unwrap();
-    let status = handle.processes[0].wait().unwrap();
+    job.send_signal_group(libc::SIGKILL).unwrap();
+    let status = job.wait().unwrap();
     assert!(status.is_killed_by(libc::SIGKILL) || status.is_killed_by(libc::SIGTERM));
 }
 
