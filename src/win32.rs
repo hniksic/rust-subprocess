@@ -105,7 +105,7 @@ pub fn make_pipe() -> Result<(File, File)> {
     let mut sa = SECURITY_ATTRIBUTES {
         nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as DWORD,
         lpSecurityDescriptor: ptr::null_mut(),
-        bInheritHandle: TRUE,
+        bInheritHandle: FALSE,
     };
 
     // Create the write end as server (named pipe), then connect read end as client. Both

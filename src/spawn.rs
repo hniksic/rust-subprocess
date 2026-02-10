@@ -62,6 +62,20 @@ fn child_file(r: &Redirection) -> &File {
     }
 }
 
+// Stream preparation for child processes.
+//
+// Unix and Windows have fundamentally different spawning models, which is why
+// os::prepare_file() has platform-specific implementations:
+//
+// Unix uses fork()+exec(). Fork duplicates all fds into the child, and CLOEXEC causes
+// unwanted ones to close at exec. The child can manipulate its fd table between fork
+// and exec -- dup2 installs fds onto 0/1/2 and clears CLOEXEC on the target. So child
+// fds need no preparation before fork, and os::prepare_file() is a no-op.
+//
+// Windows uses CreateProcess(), which only passes handles marked as inheritable to the
+// child. There is no between-fork-and-exec window, so os::prepare_file() must call
+// set_inheritable(true) before spawning.
+
 /// Translate a single `Redirection` into the child-side fd and (for Pipe) the parent-side
 /// fd. Returns `(parent_end, child_end)` where only Pipe produces a parent end and None
 /// produces neither.
@@ -75,8 +89,8 @@ fn prepare_child_stream(
     // the Arc is shared.
     if matches!(&*redir, Redirection::File(_)) {
         return match Arc::try_unwrap(redir) {
-            Ok(Redirection::File(f)) => Ok((None, Some(prepare_file(f)?))),
-            Err(arc) => Ok((None, Some(prepare_file_shared(arc)?))),
+            Ok(Redirection::File(f)) => Ok((None, Some(os::prepare_file(f)?))),
+            Err(arc) => Ok((None, Some(os::prepare_file_shared(arc)?))),
             _ => unreachable!(),
         };
     }
@@ -93,25 +107,13 @@ fn prepare_child_stream(
 }
 
 fn prepare_pipe(parent_writes: bool) -> io::Result<(File, Arc<Redirection>)> {
-    // Both ends are created with CLOEXEC. The child end survives exec because do_exec()
-    // dup2's it to fd 0/1/2, and dup2 clears CLOEXEC on the target fd.
     let (read, write) = os::make_pipe()?;
     let (parent_end, child_end) = if parent_writes {
         (write, read)
     } else {
         (read, write)
     };
-    Ok((parent_end, Arc::new(Redirection::File(child_end))))
-}
-
-fn prepare_file(file: File) -> io::Result<Arc<Redirection>> {
-    os::set_inheritable(&file, true)?;
-    Ok(Arc::new(Redirection::File(file)))
-}
-
-fn prepare_file_shared(arc: Arc<Redirection>) -> io::Result<Arc<Redirection>> {
-    os::set_inheritable(child_file(&arc), true)?;
-    Ok(arc)
+    Ok((parent_end, os::prepare_file(child_end)?))
 }
 
 fn prepare_null_file(for_read: bool) -> io::Result<Arc<Redirection>> {
@@ -120,7 +122,7 @@ fn prepare_null_file(for_read: bool) -> io::Result<Arc<Redirection>> {
     } else {
         OpenOptions::new().write(true).open(os::NULL_DEVICE)?
     };
-    prepare_file(file)
+    os::prepare_file(file)
 }
 
 // Share a child stream via Arc::clone - zero dup syscalls.
@@ -350,11 +352,16 @@ pub(crate) mod os {
         formatted
     }
 
-    fn dup2_if_needed(end: Option<Arc<Redirection>>, target_fd: i32) -> io::Result<()> {
-        if let Some(r) = &end
-            && child_file(r).as_raw_fd() != target_fd
-        {
-            posix::dup2(child_file(r).as_raw_fd(), target_fd)?;
+    fn install_child_fd(end: Option<Arc<Redirection>>, target_fd: i32) -> io::Result<()> {
+        if let Some(r) = &end {
+            let fd = child_file(r).as_raw_fd();
+            if fd != target_fd {
+                posix::dup2(fd, target_fd)?;
+            } else {
+                // dup2(fd, fd) is a no-op per POSIX and doesn't clear
+                // CLOEXEC. Clear it so the fd survives exec.
+                set_inheritable(child_file(r), true)?;
+            }
         }
         if let Some(end) = end {
             prevent_dealloc(end);
@@ -396,9 +403,9 @@ pub(crate) mod os {
         }
 
         let (stdin, stdout, stderr) = child_ends;
-        dup2_if_needed(stdin, 0)?;
-        dup2_if_needed(stdout, 1)?;
-        dup2_if_needed(stderr, 2)?;
+        install_child_fd(stdin, 0)?;
+        install_child_fd(stdout, 1)?;
+        install_child_fd(stderr, 2)?;
         posix::reset_sigpipe()?;
 
         if let Some(gid) = os_options.setgid {
@@ -426,6 +433,16 @@ pub(crate) mod os {
             posix::fcntl(fd, posix::F_SETFD, Some(new))?;
         }
         Ok(())
+    }
+
+    pub fn prepare_file(file: File) -> io::Result<Arc<Redirection>> {
+        // On Unix, child fds don't need CLOEXEC cleared before fork.  dup2() in the child
+        // atomically places them on fd 0/1/2 and clears CLOEXEC on the target.
+        Ok(Arc::new(Redirection::File(file)))
+    }
+
+    pub fn prepare_file_shared(arc: Arc<Redirection>) -> io::Result<Arc<Redirection>> {
+        Ok(arc)
     }
 
     /// Create a pipe.
@@ -551,10 +568,21 @@ pub(crate) mod os {
         Ok(())
     }
 
+    pub fn prepare_file(file: File) -> io::Result<Arc<Redirection>> {
+        // On Windows, child handles must be marked inheritable for CreateProcess to pass
+        // them to the child.
+        set_inheritable(&file, true)?;
+        Ok(Arc::new(Redirection::File(file)))
+    }
+
+    pub fn prepare_file_shared(arc: Arc<Redirection>) -> io::Result<Arc<Redirection>> {
+        set_inheritable(child_file(&arc), true)?;
+        Ok(arc)
+    }
+
     /// Create a pipe where both ends support overlapped I/O.
     ///
-    /// Both handles are created inheritable; callers should use `set_inheritable` to make
-    /// the parent's end non-inheritable before spawning children.
+    /// Both handles are created non-inheritable.
     pub fn make_pipe() -> io::Result<(File, File)> {
         win32::make_pipe()
     }
