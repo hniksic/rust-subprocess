@@ -1,29 +1,31 @@
 # Migrating from subprocess 0.2 to 1.0
 
-subprocess 1.0 is an incompatible change to the public API of the crate. The capabilities
-are the same - spawning processes, building pipelines, deadlock-free capture - but the
-release cleans up long-standing API warts accumulated over the years.
-
-This guide covers the changes and shows how to update your code.
+Release 1.0 of the crate marks a milestone and an opportunity to substantially improve the
+public API of the crate after many years. It constitutes a cleanup of the warts that have
+accumulated, while (I hope) keeping the good parts.
 
 ## What's changed
 
-Before diving into the migration details, here is a summary of changes.
-
 ### Popen type removed
 
-`Popen` type, inspired by Python's `subprocess.Popen`, served as the backbone of this
-crate for years. But soon after introduction of the builder API, it turned out that it's
-much more convenient to use - because it allows building pipelines, among other things.
-In theory `Popen` remained as a way to get low-level control over things, but in practice
-it just duplicated functionality of builder.
+`Popen`, inspired by Python's `subprocess.Popen`, was the backbone of this crate since its
+inception. But the builder API turned out to be much more convenient - it supports
+pipelines, and it fits better with Rust idioms.  In theory `Popen` remained as a low-level
+escape hatch, but in practice it just duplicated builder functionality. Python itself has
+since moved away from explicit `Popen` use in favor of `subprocess.run()`.
 
-Also, it mixed process creation, pipe ownership, and awaiting in one type, and the type
-was not suitable for use in pipelines - which is why `Pipeline::popen()` was returning
-`Vec<Popen>`, with the first and the last element having useful pipes.
+`Popen` also mixed concerns of process creation, pipe ownership, and process
+waiting in one type, making it unsuitable for pipelines, as it fundamentally represented
+one process. This is why `Pipeline::popen()` awkwardly returned
+`Vec<Popen>`, with only the first and the last element containing usable pipes.
 
-All setup is now done through builders, and `Job` is in charge of pipes and operations
-over spawned processes, regardless of whether it's a single process or a pipeline.
+Because of this `Popen` and `PopenConfig` no longer exist, and all setup is done through
+`Exec` and `Pipeline` builders.
+
+### Job
+
+Starting a process or pipeline returns a `Job` (reminiscent of a shell job) which owns
+pipes and process handles. You can wait for the job to finish, capture its output, etc.
 
 ### Simplified errors
 
@@ -36,11 +38,11 @@ library come from failed syscalls. When a "logic error" is detected, it is signa
 Many entry points that previously panicked have been converted to return errors instead,
 increasing robustness of the library.
 
-### Richer pipeline support
+### Better pipeline support
 
-Pipeline setup gain almost all methods of `Exec`, and starting them returns the same `Job`
-type returned by starting a single command. This makes control of pipeline-backed jobs
-equally powerful and convenient as that of single commands.  Single-command and empty
+Pipeline setup gained almost all methods of `Exec`, and starting them returns the same
+`Job` type returned by starting a single command. This makes control of pipeline-backed
+jobs equally powerful and convenient as that of single commands.  Single-command and empty
 pipelines are now allowed, simplifying dynamic pipeline construction.
 
 ### Exit status checking
@@ -48,20 +50,20 @@ pipelines are now allowed, simplifying dynamic pipeline construction.
 The new `checked()` method on `Exec` and `Pipeline` makes it a one-liner to treat non-zero
 exits as errors. This has **not** been made default, however (unlike duct), because many
 of the use cases of the library are about capturing errors, and automatic returning of
-`Err(std::io::Error)` would be in the way of that.
+`Err(std::io::Error)` would stand in the way of that.
 
-### Non-collecting input
+### Advanced input redirection
 
-It is now possible to provide input to `stdin` that is held in memory or generated,
-without the library collecting it into a `Vec<u8>`. This enables you to send the contents
+It is now possible to provide input to `stdin()` that is held in memory or generated,
+without the library collecting it into a `Vec<u8>`. This enables one to send the contents
 of a `Vec<u8>`, `&'static str`, `bytes::Bytes`, or `memmap2::Mmap` to a function's stdin
-without unnecessary copies or extra allocations.
+without extra allocations.
 
-In addition to that, you can now lazily generate input by passing any `impl Read` to the
-subprocess.  E.g. `stdin(InputData::from_reader(std::io::repeat(0).take(1_000_000_000)))`
-will send a gigabyte of zeros to the subprocess without spending a gigabyte of memory.
+You can also lazily generate input by passing any `impl Read` to the subprocess.
+E.g. `stdin(InputData::from_reader(io::repeat(0).take(1_000_000_000)))` will send a
+gigabyte of zeros to the subprocess without spending a gigabyte of memory.
 
-## Migration guide
+## Migration
 
 ### `Popen` and `PopenConfig`
 
@@ -234,11 +236,11 @@ Creating a communicator from `Exec` is simpler too:
 
 ```rust
 // 0.2
-let mut p = Exec::cmd("cat").stdin("input").popen()?;
+let mut p = Exec::cmd("cat").popen()?;
 let comm = p.communicate_start(Some(b"data".to_vec()));
 
 // 1.0
-let mut comm = Exec::cmd("cat").stdin("input").communicate()?;
+let comm = Exec::cmd("cat").stdin(b"data").communicate()?;
 ```
 
 ## Quick reference

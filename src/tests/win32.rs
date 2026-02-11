@@ -1,4 +1,4 @@
-use crate::{Exec, ExitStatus, Redirection};
+use crate::{Exec, ExitStatus};
 
 #[test]
 fn err_terminate() {

@@ -4,9 +4,9 @@
 [![CI](https://github.com/hniksic/rust-subprocess/actions/workflows/ci.yml/badge.svg)](https://github.com/hniksic/rust-subprocess/actions/workflows/ci.yml)
 [![docs.rs](https://docs.rs/subprocess/badge.svg)](https://docs.rs/subprocess)
 
-The `subprocess` crate provides facilities for execution of and interaction with external
-processes and pipelines.  It is [hosted on crates.io](https://crates.io/crates/subprocess),
-with [API documentation on docs.rs](https://docs.rs/subprocess/).
+The `subprocess` crate makes it convenient to execute and interact with external processes
+and pipelines.  It is [hosted on crates.io](https://crates.io/crates/subprocess), with
+[API documentation on docs.rs](https://docs.rs/subprocess/).
 
 The crate has minimal dependencies (only `libc` on Unix and `winapi` on Windows), and is
 tested on Linux, macOS, and Windows.
@@ -120,7 +120,7 @@ let lines = Exec::cmd("sqlite3")
 
 Create pipelines using the `|` operator:
 
-```
+```rust
 let top_mem = (Exec::cmd("ps").args(&["aux"])
     | Exec::cmd("sort").args(&["-k4", "-rn"])
     | Exec::cmd("head").arg("-5"))
