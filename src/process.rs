@@ -67,22 +67,85 @@ struct InnerProcess {
     pid: u32,
     #[allow(dead_code)]
     ext: os::ExtProcessState,
-    state: Mutex<ProcessState>,
+    state: Mutex<WaitState>,
     detached: AtomicBool,
 }
 
-#[derive(Debug)]
-enum ProcessState {
-    Running,
-    Finished(ExitStatus),
+struct WaitState {
+    exit_status: Option<ExitStatus>,
+    #[cfg(target_os = "linux")]
+    pidfd: CachedPidfd,
 }
+
+impl WaitState {
+    fn new() -> WaitState {
+        WaitState {
+            exit_status: None,
+            #[cfg(target_os = "linux")]
+            pidfd: CachedPidfd::new(),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod pidfd {
+    use crate::posix;
+    use std::os::unix::io::OwnedFd;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static PIDFD_OPEN_AVAILABLE: AtomicBool = AtomicBool::new(true);
+
+    pub(super) enum CachedPidfd {
+        Unopened,
+        Unavailable,
+        Available(Arc<OwnedFd>),
+    }
+
+    impl CachedPidfd {
+        pub fn new() -> CachedPidfd {
+            CachedPidfd::Unopened
+        }
+
+        pub fn fd(&mut self, pid: u32) -> Option<Arc<OwnedFd>> {
+            match self {
+                CachedPidfd::Available(fd) => Some(Arc::clone(fd)),
+                CachedPidfd::Unavailable => None,
+                CachedPidfd::Unopened => {
+                    if !PIDFD_OPEN_AVAILABLE.load(Ordering::Relaxed) {
+                        *self = CachedPidfd::Unavailable;
+                        return None;
+                    }
+                    match posix::pidfd_open(pid) {
+                        Ok(fd) => {
+                            let fd = Arc::new(fd);
+                            let cloned = Arc::clone(&fd);
+                            *self = CachedPidfd::Available(fd);
+                            Some(cloned)
+                        }
+                        Err(e) => {
+                            if e.raw_os_error() == Some(libc::ENOSYS) {
+                                PIDFD_OPEN_AVAILABLE.store(false, Ordering::Relaxed);
+                            }
+                            *self = CachedPidfd::Unavailable;
+                            None
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+use pidfd::CachedPidfd;
 
 impl Process {
     pub(crate) fn new(pid: u32, ext: os::ExtProcessState, detached: bool) -> Process {
         Process(Arc::new(InnerProcess {
             pid,
             ext,
-            state: Mutex::new(ProcessState::Running),
+            state: Mutex::new(WaitState::new()),
             detached: AtomicBool::new(detached),
         }))
     }
@@ -97,11 +160,7 @@ impl Process {
     /// This does not perform any system calls. To check whether the process has finished,
     /// use [`poll`](Self::poll) or [`wait`](Self::wait).
     pub fn exit_status(&self) -> Option<ExitStatus> {
-        let state = self.0.state.lock().unwrap();
-        match *state {
-            ProcessState::Finished(status) => Some(status),
-            ProcessState::Running => None,
-        }
+        self.0.state.lock().unwrap().exit_status
     }
 
     /// Check whether the process has finished, without blocking.
@@ -158,7 +217,7 @@ impl Drop for InnerProcess {
     fn drop(&mut self) {
         if !self.detached.load(Ordering::Relaxed) {
             let state = self.state.get_mut().unwrap();
-            if matches!(*state, ProcessState::Running) {
+            if state.exit_status.is_none() {
                 let _ = self.os_wait();
             }
         }
@@ -170,7 +229,7 @@ impl fmt::Debug for Process {
         let state = self.0.state.lock().unwrap();
         f.debug_struct("Process")
             .field("pid", &self.0.pid)
-            .field("state", &*state)
+            .field("exit_status", &state.exit_status)
             .field("detached", &self.0.detached.load(Ordering::Relaxed))
             .finish()
     }
@@ -180,6 +239,8 @@ impl fmt::Debug for Process {
 mod os {
     use super::*;
     use crate::posix;
+    use std::cmp::min;
+    use std::time::Instant;
 
     pub type ExtProcessState = ();
     pub type RawExitStatus = i32;
@@ -239,31 +300,63 @@ mod os {
         pub(super) fn os_wait(&self) -> io::Result<ExitStatus> {
             let mut state = self.state.lock().unwrap();
             loop {
-                match *state {
-                    ProcessState::Finished(status) => return Ok(status),
-                    ProcessState::Running => {
-                        Self::waitpid_into(&mut state, self.pid, true)?;
-                    }
+                if let Some(status) = state.exit_status {
+                    return Ok(status);
                 }
+                Self::waitpid_into(&mut state, self.pid, true)?;
             }
         }
 
         pub(super) fn os_wait_timeout(&self, dur: Duration) -> io::Result<Option<ExitStatus>> {
-            use std::cmp::min;
-            use std::time::Instant;
-
             let mut state = self.state.lock().unwrap();
-            if let ProcessState::Finished(status) = *state {
+            if let Some(status) = state.exit_status {
                 return Ok(Some(status));
             }
 
+            #[cfg(target_os = "linux")]
+            if let Some(pidfd) = state.pidfd.fd(self.pid) {
+                return self.wait_timeout_pidfd(state, pidfd, dur);
+            }
+
+            // fall back to polling if not on Linux or pidfd unavailable
+            self.wait_timeout_sleep(state, dur)
+        }
+
+        /// Wait exactly using pidfd + poll().
+        #[cfg(target_os = "linux")]
+        fn wait_timeout_pidfd(
+            &self,
+            state: std::sync::MutexGuard<'_, WaitState>,
+            pidfd: std::sync::Arc<std::os::unix::io::OwnedFd>,
+            dur: Duration,
+        ) -> io::Result<Option<ExitStatus>> {
+            use std::os::unix::io::AsFd;
+
+            // Release the lock while sleeping so other threads can access the state.
+            drop(state);
+            let mut pfd = [posix::PollFd::new(Some(pidfd.as_fd()), posix::POLLIN)];
+            let ready = posix::poll(&mut pfd, Some(dur))? > 0;
+
+            let mut state = self.state.lock().unwrap();
+            if ready {
+                Self::waitpid_into(&mut state, self.pid, false)?;
+            }
+            Ok(state.exit_status)
+        }
+
+        /// Wait using waitpid polling with sleep and exponential backoff.
+        fn wait_timeout_sleep<'a>(
+            &'a self,
+            mut state: std::sync::MutexGuard<'a, WaitState>,
+            dur: Duration,
+        ) -> io::Result<Option<ExitStatus>> {
             let deadline = Instant::now() + dur;
             let mut delay = Duration::from_millis(1);
 
             loop {
                 Self::waitpid_into(&mut state, self.pid, false)?;
-                if let ProcessState::Finished(status) = *state {
-                    return Ok(Some(status));
+                if state.exit_status.is_some() {
+                    return Ok(state.exit_status);
                 }
                 let now = Instant::now();
                 if now >= deadline {
@@ -273,12 +366,12 @@ mod os {
                 // Release the lock while sleeping so other threads can access the state.
                 drop(state);
                 std::thread::sleep(min(delay, remaining));
-                delay = min(delay * 2, Duration::from_millis(100));
                 state = self.state.lock().unwrap();
                 // Re-check after re-acquiring lock
-                if let ProcessState::Finished(status) = *state {
-                    return Ok(Some(status));
+                if state.exit_status.is_some() {
+                    return Ok(state.exit_status);
                 }
+                delay = min(delay * 2, Duration::from_millis(100));
             }
         }
 
@@ -292,35 +385,41 @@ mod os {
 
         fn send_signal(&self, signal: i32) -> io::Result<()> {
             let state = self.state.lock().unwrap();
-            match *state {
-                ProcessState::Finished(_) => Ok(()),
-                ProcessState::Running => posix::kill(self.pid, signal),
+            if state.exit_status.is_some() {
+                Ok(())
+            } else {
+                posix::kill(self.pid, signal)
             }
         }
 
         fn send_signal_group(&self, signal: i32) -> io::Result<()> {
             let state = self.state.lock().unwrap();
-            match *state {
-                ProcessState::Finished(_) => Ok(()),
-                ProcessState::Running => posix::killpg(self.pid, signal),
+            if state.exit_status.is_some() {
+                Ok(())
+            } else {
+                posix::killpg(self.pid, signal)
             }
         }
 
-        fn waitpid_into(state: &mut ProcessState, pid: u32, block: bool) -> io::Result<()> {
-            if matches!(*state, ProcessState::Finished(_)) {
+        fn waitpid_into(state: &mut WaitState, pid: u32, block: bool) -> io::Result<()> {
+            if state.exit_status.is_some() {
                 return Ok(());
             }
             match posix::waitpid(pid, if block { 0 } else { posix::WNOHANG }) {
                 Ok((pid_out, exit_status)) if pid_out == pid => {
-                    *state = ProcessState::Finished(exit_status);
+                    state.exit_status = Some(exit_status);
                 }
                 Ok(_) => {}
                 Err(e) if e.raw_os_error() == Some(posix::ECHILD) => {
                     // Someone else waited for the child. The PID no longer exists and we
                     // cannot find its exit status.
-                    *state = ProcessState::Finished(ExitStatus(None));
+                    state.exit_status = Some(ExitStatus(None));
                 }
                 Err(e) => return Err(e),
+            }
+            #[cfg(target_os = "linux")]
+            if state.exit_status.is_some() {
+                state.pidfd = CachedPidfd::Unopened;
             }
             Ok(())
         }
@@ -418,7 +517,7 @@ mod os {
         pub(super) fn os_wait(&self) -> io::Result<ExitStatus> {
             {
                 let state = self.state.lock().unwrap();
-                if let ProcessState::Finished(status) = *state {
+                if let Some(status) = state.exit_status {
                     return Ok(status);
                 }
             }
@@ -426,13 +525,14 @@ mod os {
             // doesn't need mutex protection.
             let event = win32::WaitForSingleObject(&self.ext.0, None)?;
             let mut state = self.state.lock().unwrap();
-            if let ProcessState::Finished(status) = *state {
+            if let Some(status) = state.exit_status {
                 return Ok(status);
             }
             if let win32::WaitEvent::OBJECT_0 = event {
                 let exit_code = win32::GetExitCodeProcess(&self.ext.0)?;
-                *state = ProcessState::Finished(ExitStatus::from_raw(exit_code));
-                Ok(ExitStatus::from_raw(exit_code))
+                let status = ExitStatus::from_raw(exit_code);
+                state.exit_status = Some(status);
+                Ok(status)
             } else {
                 Err(io::Error::other(
                     "os_wait: child state is not Finished after WaitForSingleObject",
@@ -443,7 +543,7 @@ mod os {
         pub(super) fn os_wait_timeout(&self, dur: Duration) -> io::Result<Option<ExitStatus>> {
             {
                 let state = self.state.lock().unwrap();
-                if let ProcessState::Finished(status) = *state {
+                if let Some(status) = state.exit_status {
                     return Ok(Some(status));
                 }
             }
@@ -451,13 +551,14 @@ mod os {
             // doesn't need mutex protection.
             let event = win32::WaitForSingleObject(&self.ext.0, Some(dur))?;
             let mut state = self.state.lock().unwrap();
-            if let ProcessState::Finished(status) = *state {
+            if let Some(status) = state.exit_status {
                 return Ok(Some(status));
             }
             if let win32::WaitEvent::OBJECT_0 = event {
                 let exit_code = win32::GetExitCodeProcess(&self.ext.0)?;
-                *state = ProcessState::Finished(ExitStatus::from_raw(exit_code));
-                Ok(Some(ExitStatus::from_raw(exit_code)))
+                let status = ExitStatus::from_raw(exit_code);
+                state.exit_status = Some(status);
+                Ok(Some(status))
             } else {
                 Ok(None)
             }
@@ -465,7 +566,7 @@ mod os {
 
         pub(super) fn os_terminate(&self) -> io::Result<()> {
             let mut state = self.state.lock().unwrap();
-            if let ProcessState::Running = *state
+            if state.exit_status.is_none()
                 && let Err(err) = win32::TerminateProcess(&self.ext.0, 1)
             {
                 if err.raw_os_error() != Some(win32::ERROR_ACCESS_DENIED as i32) {
@@ -475,7 +576,7 @@ mod os {
                 if rc == win32::STILL_ACTIVE {
                     return Err(err);
                 }
-                *state = ProcessState::Finished(ExitStatus::from_raw(rc));
+                state.exit_status = Some(ExitStatus::from_raw(rc));
             }
             Ok(())
         }

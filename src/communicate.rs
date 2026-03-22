@@ -8,6 +8,7 @@ mod posix {
     use crate::posix;
     use std::fs::File;
     use std::io::{self, Read, Write};
+    use std::os::unix::io::AsFd;
     use std::time::Instant;
 
     fn as_pollfd(f: Option<&File>, for_read: bool) -> posix::PollFd<'_> {
@@ -16,7 +17,7 @@ mod posix {
         } else {
             posix::POLLOUT
         };
-        posix::PollFd::new(f, events)
+        posix::PollFd::new(f.map(|f| f.as_fd()), events)
     }
 
     fn maybe_poll(

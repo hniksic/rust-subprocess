@@ -6,7 +6,7 @@ use std::iter;
 use std::marker::PhantomData;
 use std::mem;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::os::unix::io::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::ptr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -45,14 +45,14 @@ pub fn set_nonblocking(f: &File) -> Result<()> {
 /// fcntl(). Falls back to pipe()+fcntl() on platforms without pipe2.
 #[cfg(not(any(target_os = "aix", target_vendor = "apple", target_os = "haiku")))]
 pub fn pipe() -> Result<(File, File)> {
-    let mut fds = [0 as c_int; 2];
+    let mut fds = [0; 2];
     check_err(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) })?;
     Ok(unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) })
 }
 
 #[cfg(any(target_os = "aix", target_vendor = "apple", target_os = "haiku"))]
 pub fn pipe() -> Result<(File, File)> {
-    let mut fds = [0 as c_int; 2];
+    let mut fds = [0; 2];
     check_err(unsafe { libc::pipe(fds.as_mut_ptr()) })?;
     // Set CLOEXEC on both ends. There is a small race window between pipe() and fcntl()
     // where another thread's fork()+exec() could inherit these fds - this matches what
@@ -280,6 +280,13 @@ pub fn waitpid(pid: u32, flags: i32) -> Result<(u32, ExitStatus)> {
     Ok((pid as u32, ExitStatus::from_raw(status)))
 }
 
+#[cfg(target_os = "linux")]
+pub fn pidfd_open(pid: u32) -> Result<OwnedFd> {
+    let fd =
+        check_err(unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) })? as RawFd;
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
 pub use libc::{SIGKILL, SIGTERM};
 
 pub fn kill(pid: u32, signal: i32) -> Result<()> {
@@ -350,10 +357,10 @@ pub fn reset_sigpipe() -> Result<()> {
 pub struct PollFd<'a>(libc::pollfd, PhantomData<&'a ()>);
 
 impl PollFd<'_> {
-    pub fn new(file: Option<&File>, events: i16) -> PollFd<'_> {
+    pub fn new(fd: Option<BorrowedFd<'_>>, events: i16) -> PollFd<'_> {
         PollFd(
             libc::pollfd {
-                fd: file.map(File::as_raw_fd).unwrap_or(-1),
+                fd: fd.map(|f| f.as_raw_fd()).unwrap_or(-1),
                 events,
                 revents: 0,
             },
