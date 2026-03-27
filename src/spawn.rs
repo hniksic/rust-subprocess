@@ -354,7 +354,10 @@ pub(crate) mod os {
     }
 
     fn install_child_fd(end: Option<Arc<Redirection>>, target_fd: i32) -> io::Result<()> {
-        if let Some(r) = &end {
+        // Called after fork - use ManuallyDrop to prevent deallocation on
+        // early return via ?.
+        let mut end = std::mem::ManuallyDrop::new(end);
+        if let Some(r) = &*end {
             let fd = child_file(r).as_raw_fd();
             if fd != target_fd {
                 posix::dup2(fd, target_fd)?;
@@ -364,7 +367,7 @@ pub(crate) mod os {
                 set_inheritable(child_file(r), true)?;
             }
         }
-        if let Some(end) = end {
+        if let Some(end) = end.take() {
             prevent_dealloc(end);
         }
         Ok(())
@@ -399,14 +402,21 @@ pub(crate) mod os {
         chdir: Option<impl FnOnce() -> io::Result<()>>,
         os_options: &OsOptions,
     ) -> io::Result<()> {
+        // Called after fork - use ManuallyDrop to prevent deallocation on
+        // early return via ?.
+        let (stdin, stdout, stderr) = child_ends;
+        let mut stdin = std::mem::ManuallyDrop::new(stdin);
+        let mut stdout = std::mem::ManuallyDrop::new(stdout);
+        let mut stderr = std::mem::ManuallyDrop::new(stderr);
+        let mut just_exec = std::mem::ManuallyDrop::new(just_exec);
+
         if let Some(chdir) = chdir {
             chdir()?;
         }
 
-        let (stdin, stdout, stderr) = child_ends;
-        install_child_fd(stdin, 0)?;
-        install_child_fd(stdout, 1)?;
-        install_child_fd(stderr, 2)?;
+        install_child_fd(stdin.take(), 0)?;
+        install_child_fd(stdout.take(), 1)?;
+        install_child_fd(stderr.take(), 2)?;
         posix::reset_sigpipe()?;
 
         if let Some(gid) = os_options.setgid {
@@ -418,6 +428,8 @@ pub(crate) mod os {
         if let Some(pgid) = os_options.setpgid {
             posix::setpgid(0, pgid)?;
         }
+        // SAFETY: just_exec is taken exactly once and not accessed afterward.
+        let just_exec = unsafe { std::mem::ManuallyDrop::take(&mut just_exec) };
         just_exec()?;
         unreachable!();
     }

@@ -181,18 +181,20 @@ impl PrepExec {
         }
     }
 
-    fn exec(mut self) -> Result<()> {
-        // Invoked after fork() - no heap allocation allowed
-        let mut exe = std::mem::take(&mut self.prealloc_exe);
+    fn exec(self) -> Result<()> {
+        // Invoked after fork() - no heap allocation or deallocation allowed.
+        // Wrap in ManuallyDrop so that ? doesn't deallocate on exec failure.
+        let mut this = std::mem::ManuallyDrop::new(self);
+        let mut exe = std::mem::ManuallyDrop::new(std::mem::take(&mut this.prealloc_exe));
 
-        if let Some(ref search_path) = self.search_path {
+        if let Some(ref search_path) = this.search_path {
             let mut err = Ok(());
             // POSIX requires execvp and execve, but not execvpe (although glibc provides
             // one), so we have to iterate over PATH ourselves
             for dir in split_path(search_path.as_os_str()) {
-                err = self.libc_exec(PrepExec::assemble_exe(
+                err = this.libc_exec(PrepExec::assemble_exe(
                     &mut exe,
-                    &[dir.as_bytes(), b"/", self.cmd.as_bytes()],
+                    &[dir.as_bytes(), b"/", this.cmd.as_bytes()],
                 ));
                 // if exec succeeds, we won't run anymore; if we're here, it failed
                 assert!(err.is_err());
@@ -202,7 +204,7 @@ impl PrepExec {
             return err;
         }
 
-        self.libc_exec(PrepExec::assemble_exe(&mut exe, &[self.cmd.as_bytes()]))?;
+        this.libc_exec(PrepExec::assemble_exe(&mut exe, &[this.cmd.as_bytes()]))?;
 
         // failed exec can only return Err(..)
         unreachable!();
