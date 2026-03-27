@@ -262,6 +262,21 @@ pub fn prep_exec(
     Ok(move || prep.exec())
 }
 
+/// Prepare a `chdir()` call for use after `fork()`.
+///
+/// Like `prep_exec`, this pre-allocates the CString before fork so the
+/// returned closure only performs the async-signal-safe `chdir` syscall.
+pub fn prep_chdir(dir: &OsStr) -> Result<impl FnOnce() -> Result<()>> {
+    let dir = os_to_cstring(dir)?;
+    Ok(move || {
+        let ret = check_err(unsafe { libc::chdir(dir.as_ptr()) });
+        // Prevent deallocation after fork - only async-signal-safe
+        // operations are allowed.
+        std::mem::forget(dir);
+        ret.map(|_| ())
+    })
+}
+
 pub fn _exit(status: u8) -> ! {
     unsafe { libc::_exit(status as c_int) }
 }

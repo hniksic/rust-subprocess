@@ -301,6 +301,7 @@ pub(crate) mod os {
         let child_env = env.map(format_env);
         let cmd_to_exec = executable.unwrap_or(&argv[0]);
         let just_exec = posix::prep_exec(cmd_to_exec, &argv, child_env.as_deref())?;
+        let do_chdir = cwd.map(posix::prep_chdir).transpose()?;
 
         let pid;
         unsafe {
@@ -310,7 +311,7 @@ pub(crate) mod os {
                 }
                 None => {
                     drop(exec_fail_pipe.0);
-                    let result = do_exec(just_exec, child_ends, cwd, &os_options);
+                    let result = do_exec(just_exec, child_ends, do_chdir, &os_options);
                     let error_code = match result {
                         Ok(()) => unreachable!(),
                         Err(e) => e.raw_os_error().unwrap_or(-1),
@@ -395,11 +396,11 @@ pub(crate) mod os {
             Option<Arc<Redirection>>,
             Option<Arc<Redirection>>,
         ),
-        cwd: Option<&OsStr>,
+        chdir: Option<impl FnOnce() -> io::Result<()>>,
         os_options: &OsOptions,
     ) -> io::Result<()> {
-        if let Some(cwd) = cwd {
-            std::env::set_current_dir(cwd)?;
+        if let Some(chdir) = chdir {
+            chdir()?;
         }
 
         let (stdin, stdout, stderr) = child_ends;
