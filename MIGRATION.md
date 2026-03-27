@@ -30,7 +30,7 @@ pipes and process handles. You can wait for the job to finish, capture its outpu
 ### Simplified errors
 
 The `PopenError` type only had two variants, one for IO error and the other for logic
-errors, and the other one was rarely used. The library now consistently uses
+errors, and the latter was rarely used. The library now consistently uses
 `std::io::Error` for errors, reflecting the fact that virtually all errors in the
 library come from failed syscalls. When a "logic error" is detected, it is signaled as
 `ErrorKind::InvalidInput`. `CommunicateError` was likewise removed.
@@ -163,7 +163,7 @@ let job: Job = pipeline.start()?;
 ### stderr redirection
 
 `Pipeline::stderr_to()` only accepted a `File`. The new `Pipeline::stderr_all()` accepts
-any `OutputRedirection`:
+a file or a `Redirection`:
 
 ```rust
 // 0.2
@@ -194,8 +194,9 @@ Exec::cmd("noisy").stdout(Redirection::Null).stderr(Redirection::Null);
 
 ### Timeouts
 
-In 0.2, timeouts were configured on the builder with `time_limit()`. In 1.0, they live on
-`Job`, where you configure what to run separately from how long to wait:
+In 0.2, timeouts were configurable on the builder with `time_limit()`, but meant different
+things to `capture()`, `join()`, and `stream_stdout()`. In 1.0, `Job` has dedicated
+methods (`join_timeout`, `capture_timeout`) with well-defined behavior:
 
 ```rust
 // 0.2
@@ -206,14 +207,15 @@ let capture = Exec::cmd("slow")
 // 1.0
 let capture = Exec::cmd("slow")
     .stdout(Redirection::Pipe)
+    .stderr(Redirection::Pipe)
     .start()?
     .capture_timeout(Duration::from_secs(5))?;
 ```
 
 ### Communicator
 
-`Communicator::read()` no longer wraps results in `Option` - for non-set-up redirections
-output will simply be empty:
+`Communicator::read()` no longer wraps results in `Option` - if a stream wasn't
+redirected, its output will simply be empty:
 
 ```rust
 // 0.2
@@ -225,7 +227,8 @@ let (stdout, stderr) = comm.read()?;
 // stdout: Vec<u8>, stderr: Vec<u8>
 ```
 
-The new `read_to()` method lets you direct output to arbitrary writers without buffering:
+The new `read_to()` method lets you direct output to arbitrary writers without collecting
+it:
 
 ```rust
 // 1.0
