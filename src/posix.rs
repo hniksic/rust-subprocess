@@ -6,7 +6,7 @@ use std::iter;
 use std::marker::PhantomData;
 use std::mem;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
+use std::os::unix::io::{AsRawFd, BorrowedFd, FromRawFd, RawFd};
 use std::ptr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -298,10 +298,10 @@ pub fn waitpid(pid: u32, flags: i32) -> Result<(u32, ExitStatus)> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn pidfd_open(pid: u32) -> Result<OwnedFd> {
+pub fn pidfd_open(pid: u32) -> Result<std::os::unix::io::OwnedFd> {
     let fd =
         check_err(unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) })? as RawFd;
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    Ok(unsafe { std::os::unix::io::OwnedFd::from_raw_fd(fd) })
 }
 
 pub use libc::{SIGKILL, SIGTERM};

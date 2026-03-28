@@ -308,6 +308,7 @@ mod os {
         }
 
         pub(super) fn os_wait_timeout(&self, dur: Duration) -> io::Result<Option<ExitStatus>> {
+            #[allow(unused_mut)]
             let mut state = self.state.lock().unwrap();
             if let Some(status) = state.exit_status {
                 return Ok(Some(status));

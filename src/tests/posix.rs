@@ -65,7 +65,7 @@ fn exec_setpgid() {
     // child. Signaling the group should terminate both the shell and
     // its child.
     let job = Exec::cmd("sh")
-        .args(&["-c", "sleep 100 & wait"])
+        .args(&["-c", "sleep 10 & wait"])
         .setpgid()
         .start()
         .unwrap();
@@ -79,7 +79,7 @@ fn send_signal_group() {
     // child. Signaling the group should terminate both the shell and
     // its child.
     let job = Exec::cmd("sh")
-        .args(&["-c", "sleep 100 & wait"])
+        .args(&["-c", "sleep 10 & wait"])
         .setpgid()
         .start()
         .unwrap();
@@ -98,7 +98,7 @@ fn send_signal_group_after_finish() {
 #[test]
 fn kill_process() {
     // kill() sends SIGKILL which cannot be caught.
-    let job = Exec::cmd("sleep").arg("1000").start().unwrap();
+    let job = Exec::cmd("sleep").arg("10").start().unwrap();
     job.kill().unwrap();
     assert!(job.wait().unwrap().is_killed_by(libc::SIGKILL));
 }
@@ -107,11 +107,11 @@ fn kill_process() {
 fn kill_vs_terminate() {
     // Demonstrate that terminate (SIGTERM) and kill (SIGKILL) produce
     // different exit statuses.
-    let j1 = Exec::cmd("sleep").arg("1000").start().unwrap();
+    let j1 = Exec::cmd("sleep").arg("10").start().unwrap();
     j1.terminate().unwrap();
     let status1 = j1.wait().unwrap();
 
-    let j2 = Exec::cmd("sleep").arg("1000").start().unwrap();
+    let j2 = Exec::cmd("sleep").arg("10").start().unwrap();
     j2.kill().unwrap();
     let status2 = j2.wait().unwrap();
 
@@ -163,7 +163,7 @@ fn started_send_signal() {
 #[test]
 fn started_send_signal_group() {
     let job = Exec::cmd("sh")
-        .args(&["-c", "sleep 100 & wait"])
+        .args(&["-c", "sleep 10 & wait"])
         .setpgid()
         .start()
         .unwrap();
@@ -202,13 +202,13 @@ fn pipeline_setpgid_rejects_exec_setpgid() {
 
 #[test]
 fn null_redirect_does_not_leak_fd() {
-    // Regression test for issue #81. When bash spawns a background process ("sleep 100
+    // Regression test for issue #81. When bash spawns a background process ("sleep 10
     // &"), it won't return from "wait" until the backgrounded child also closes its
     // inherited file descriptors. If we leak the /dev/null fds to the child, the
     // backgrounded sleep keeps them open and join() hangs.
     let start = Instant::now();
     let status = Exec::cmd("sh")
-        .args(&["-c", "sleep 100 &"])
+        .args(&["-c", "sleep 10 &"])
         .stdout(Redirection::Null)
         .stderr(Redirection::Null)
         .join()
