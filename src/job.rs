@@ -9,7 +9,8 @@ use crate::process::{ExitStatus, Process};
 
 /// Interface to a started process or pipeline.
 ///
-/// Created by [`Exec::start`] or [`Pipeline::start`].
+/// Created by [`Exec::start`](crate::Exec::start) or
+/// [`Pipeline::start`](crate::Pipeline::start).
 ///
 /// When dropped, waits for all processes to finish unless [`detached`](Self::detach).
 #[derive(Debug)]
@@ -24,8 +25,9 @@ pub struct Job {
     pub stdout: Option<File>,
     /// Read end of the shared stderr pipe, if stderr was `Pipe`.
     pub stderr: Option<File>,
-    /// Data to feed to the first process's stdin, set by [`Exec::stdin`]
-    /// or [`Pipeline::stdin`].
+    /// Data to feed to the first process's stdin, set by
+    /// [`Exec::stdin`](crate::Exec::stdin) or
+    /// [`Pipeline::stdin`](crate::Pipeline::stdin).
     pub stdin_data: InputData,
     /// Whether to return an error on non-zero exit status.
     pub check_success: bool,
@@ -77,7 +79,8 @@ impl Job {
 
     /// Returns the PID of the last process in the pipeline.
     ///
-    /// For a single command started with [`Exec::start`], this is the PID of that
+    /// For a single command started with
+    /// [`Exec::start`](crate::Exec::start), this is the PID of that
     /// command. For a pipeline, this is the PID of the last command.
     ///
     /// # Panics

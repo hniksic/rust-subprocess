@@ -693,8 +693,8 @@ pub enum InputRedirection {
 
 /// Trait for converting a source type into an input redirection.
 ///
-/// Implemented on [`InputRedirection`] for each type accepted by
-/// [`Exec::stdin`] and [`Pipeline::stdin`](crate::Pipeline::stdin).
+/// Implemented for each type accepted by [`Exec::stdin`] and
+/// [`Pipeline::stdin`](crate::Pipeline::stdin).
 pub trait FromSource<T> {
     /// Create the input redirection from the given source.
     fn from_source(source: T) -> Self;
