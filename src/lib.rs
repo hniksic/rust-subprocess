@@ -47,6 +47,8 @@
 
 #![warn(missing_debug_implementations, missing_docs)]
 #![allow(clippy::type_complexity)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, doc(auto_cfg(hide(docsrs))))]
 
 mod communicate;
 mod exec;
@@ -89,7 +91,7 @@ pub mod unix {
 }
 
 /// Subprocess extensions for Windows platforms.
-#[cfg(windows)]
+#[cfg(any(windows, docsrs))]
 pub mod windows {
     pub use super::exec::windows::*;
 }

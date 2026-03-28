@@ -885,11 +885,12 @@ pub mod unix {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, docsrs))]
 pub mod windows {
     use std::ffi::OsString;
 
     use super::Exec;
+    #[cfg(windows)]
     use crate::spawn::Arg;
 
     /// Process creation flag: The process does not have a console window.
@@ -944,13 +945,29 @@ pub mod windows {
 
     impl ExecExt for Exec {
         fn creation_flags(mut self, flags: u32) -> Exec {
-            self.os_options.creation_flags = flags;
-            self
+            #[cfg(windows)]
+            {
+                self.os_options.creation_flags = flags;
+                self
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = flags;
+                unimplemented!()
+            }
         }
 
         fn raw_arg(mut self, arg: impl Into<OsString>) -> Exec {
-            self.args.push(Arg::Raw(arg.into()));
-            self
+            #[cfg(windows)]
+            {
+                self.args.push(Arg::Raw(arg.into()));
+                self
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = arg;
+                unimplemented!()
+            }
         }
     }
 }
