@@ -202,7 +202,8 @@ impl Exec {
     /// `subprocess` never spawns shells without an explicit request. This command
     /// requests the shell to be used; on Unix-like systems, this is equivalent to
     /// `Exec::cmd("sh").arg("-c").arg(cmdstr)`. On Windows, it runs
-    /// `Exec::cmd("cmd.exe").arg("/c")`.
+    /// `Exec::cmd("cmd.exe").arg("/c").raw_arg(cmdstr)`, passing the command
+    /// string without quoting so that `cmd.exe` interprets it correctly.
     ///
     /// `shell` is useful for porting code that uses the C `system` function, which also
     /// spawns a shell.
@@ -212,7 +213,16 @@ impl Exec {
     /// code is prone to errors and, if `filename` comes from an untrusted source, to
     /// shell injection attacks. Instead, use `Exec::cmd("sort").arg(filename)`.
     pub fn shell(cmdstr: impl Into<OsString>) -> Exec {
-        Exec::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
+        let cmd = Exec::cmd(SHELL[0]).args(&SHELL[1..]);
+        #[cfg(not(windows))]
+        {
+            cmd.arg(cmdstr)
+        }
+        #[cfg(windows)]
+        {
+            use crate::ExecExt;
+            cmd.raw_arg(cmdstr)
+        }
     }
 
     /// Appends `arg` to argument list.

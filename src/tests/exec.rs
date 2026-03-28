@@ -194,6 +194,12 @@ fn exec_shell() {
 }
 
 #[test]
+fn exec_shell_quoted_arg() {
+    let c = Exec::shell("printf \"hello  world\"").capture().unwrap();
+    assert_eq!(c.stdout_str(), "hello  world");
+}
+
+#[test]
 fn join_with_input_data() {
     Exec::cmd("true").stdin("xxx").join().unwrap();
 }
