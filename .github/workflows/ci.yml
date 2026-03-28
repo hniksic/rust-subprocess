@@ -19,6 +19,13 @@ jobs:
           components: rustfmt
       - run: cargo fmt --check
 
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: RUSTDOCFLAGS="--cfg docsrs" cargo doc --no-deps
+
   test:
     strategy:
       fail-fast: false
