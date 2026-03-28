@@ -835,7 +835,7 @@ pub mod unix {
 
         /// Put the subprocess into its own process group.
         ///
-        /// This calls `setpgid(0, 0)` before execing the child process, making it the
+        /// This calls `setpgid(0, 0)` before exec'ing the child process, making it the
         /// leader of a new process group.  Useful for a single process that spawns
         /// children, allowing them all to be signaled as a group with
         /// [`ProcessExt::send_signal_group`].

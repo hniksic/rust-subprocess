@@ -218,9 +218,9 @@ mod win32 {
 
     /// Wait for I/O completion on pending operations. Analogous to Unix maybe_poll().
     ///
-    /// Takes references to pending operations and waits for any to complete.
-    /// Returns `Ok(Some(stream))` indicating which completed, `Ok(None)` on timeout,
-    /// or `Err` if the syscall fails.
+    /// Takes references to pending operations and waits for any to complete.  Returns
+    /// `Ok(stream)` indicating which completed, or `Err` if the syscall fails or on
+    /// timeout.
     fn wait_for_io(
         stdin_pending: Option<&PendingWrite>,
         stdout_pending: Option<&PendingRead>,
@@ -494,7 +494,7 @@ impl Communicator {
     ///
     /// Note that this method does not wait for the subprocess to finish, only to close its
     /// output/error streams.  It is rare but possible for the program to continue running
-    /// after having closed the streams, in which case `Process::Drop` will wait for it
+    /// after having closed the streams, in which case `Process::drop()` will wait for it
     /// to finish.  If such a wait is undesirable, it can be prevented by waiting
     /// explicitly using `wait()`, by detaching the process using `detach()`, or by
     /// terminating it with `terminate()`.

@@ -151,7 +151,7 @@ impl Job {
     /// Closes the pipe ends, waits for all processes to finish, and returns the exit
     /// status of the last process.
     ///
-    /// If input or output was redirected to pipe, this close input and drain the output
+    /// If input or output was redirected to pipe, this closes input and drains the output
     /// as needed.
     pub fn join(mut self) -> io::Result<ExitStatus> {
         // Communicator::read_to() feeds stdin to the subprocess and drains its

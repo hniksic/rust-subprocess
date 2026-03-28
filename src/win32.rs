@@ -190,7 +190,7 @@ enum PendingState {
 /// A pending overlapped read operation.
 ///
 /// This type owns the buffer being read into and will cancel the I/O operation
-/// on drop if it hasn't completed. Use `is_pending()` to check status, `event()`
+/// on drop if it hasn't completed. Use `is_ready()` to check status, `event()`
 /// to get a handle for `WaitForMultipleObjects`, and `complete()` to finish the
 /// operation and retrieve the byte count.
 pub struct PendingRead {
@@ -284,7 +284,7 @@ impl std::fmt::Debug for PendingWrite {
 }
 
 impl PendingWrite {
-    /// Returns true if the operation is still pending.
+    /// Returns true if the operation is completed.
     pub fn is_ready(&self) -> bool {
         matches!(self.state, PendingState::Completed(_))
     }
