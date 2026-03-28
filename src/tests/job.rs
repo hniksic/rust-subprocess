@@ -235,20 +235,30 @@ fn broken_pipe_on_stdin() {
 
 #[test]
 fn terminate() {
-    let handle = Exec::cmd("sleep").arg("1000").start().unwrap();
+    let start = Instant::now();
+    let handle = Exec::cmd("sleep").arg("10").start().unwrap();
     handle.terminate().unwrap();
     handle.wait().unwrap();
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "terminate too slow"
+    );
 }
 
 #[test]
 fn terminate_twice() {
     use std::thread;
-    use std::time::Duration;
 
-    let handle = Exec::cmd("sleep").arg("1000").start().unwrap();
+    let start = Instant::now();
+    let handle = Exec::cmd("sleep").arg("10").start().unwrap();
     handle.terminate().unwrap();
     thread::sleep(Duration::from_millis(100));
     handle.terminate().unwrap();
+    handle.wait().unwrap();
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "terminate too slow"
+    );
 }
 
 #[test]
@@ -422,15 +432,20 @@ fn exec_wait_timeout_terminate() {
 
 #[test]
 fn started_pid() {
+    let start = Instant::now();
     let job = Exec::cmd("sleep").arg("10").start().unwrap();
     assert!(job.pid() > 0, "pid() should be nonzero");
     job.terminate().unwrap();
     job.wait().unwrap();
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "terminate too slow"
+    );
 }
 
 #[test]
 fn started_kill() {
-    let handle = Exec::cmd("sleep").arg("1000").start().unwrap();
+    let handle = Exec::cmd("sleep").arg("10").start().unwrap();
     handle.kill().unwrap();
     let status = handle.wait().unwrap();
     assert!(!status.success());
@@ -438,20 +453,30 @@ fn started_kill() {
 
 #[test]
 fn started_poll() {
+    let start = Instant::now();
     let job = Exec::cmd("sleep").arg("10").start().unwrap();
     assert!(job.poll().is_none(), "poll() should be None while running");
     job.terminate().unwrap();
     job.wait().unwrap();
     assert!(job.poll().is_some(), "poll() should be Some after finished");
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "terminate too slow"
+    );
 }
 
 #[test]
 fn started_wait_timeout_none() {
+    let start = Instant::now();
     let handle = Exec::cmd("sleep").arg("10").start().unwrap();
     let result = handle.wait_timeout(Duration::from_millis(100)).unwrap();
     assert!(result.is_none(), "should return None on timeout");
     handle.terminate().unwrap();
     handle.wait().unwrap();
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "terminate too slow"
+    );
 }
 
 #[test]
