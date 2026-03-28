@@ -159,8 +159,8 @@ fn write_to_subprocess() {
     let tmpdir = TempDir::new().unwrap();
     let tmpname = tmpdir.path().join("output");
     let mut handle = Exec::cmd("uniq")
-        .args(&["-", tmpname.to_str().unwrap()])
         .stdin(Redirection::Pipe)
+        .stdout(File::create(&tmpname).unwrap())
         .start()
         .unwrap();
     handle
