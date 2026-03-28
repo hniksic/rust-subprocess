@@ -10,7 +10,6 @@ mod os {
 
 use crate::communicate::Communicator;
 use crate::process::ExitStatus;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
@@ -21,7 +20,11 @@ use std::ops::BitOr;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::job::Job;
+pub(crate) use crate::job::{ReadAdapter, ReadErrAdapter, WriteAdapter};
 use crate::pipeline::Pipeline;
+use crate::spawn::{Arg, OsOptions, SpawnResult, display_escape, spawn};
+
 use os::*;
 
 /// Instruction what to do with a stream in the child process.
@@ -154,7 +157,7 @@ pub enum Redirection {
 #[must_use]
 pub struct Exec {
     command: OsString,
-    args: Vec<OsString>,
+    args: Vec<Arg>,
     check_success: bool,
     stdin_data: Option<InputData>,
     pub(crate) stdin_redirect: Arc<Redirection>,
@@ -164,7 +167,7 @@ pub struct Exec {
     executable: Option<OsString>,
     env: Option<Vec<(OsString, OsString)>>,
     cwd: Option<OsString>,
-    os_options: crate::spawn::OsOptions,
+    os_options: OsOptions,
 }
 
 impl Exec {
@@ -199,7 +202,8 @@ impl Exec {
     /// `subprocess` never spawns shells without an explicit request. This command
     /// requests the shell to be used; on Unix-like systems, this is equivalent to
     /// `Exec::cmd("sh").arg("-c").arg(cmdstr)`. On Windows, it runs
-    /// `Exec::cmd("cmd.exe").arg("/c")`.
+    /// `Exec::cmd("cmd.exe").arg("/c").raw_arg(cmdstr)`, passing the command
+    /// string without quoting so that `cmd.exe` interprets it correctly.
     ///
     /// `shell` is useful for porting code that uses the C `system` function, which also
     /// spawns a shell.
@@ -209,18 +213,28 @@ impl Exec {
     /// code is prone to errors and, if `filename` comes from an untrusted source, to
     /// shell injection attacks. Instead, use `Exec::cmd("sort").arg(filename)`.
     pub fn shell(cmdstr: impl Into<OsString>) -> Exec {
-        Exec::cmd(SHELL[0]).args(&SHELL[1..]).arg(cmdstr)
+        let cmd = Exec::cmd(SHELL[0]).args(&SHELL[1..]);
+        #[cfg(not(windows))]
+        {
+            cmd.arg(cmdstr)
+        }
+        #[cfg(windows)]
+        {
+            use crate::ExecExt;
+            cmd.raw_arg(cmdstr)
+        }
     }
 
     /// Appends `arg` to argument list.
     pub fn arg(mut self, arg: impl Into<OsString>) -> Exec {
-        self.args.push(arg.into());
+        self.args.push(Arg::Regular(arg.into()));
         self
     }
 
     /// Extends the argument list with `args`.
     pub fn args(mut self, args: impl IntoIterator<Item = impl Into<OsString>>) -> Exec {
-        self.args.extend(args.into_iter().map(|x| x.into()));
+        self.args
+            .extend(args.into_iter().map(|x| Arg::Regular(x.into())));
         self
     }
 
@@ -379,11 +393,11 @@ impl Exec {
     ///
     /// This is the low-level entry point used by both `start()` and
     /// `Pipeline::start()`. It calls `crate::spawn::spawn()` with the Exec's fields.
-    pub(crate) fn spawn(self) -> io::Result<crate::spawn::SpawnResult> {
+    pub(crate) fn spawn(self) -> io::Result<SpawnResult> {
         let mut argv = self.args;
-        argv.insert(0, self.command);
+        argv.insert(0, Arg::Regular(self.command));
 
-        crate::spawn::spawn(
+        spawn(
             argv,
             self.stdin_redirect,
             self.stdout_redirect,
@@ -515,22 +529,6 @@ impl Exec {
         self.start()?.capture()
     }
 
-    // used for Debug impl
-    pub(crate) fn display_escape(s: &str) -> Cow<'_, str> {
-        fn nice_char(c: char) -> bool {
-            match c {
-                '-' | '_' | '.' | ',' | '/' => true,
-                c if c.is_ascii_alphanumeric() => true,
-                _ => false,
-            }
-        }
-        if !s.chars().all(nice_char) {
-            Cow::Owned(format!("'{}'", s.replace("'", r#"'\''"#)))
-        } else {
-            Cow::Borrowed(s)
-        }
-    }
-
     /// Show Exec as command-line string quoted in the Unix style.
     pub fn to_cmdline_lossy(&self) -> String {
         let mut out = String::new();
@@ -541,24 +539,24 @@ impl Exec {
                 if current_map.get(k) == Some(&v) {
                     continue;
                 }
-                out.push_str(&Exec::display_escape(&k.to_string_lossy()));
+                out.push_str(&display_escape(&k.to_string_lossy()));
                 out.push('=');
-                out.push_str(&Exec::display_escape(&v.to_string_lossy()));
+                out.push_str(&display_escape(&v.to_string_lossy()));
                 out.push(' ');
             }
             let cmd_env: HashMap<_, _> = cmd_env.iter().map(|(k, v)| (k, v)).collect();
             for (k, _) in current {
                 if !cmd_env.contains_key(&k) {
-                    out.push_str(&Exec::display_escape(&k.to_string_lossy()));
+                    out.push_str(&display_escape(&k.to_string_lossy()));
                     out.push('=');
                     out.push(' ');
                 }
             }
         }
-        out.push_str(&Exec::display_escape(&self.command.to_string_lossy()));
+        out.push_str(&display_escape(&self.command.to_string_lossy()));
         for arg in &self.args {
             out.push(' ');
-            out.push_str(&Exec::display_escape(&arg.to_string_lossy()));
+            out.push_str(&arg.display_escaped());
         }
         out
     }
@@ -596,9 +594,6 @@ impl fmt::Debug for Exec {
         write!(f, "Exec {{ {} }}", self.to_cmdline_lossy())
     }
 }
-
-use crate::job::Job;
-pub(crate) use crate::job::{ReadAdapter, ReadErrAdapter, WriteAdapter};
 
 /// Data captured by [`Exec::capture`] and [`Pipeline::capture`].
 ///
@@ -698,8 +693,8 @@ pub enum InputRedirection {
 
 /// Trait for converting a source type into an input redirection.
 ///
-/// Implemented on [`InputRedirection`] for each type accepted by
-/// [`Exec::stdin`] and [`Pipeline::stdin`](crate::Pipeline::stdin).
+/// Implemented for each type accepted by [`Exec::stdin`] and
+/// [`Pipeline::stdin`](crate::Pipeline::stdin).
 pub trait FromSource<T> {
     /// Create the input redirection from the given source.
     fn from_source(source: T) -> Self;
@@ -892,7 +887,10 @@ pub mod unix {
 
 #[cfg(windows)]
 pub mod windows {
+    use std::ffi::OsString;
+
     use super::Exec;
+    use crate::spawn::Arg;
 
     /// Process creation flag: The process does not have a console window.
     pub const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -916,11 +914,42 @@ pub mod windows {
         /// `CreateProcessW`. Use this to control process creation behavior
         /// such as creating the process without a console window.
         fn creation_flags(self, flags: u32) -> Self;
+
+        /// Appends `arg` to the command line without quoting or escaping.
+        ///
+        /// This is useful for passing arguments to programs that use non-standard command
+        /// line parsing, such as `cmd.exe /c`. For example, passing `git commit -m "feat:
+        /// widget"` through [`arg`](super::Exec::arg) would apply MSVC-style argv
+        /// quoting, producing backslash escapes that `cmd.exe` would interpret literally.
+        ///
+        /// [`Exec::shell`](super::Exec::shell) uses this method to pass the command
+        /// string to `cmd.exe /c`.
+        ///
+        /// # Background
+        ///
+        /// On Windows, process arguments are not passed as an array (as on Unix) but as a
+        /// single command-line string to `CreateProcessW`. The regular
+        /// [`arg`](super::Exec::arg) method applies MSVC C runtime quoting rules so that
+        /// programs using standard `CommandLineToArgvW` parsing can reconstruct the
+        /// original arguments. `raw_arg` bypasses all quoting and passes its argument to
+        /// the command line verbatim. This is equivalent to [`raw_arg` in the standard
+        /// library](https://doc.rust-lang.org/std/os/windows/process/trait.CommandExt.html#tymethod.raw_arg).
+        ///
+        /// Only use `raw_arg` with hardcoded or carefully validated input, as no quoting
+        /// or escaping is applied.  [`Exec::shell`](super::Exec::shell) is an exception -
+        /// a shell command must reach the shell verbatim, so quoting would corrupt it
+        /// rather than protect it.
+        fn raw_arg(self, arg: impl Into<OsString>) -> Self;
     }
 
     impl ExecExt for Exec {
         fn creation_flags(mut self, flags: u32) -> Exec {
             self.os_options.creation_flags = flags;
+            self
+        }
+
+        fn raw_arg(mut self, arg: impl Into<OsString>) -> Exec {
+            self.args.push(Arg::Raw(arg.into()));
             self
         }
     }

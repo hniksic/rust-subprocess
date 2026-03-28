@@ -3,6 +3,7 @@ use std::io::{self, ErrorKind};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use crate::spawn::{Arg, OsOptions, display_escape, spawn};
 use crate::{Exec, Redirection};
 
 #[test]
@@ -21,7 +22,7 @@ fn bad_cmd() {
 fn reject_empty_argv() {
     // Exec::cmd() always produces at least one argv element, so we
     // test the empty argv rejection at the spawn level directly.
-    let test = crate::spawn::spawn(
+    let test = spawn(
         vec![],
         Arc::new(Redirection::None),
         Arc::new(Redirection::None),
@@ -30,7 +31,7 @@ fn reject_empty_argv() {
         None,
         None,
         None,
-        crate::spawn::OsOptions::default(),
+        OsOptions::default(),
     );
     assert!(
         matches!(&test, Err(e) if e.kind() == io::ErrorKind::InvalidInput),
@@ -59,8 +60,8 @@ fn null_byte_in_cmd() {
 fn merge_on_stdin_rejected() {
     // Redirection::Merge on stdin panics in the FromSource impl
     // for Exec, so we test Merge on stdin at the spawn level directly.
-    let result = crate::spawn::spawn(
-        vec!["true".into()],
+    let result = spawn(
+        vec![Arg::Regular("true".into())],
         Arc::new(Redirection::Merge),
         Arc::new(Redirection::None),
         Arc::new(Redirection::None),
@@ -68,7 +69,7 @@ fn merge_on_stdin_rejected() {
         None,
         None,
         None,
-        crate::spawn::OsOptions::default(),
+        OsOptions::default(),
     );
     assert!(
         matches!(&result, Err(e) if e.kind() == io::ErrorKind::InvalidInput),
@@ -190,6 +191,12 @@ fn capture_out_with_input_data_bytes() {
 fn exec_shell() {
     let stream = Exec::shell("printf foo").stream_stdout().unwrap();
     assert_eq!(io::read_to_string(stream).unwrap(), "foo");
+}
+
+#[test]
+fn exec_shell_quoted_arg() {
+    let c = Exec::shell("printf \"hello  world\"").capture().unwrap();
+    assert_eq!(c.stdout_str(), "hello  world");
 }
 
 #[test]
@@ -358,7 +365,7 @@ fn exec_to_string() {
         format!(
             "Exec {{ {} sh arg1 'don'\\''t' 'arg3 arg4' '?' ' ' '\u{009c}' }}",
             env::vars()
-                .map(|(k, _)| format!("{}=", Exec::display_escape(&k)))
+                .map(|(k, _)| format!("{}=", display_escape(&k)))
                 .collect::<Vec<_>>()
                 .join(" ")
         )
