@@ -427,12 +427,12 @@ use posix::RawCommunicator;
 #[cfg(windows)]
 use win32::RawCommunicator;
 
-/// Send input to a subprocess and capture its output, without deadlock.
+/// Sends input to a subprocess and captures its output, without deadlock.
 ///
-/// `Communicator` writes the provided input data to the subprocess's stdin (which is then
-/// closed), while simultaneously reading its stdout and stderr until end-of-file.  This
-/// parallel operation prevents deadlock that would occur if the subprocess produces output
-/// while waiting for more input.
+/// `Communicator` handles the two-way communication with the subprocess. Writing to stdin
+/// and reading from stdout/stderr must happen concurrently to avoid deadlock - if done
+/// serially, our process could block waiting to write input while the subprocess blocks
+/// waiting for us to read its output, or vice versa.
 ///
 /// Create a `Communicator` by calling [`Job::communicate`], then call [`read`] or
 /// [`read_string`] to perform the data exchange.
@@ -504,7 +504,9 @@ impl Communicator {
     /// * `Err(io::Error)` if a system call fails.  In case of timeout, the error kind will
     ///   be `ErrorKind::TimedOut`.
     pub fn read_to(&mut self, mut stdout: impl Write, mut stderr: impl Write) -> io::Result<()> {
-        let deadline = self.time_limit.map(|timeout| Instant::now() + timeout);
+        let deadline = self
+            .time_limit
+            .map(|time_limit| Instant::now() + time_limit);
         self.inner.read(
             &mut self.input_data,
             deadline,

@@ -86,9 +86,9 @@ impl Job {
     /// # Panics
     ///
     /// Panics if no processes have been started because this was created by an empty
-    /// `Pipeline`.
+    /// `Pipeline`. Use `pids()` if you need to handle such case.
     pub fn pid(&self) -> u32 {
-        self.processes.last().unwrap().pid()
+        self.processes.last().expect("no processes started").pid()
     }
 
     /// Returns the PIDs of all processes in the pipeline, in pipeline order.
@@ -190,18 +190,15 @@ impl Job {
     pub fn capture(mut self) -> io::Result<Capture> {
         let mut comm = self.communicate()?;
         let (stdout, stderr) = comm.read()?;
-        let capture = Capture {
+        let exit_status = self.wait()?;
+        if self.check_success && !exit_status.success() {
+            return Err(io::Error::other(format!("command failed: {exit_status}")));
+        }
+        Ok(Capture {
             stdout,
             stderr,
-            exit_status: self.wait()?,
-        };
-        if self.check_success && !capture.success() {
-            return Err(io::Error::other(format!(
-                "command failed: {}",
-                capture.exit_status
-            )));
-        }
-        Ok(capture)
+            exit_status,
+        })
     }
 
     /// Like [`capture`](Self::capture), but with a timeout.
@@ -215,18 +212,14 @@ impl Job {
         let exit_status = self
             .wait_timeout(deadline.saturating_duration_since(Instant::now()))?
             .ok_or_else(|| io::Error::from(ErrorKind::TimedOut))?;
-        let capture = Capture {
+        if self.check_success && !exit_status.success() {
+            return Err(io::Error::other(format!("command failed: {exit_status}",)));
+        }
+        Ok(Capture {
             stdout,
             stderr,
             exit_status,
-        };
-        if self.check_success && !capture.success() {
-            return Err(io::Error::other(format!(
-                "command failed: {}",
-                capture.exit_status
-            )));
-        }
-        Ok(capture)
+        })
     }
 }
 
