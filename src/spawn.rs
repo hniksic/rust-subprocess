@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -11,6 +12,43 @@ use crate::process::Process;
 
 pub(crate) use os::OsOptions;
 pub use os::make_pipe;
+
+/// A process argument, either regular (quoted on Windows) or raw
+/// (passed verbatim).
+#[derive(Clone, Debug)]
+pub(crate) enum Arg {
+    Regular(OsString),
+    #[cfg(windows)]
+    Raw(OsString),
+}
+
+impl Arg {
+    /// Return the argument formatted for display in a shell-like command line. Regular
+    /// arguments are escaped, while raw arguments are included as-is.
+    pub fn display_escaped(&self) -> String {
+        match self {
+            Arg::Regular(s) => display_escape(&s.to_string_lossy()).into_owned(),
+            #[cfg(windows)]
+            Arg::Raw(s) => s.to_string_lossy().into_owned(),
+        }
+    }
+}
+
+/// Shell-escape a string for display purposes.
+pub(crate) fn display_escape(s: &str) -> Cow<'_, str> {
+    fn nice_char(c: char) -> bool {
+        match c {
+            '-' | '_' | '.' | ',' | '/' => true,
+            c if c.is_ascii_alphanumeric() => true,
+            _ => false,
+        }
+    }
+    if !s.chars().all(nice_char) {
+        Cow::Owned(format!("'{}'", s.replace("'", r#"'\''"#)))
+    } else {
+        Cow::Borrowed(s)
+    }
+}
 
 pub(crate) struct SpawnResult {
     pub process: Process,
@@ -26,7 +64,7 @@ pub(crate) struct SpawnResult {
 /// `Process` handle.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn(
-    argv: Vec<OsString>,
+    argv: Vec<Arg>,
     stdin: Arc<Redirection>,
     stdout: Arc<Redirection>,
     stderr: Arc<Redirection>,
@@ -282,7 +320,7 @@ pub(crate) mod os {
     }
 
     pub(crate) fn os_start(
-        argv: Vec<OsString>,
+        argv: Vec<Arg>,
         child_ends: (
             Option<Arc<Redirection>>,
             Option<Arc<Redirection>>,
@@ -294,6 +332,7 @@ pub(crate) mod os {
         cwd: Option<&OsStr>,
         os_options: OsOptions,
     ) -> io::Result<Process> {
+        let argv: Vec<OsString> = argv.into_iter().map(|Arg::Regular(s)| s).collect();
         // Both ends are created with CLOEXEC, so the read end auto-closes in the child on
         // successful exec. The write end is kept open in the child to report exec errors.
         let mut exec_fail_pipe = posix::pipe()?;
@@ -491,7 +530,7 @@ pub(crate) mod os {
     pub use crate::win32::make_redirection_to_standard_stream;
 
     pub(crate) fn os_start(
-        argv: Vec<OsString>,
+        argv: Vec<Arg>,
         child_ends: (
             Option<Arc<Redirection>>,
             Option<Arc<Redirection>>,
@@ -615,16 +654,22 @@ pub(crate) mod os {
         executable
     }
 
-    fn assemble_cmdline(argv: Vec<OsString>) -> io::Result<OsString> {
+    fn assemble_cmdline(argv: Vec<Arg>) -> io::Result<OsString> {
         let mut cmdline = vec![];
         for (i, arg) in argv.iter().enumerate() {
             if i > 0 {
                 cmdline.push(' ' as u16);
             }
-            if arg.encode_wide().any(|c| c == 0) {
+            let s = match arg {
+                Arg::Regular(s) | Arg::Raw(s) => s,
+            };
+            if s.encode_wide().any(|c| c == 0) {
                 return Err(io::Error::from_raw_os_error(win32::ERROR_BAD_PATHNAME as _));
             }
-            append_quoted(arg, &mut cmdline);
+            match arg {
+                Arg::Regular(s) => append_quoted(s, &mut cmdline),
+                Arg::Raw(s) => cmdline.extend(s.encode_wide()),
+            }
         }
         Ok(OsString::from_wide(&cmdline))
     }
