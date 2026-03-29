@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
+use super::exec_signal_delay;
 use crate::{Exec, Redirection};
 
 // --- Single-command Job tests ---
@@ -237,6 +238,7 @@ fn broken_pipe_on_stdin() {
 fn terminate() {
     let start = Instant::now();
     let handle = Exec::cmd("sleep").arg("10").start().unwrap();
+    exec_signal_delay();
     handle.terminate().unwrap();
     handle.wait().unwrap();
     assert!(
@@ -251,6 +253,7 @@ fn terminate_twice() {
 
     let start = Instant::now();
     let handle = Exec::cmd("sleep").arg("10").start().unwrap();
+    exec_signal_delay();
     handle.terminate().unwrap();
     thread::sleep(Duration::from_millis(100));
     handle.terminate().unwrap();
@@ -279,6 +282,7 @@ fn pid_while_running() {
         job.processes[0].exit_status().is_none(),
         "exit_status() should be None while running"
     );
+    exec_signal_delay();
     job.terminate().unwrap();
     job.wait().unwrap();
     // pid is still available after exit
@@ -292,6 +296,7 @@ fn pid_while_running() {
 #[test]
 fn poll_running_process() {
     let job = Exec::cmd("sleep").arg("10").start().unwrap();
+    exec_signal_delay();
     assert!(
         job.poll().is_none(),
         "poll() should return None for running process"
@@ -346,6 +351,7 @@ fn wait_timeout_zero() {
         "zero timeout took too long"
     );
     assert!(result.is_none());
+    exec_signal_delay();
     job.terminate().unwrap();
     job.wait().unwrap();
 }
@@ -434,6 +440,7 @@ fn exec_wait_timeout_terminate() {
 fn started_pid() {
     let start = Instant::now();
     let job = Exec::cmd("sleep").arg("10").start().unwrap();
+    exec_signal_delay();
     assert!(job.pid() > 0, "pid() should be nonzero");
     job.terminate().unwrap();
     job.wait().unwrap();
@@ -446,6 +453,7 @@ fn started_pid() {
 #[test]
 fn started_kill() {
     let handle = Exec::cmd("sleep").arg("10").start().unwrap();
+    exec_signal_delay();
     handle.kill().unwrap();
     let status = handle.wait().unwrap();
     assert!(!status.success());
@@ -455,6 +463,7 @@ fn started_kill() {
 fn started_poll() {
     let start = Instant::now();
     let job = Exec::cmd("sleep").arg("10").start().unwrap();
+    exec_signal_delay();
     assert!(job.poll().is_none(), "poll() should be None while running");
     job.terminate().unwrap();
     job.wait().unwrap();
