@@ -79,3 +79,17 @@ jobs:
           run: |
             cargo build
             cargo test
+
+  netbsd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test on NetBSD
+        uses: vmactions/netbsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg_add rust
+          run: |
+            cargo build
+            cargo test

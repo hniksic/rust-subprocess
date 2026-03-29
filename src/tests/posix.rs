@@ -1,11 +1,13 @@
 use std::time::{Duration, Instant};
 
+use super::exec_signal_delay;
 use crate::unix::{JobExt, PipelineExt};
 use crate::{Exec, ExecExt, ExitStatus, Redirection};
 
 #[test]
 fn err_terminate() {
     let job = Exec::cmd("sleep").arg("5").start().unwrap();
+    exec_signal_delay();
     assert!(job.poll().is_none());
     job.terminate().unwrap();
     assert!(job.wait().unwrap().is_killed_by(libc::SIGTERM));
@@ -29,6 +31,7 @@ fn waitpid_echild() {
 #[test]
 fn send_signal() {
     let job = Exec::cmd("sleep").arg("5").start().unwrap();
+    exec_signal_delay();
     job.send_signal(libc::SIGUSR1).unwrap();
     assert_eq!(job.wait().unwrap().signal(), Some(libc::SIGUSR1));
 }
@@ -69,6 +72,7 @@ fn exec_setpgid() {
         .setpgid()
         .start()
         .unwrap();
+    exec_signal_delay();
     job.send_signal_group(libc::SIGTERM).unwrap();
     assert!(job.wait().unwrap().is_killed_by(libc::SIGTERM));
 }
@@ -83,6 +87,7 @@ fn send_signal_group() {
         .setpgid()
         .start()
         .unwrap();
+    exec_signal_delay();
     job.send_signal_group(libc::SIGTERM).unwrap();
     assert!(job.wait().unwrap().is_killed_by(libc::SIGTERM));
 }
@@ -99,6 +104,7 @@ fn send_signal_group_after_finish() {
 fn kill_process() {
     // kill() sends SIGKILL which cannot be caught.
     let job = Exec::cmd("sleep").arg("10").start().unwrap();
+    exec_signal_delay();
     job.kill().unwrap();
     assert!(job.wait().unwrap().is_killed_by(libc::SIGKILL));
 }
@@ -108,10 +114,12 @@ fn kill_vs_terminate() {
     // Demonstrate that terminate (SIGTERM) and kill (SIGKILL) produce
     // different exit statuses.
     let j1 = Exec::cmd("sleep").arg("10").start().unwrap();
+    exec_signal_delay();
     j1.terminate().unwrap();
     let status1 = j1.wait().unwrap();
 
     let j2 = Exec::cmd("sleep").arg("10").start().unwrap();
+    exec_signal_delay();
     j2.kill().unwrap();
     let status2 = j2.wait().unwrap();
 
@@ -155,6 +163,7 @@ fn exit_status_display() {
 #[test]
 fn started_send_signal() {
     let job = Exec::cmd("sleep").arg("5").start().unwrap();
+    exec_signal_delay();
     job.send_signal(libc::SIGTERM).unwrap();
     let status = job.wait().unwrap();
     assert!(status.is_killed_by(libc::SIGTERM));
@@ -167,6 +176,7 @@ fn started_send_signal_group() {
         .setpgid()
         .start()
         .unwrap();
+    exec_signal_delay();
     job.send_signal_group(libc::SIGKILL).unwrap();
     let status = job.wait().unwrap();
     assert!(status.is_killed_by(libc::SIGKILL) || status.is_killed_by(libc::SIGTERM));
@@ -183,6 +193,7 @@ fn pipeline_setpgid() {
         .start()
         .unwrap();
     assert_eq!(handle.processes.len(), 2);
+    exec_signal_delay();
     handle.send_signal_group(libc::SIGTERM).unwrap();
     for p in &handle.processes {
         let status = p.wait().unwrap();

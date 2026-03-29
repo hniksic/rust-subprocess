@@ -9,6 +9,15 @@ mod win32;
 
 use crate::{Capture, Communicator, Exec, ExitStatus, Job, Pipeline, Process, Redirection};
 
+/// Work around a NetBSD kernel race where signals sent immediately after
+/// exec can be silently dropped. A brief sleep gives the child time to
+/// become fully ready for signal delivery.
+fn exec_signal_delay() {
+    if cfg!(target_os = "netbsd") {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 fn assert_send_sync<T: Send + Sync>() {}
 
 #[test]
