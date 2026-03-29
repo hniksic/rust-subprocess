@@ -154,7 +154,7 @@ fn exit_status_display() {
 
 #[test]
 fn started_send_signal() {
-    let job = Exec::cmd("sleep").arg("100").start().unwrap();
+    let job = Exec::cmd("sleep").arg("5").start().unwrap();
     job.send_signal(libc::SIGTERM).unwrap();
     let status = job.wait().unwrap();
     assert!(status.is_killed_by(libc::SIGTERM));
@@ -178,7 +178,7 @@ fn started_send_signal_group() {
 fn pipeline_setpgid() {
     // Spawn a pipeline with setpgid, signal the group, verify all
     // processes die.
-    let handle = (Exec::cmd("sleep").arg("100") | Exec::cmd("sleep").arg("100"))
+    let handle = (Exec::cmd("sleep").arg("5") | Exec::cmd("sleep").arg("5"))
         .setpgid()
         .start()
         .unwrap();
