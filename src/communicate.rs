@@ -287,12 +287,13 @@ mod win32 {
 
     #[derive(Debug)]
     pub struct RawCommunicator {
-        stdin: Option<File>,
-        stdout: Option<File>,
-        stderr: Option<File>,
+        // Pending I/O drops before File: its Drop cancels and waits on a live handle.
         stdin_pending: Option<PendingWrite>,
         stdout_pending: Option<PendingRead>,
         stderr_pending: Option<PendingRead>,
+        stdin: Option<File>,
+        stdout: Option<File>,
+        stderr: Option<File>,
     }
 
     impl RawCommunicator {
