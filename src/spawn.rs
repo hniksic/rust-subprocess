@@ -272,11 +272,12 @@ fn get_redirection_to_standard_stream(which: StandardStream) -> io::Result<Arc<R
 pub(crate) mod os {
     use super::*;
 
-    #[derive(Clone, Default)]
+    #[derive(Default)]
     pub struct OsOptions {
         pub setuid: Option<u32>,
         pub setgid: Option<u32>,
         pub setpgid: Option<u32>,
+        pub pre_exec_fns: Vec<Box<dyn FnMut() -> io::Result<()> + Send + Sync>>,
     }
 
     impl OsOptions {
@@ -350,7 +351,7 @@ pub(crate) mod os {
                 }
                 None => {
                     drop(exec_fail_pipe.0);
-                    let result = do_exec(just_exec, child_ends, do_chdir, &os_options);
+                    let result = do_exec(just_exec, child_ends, do_chdir, os_options);
                     let error_code = match result {
                         Ok(()) => unreachable!(),
                         Err(e) => e.raw_os_error().unwrap_or(-1),
@@ -439,7 +440,7 @@ pub(crate) mod os {
             Option<Arc<Redirection>>,
         ),
         chdir: Option<impl FnOnce() -> io::Result<()>>,
-        os_options: &OsOptions,
+        os_options: OsOptions,
     ) -> io::Result<()> {
         // Called after fork - use ManuallyDrop to prevent deallocation on
         // early return via ?.
@@ -448,6 +449,7 @@ pub(crate) mod os {
         let mut stdout = std::mem::ManuallyDrop::new(stdout);
         let mut stderr = std::mem::ManuallyDrop::new(stderr);
         let mut just_exec = std::mem::ManuallyDrop::new(just_exec);
+        let mut os_options = std::mem::ManuallyDrop::new(os_options);
 
         if let Some(chdir) = chdir {
             chdir()?;
@@ -466,6 +468,9 @@ pub(crate) mod os {
         }
         if let Some(pgid) = os_options.setpgid {
             posix::setpgid(0, pgid)?;
+        }
+        for f in &mut os_options.pre_exec_fns {
+            f()?;
         }
         // SAFETY: just_exec is taken exactly once and not accessed afterward.
         let just_exec = unsafe { std::mem::ManuallyDrop::take(&mut just_exec) };
