@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use super::exec_signal_delay;
-use crate::unix::{JobExt, PipelineExt};
+use crate::unix::{ExitStatusExt, JobExt, PipelineExt};
 use crate::{Exec, ExecExt, ExitStatus, Redirection};
 
 #[test]
@@ -156,6 +156,14 @@ fn exit_status_display() {
     assert_eq!(ExitStatus::from_raw(0 << 8).to_string(), "exit code 0");
     assert_eq!(ExitStatus::from_raw(1 << 8).to_string(), "exit code 1");
     assert_eq!(ExitStatus::from_raw(9).to_string(), "signal 9");
+}
+
+// --- ExitStatusExt tests ---
+
+#[test]
+fn exit_status_ext_round_trip() {
+    let status = <ExitStatus as ExitStatusExt>::from_raw(42 << 8);
+    assert_eq!(status.into_raw(), Some(42 << 8));
 }
 
 // --- arg0 tests ---

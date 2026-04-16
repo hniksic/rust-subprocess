@@ -463,6 +463,29 @@ mod os {
                 self.0.send_signal_group(signal)
             }
         }
+
+        /// Unix-specific extension methods for [`ExitStatus`].
+        pub trait ExitStatusExt {
+            /// Constructs an `ExitStatus` from the raw status returned by `waitpid()`.
+            ///
+            /// The value encodes both normal exit codes and signal deaths in the format
+            /// documented by `wait(2)`.
+            fn from_raw(raw: i32) -> ExitStatus;
+
+            /// Returns the raw `waitpid()` status, or `None` if the exit status could not
+            /// be determined (e.g. because someone else waited for the child).
+            fn into_raw(self) -> Option<i32>;
+        }
+
+        impl ExitStatusExt for ExitStatus {
+            fn from_raw(raw: i32) -> ExitStatus {
+                ExitStatus::from_raw(raw)
+            }
+
+            fn into_raw(self) -> Option<i32> {
+                self.0
+            }
+        }
     }
 }
 
@@ -594,3 +617,45 @@ mod os {
 pub(crate) use os::ExtProcessState;
 #[cfg(unix)]
 pub use os::ext::*;
+
+/// Windows-specific extensions.
+#[cfg(any(windows, docsrs))]
+pub mod windows {
+    use super::ExitStatus;
+
+    /// Windows-specific extension methods for [`ExitStatus`].
+    pub trait ExitStatusExt {
+        /// Constructs an `ExitStatus` from the raw exit code returned by
+        /// `GetExitCodeProcess()`.
+        fn from_raw(raw: u32) -> ExitStatus;
+
+        /// Returns the raw `GetExitCodeProcess()` value, or `None` if the exit status
+        /// could not be determined.
+        fn into_raw(self) -> Option<u32>;
+    }
+
+    impl ExitStatusExt for ExitStatus {
+        fn from_raw(raw: u32) -> ExitStatus {
+            #[cfg(windows)]
+            {
+                ExitStatus::from_raw(raw)
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = raw;
+                unimplemented!()
+            }
+        }
+
+        fn into_raw(self) -> Option<u32> {
+            #[cfg(windows)]
+            {
+                self.0
+            }
+            #[cfg(not(windows))]
+            {
+                unimplemented!()
+            }
+        }
+    }
+}
