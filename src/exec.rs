@@ -303,6 +303,19 @@ impl Exec {
         self
     }
 
+    /// Overrides the first process argument, `argv[0]`.
+    ///
+    /// By default `argv[0]` is set to the command passed to [`Exec::cmd`]. This method
+    /// allows setting it to an arbitrary value.
+    pub fn arg0(mut self, arg: impl Into<OsString>) -> Exec {
+        if self.executable.is_none() {
+            self.executable = Some(std::mem::replace(&mut self.command, arg.into()));
+        } else {
+            self.command = arg.into();
+        }
+        self
+    }
+
     /// Specifies the current working directory of the child process.
     ///
     /// If unspecified, the current working directory is inherited from the parent.

@@ -158,6 +158,19 @@ fn exit_status_display() {
     assert_eq!(ExitStatus::from_raw(9).to_string(), "signal 9");
 }
 
+// --- arg0 tests ---
+
+#[test]
+fn arg0_override() {
+    let out = Exec::cmd("sh")
+        .arg0("custom-name")
+        .args(&["-c", "echo $0"])
+        .capture()
+        .unwrap()
+        .stdout_str();
+    assert_eq!(out.trim(), "custom-name");
+}
+
 // --- JobExt tests ---
 
 #[test]
