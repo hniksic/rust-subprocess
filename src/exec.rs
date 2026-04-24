@@ -303,6 +303,19 @@ impl Exec {
         self
     }
 
+    /// Overrides the first process argument, `argv[0]`.
+    ///
+    /// By default `argv[0]` is set to the command passed to [`Exec::cmd`]. This method
+    /// allows setting it to an arbitrary value.
+    pub fn arg0(mut self, arg: impl Into<OsString>) -> Exec {
+        if self.executable.is_none() {
+            self.executable = Some(std::mem::replace(&mut self.command, arg.into()));
+        } else {
+            self.command = arg.into();
+        }
+        self
+    }
+
     /// Specifies the current working directory of the child process.
     ///
     /// If unspecified, the current working directory is inherited from the parent.
@@ -846,6 +859,31 @@ pub mod unix {
         /// [`ProcessExt::send_signal_group`]: crate::unix::ProcessExt::send_signal_group
         /// [`PipelineExt::setpgid`]: PipelineExt::setpgid
         fn setpgid(self) -> Self;
+
+        /// Schedule a closure to run in the child process between `fork()` and `exec()`.
+        ///
+        /// This is useful for performing setup that must happen in the child, such as
+        /// setting resource limits, calling `setsid()`, or closing extra file
+        /// descriptors.
+        ///
+        /// Multiple closures can be registered and they will run in the order they were
+        /// added. If any closure returns an error, the child process will exit and the
+        /// error will be reported to the parent.
+        ///
+        /// Closures run after all builder-configured setup and immediately before the
+        /// `exec()`. To run code with the parent's original privileges, omit the
+        /// corresponding builder methods and drop privileges manually at the end of the
+        /// closure.
+        ///
+        /// # Safety
+        ///
+        /// The closure runs after `fork()` in the child process. It must only call
+        /// async-signal-safe functions. In particular, it must not allocate, acquire
+        /// locks, or call into code that does so. Violating this may cause deadlocks or
+        /// undefined behavior in the child process.
+        unsafe fn pre_exec<F>(self, f: F) -> Self
+        where
+            F: FnMut() -> io::Result<()> + Send + Sync + 'static;
     }
 
     impl ExecExt for Exec {
@@ -861,6 +899,14 @@ pub mod unix {
 
         fn setpgid(mut self) -> Exec {
             self.os_options.setpgid = Some(0);
+            self
+        }
+
+        unsafe fn pre_exec<F>(mut self, f: F) -> Exec
+        where
+            F: FnMut() -> io::Result<()> + Send + Sync + 'static,
+        {
+            self.os_options.pre_exec_fns.push(Box::new(f));
             self
         }
     }

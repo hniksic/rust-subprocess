@@ -87,6 +87,7 @@ pub use process::Process;
 pub mod unix {
     pub use super::exec::unix::JobExt;
     pub use super::exec::unix::PipelineExt;
+    pub use super::process::ExitStatusExt;
     pub use super::process::ProcessExt;
 }
 
@@ -94,4 +95,5 @@ pub mod unix {
 #[cfg(any(windows, docsrs))]
 pub mod windows {
     pub use super::exec::windows::*;
+    pub use super::process::windows::ExitStatusExt;
 }

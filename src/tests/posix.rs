@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use super::exec_signal_delay;
-use crate::unix::{JobExt, PipelineExt};
+use crate::unix::{ExitStatusExt, JobExt, PipelineExt};
 use crate::{Exec, ExecExt, ExitStatus, Redirection};
 
 #[test]
@@ -156,6 +156,89 @@ fn exit_status_display() {
     assert_eq!(ExitStatus::from_raw(0 << 8).to_string(), "exit code 0");
     assert_eq!(ExitStatus::from_raw(1 << 8).to_string(), "exit code 1");
     assert_eq!(ExitStatus::from_raw(9).to_string(), "signal 9");
+}
+
+// --- ExitStatusExt tests ---
+
+#[test]
+fn exit_status_ext_round_trip() {
+    let status = <ExitStatus as ExitStatusExt>::from_raw(42 << 8);
+    assert_eq!(status.into_raw(), Some(42 << 8));
+}
+
+// --- pre_exec tests ---
+
+#[test]
+fn pre_exec_runs() {
+    // pre_exec calls _exit(42) directly; the child never reaches exec, and the parent
+    // observes the exit code.
+    let job = unsafe {
+        Exec::cmd("true")
+            .pre_exec(|| libc::_exit(42))
+            .start()
+            .unwrap()
+    };
+    let status = job.wait().unwrap();
+    assert_eq!(status.code(), Some(42));
+}
+
+#[test]
+fn pre_exec_error_reported() {
+    // A pre_exec closure that returns an error should cause start() to fail.
+    let result = unsafe {
+        Exec::cmd("true")
+            .pre_exec(|| Err(std::io::Error::from_raw_os_error(libc::EACCES)))
+            .start()
+    };
+    let err = result.unwrap_err();
+    assert_eq!(err.raw_os_error(), Some(libc::EACCES));
+}
+
+#[test]
+fn pre_exec_multiple() {
+    // Each closure writes a distinct byte to a pipe the parent holds open; the parent
+    // reads back the bytes to verify both closures ran in registration order.
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    let (mut read_end, write_end) = crate::posix::pipe().unwrap();
+    let fd = write_end.as_raw_fd();
+    let job = unsafe {
+        Exec::cmd("true")
+            .pre_exec(move || {
+                let n = libc::write(fd, b"1".as_ptr().cast(), 1);
+                if n != 1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            })
+            .pre_exec(move || {
+                let n = libc::write(fd, b"2".as_ptr().cast(), 1);
+                if n != 1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            })
+            .start()
+            .unwrap()
+    };
+    drop(write_end);
+    let mut buf = [0u8; 2];
+    read_end.read_exact(&mut buf).unwrap();
+    assert_eq!(&buf, b"12");
+    job.wait().unwrap();
+}
+
+// --- arg0 tests ---
+
+#[test]
+fn arg0_override() {
+    let out = Exec::cmd("sh")
+        .arg0("custom-name")
+        .args(&["-c", "echo $0"])
+        .capture()
+        .unwrap()
+        .stdout_str();
+    assert_eq!(out.trim(), "custom-name");
 }
 
 // --- JobExt tests ---
