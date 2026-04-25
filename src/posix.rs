@@ -54,14 +54,25 @@ pub fn pipe() -> Result<(File, File)> {
 pub fn pipe() -> Result<(File, File)> {
     let mut fds = [0; 2];
     check_err(unsafe { libc::pipe(fds.as_mut_ptr()) })?;
+    // Wrap in File immediately so an fcntl failure below closes both fds via Drop
+    // instead of leaking them.
+    let (read, write) = unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) };
     // Set CLOEXEC on both ends. There is a small race window between pipe() and fcntl()
     // where another thread's fork()+exec() could inherit these fds - this matches what
     // Rust stdlib does on these platforms that lack pipe2().
     unsafe {
-        check_err(libc::fcntl(fds[0], libc::F_SETFD, libc::FD_CLOEXEC))?;
-        check_err(libc::fcntl(fds[1], libc::F_SETFD, libc::FD_CLOEXEC))?;
+        check_err(libc::fcntl(
+            read.as_raw_fd(),
+            libc::F_SETFD,
+            libc::FD_CLOEXEC,
+        ))?;
+        check_err(libc::fcntl(
+            write.as_raw_fd(),
+            libc::F_SETFD,
+            libc::FD_CLOEXEC,
+        ))?;
     }
-    Ok(unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) })
+    Ok((read, write))
 }
 
 // marked unsafe because the child must not allocate before exec-ing

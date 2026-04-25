@@ -122,6 +122,9 @@ pub fn make_pipe() -> Result<(File, File)> {
             &mut sa as LPSECURITY_ATTRIBUTES,
         )
     })?;
+    // Take ownership immediately so a CreateFileW failure below closes the named pipe
+    // via File::Drop instead of leaking the handle.
+    let write_file = unsafe { File::from_raw_handle(write_handle) };
     let read_handle = check_handle(unsafe {
         CreateFileW(
             pipe_name.as_ptr(),
@@ -133,12 +136,7 @@ pub fn make_pipe() -> Result<(File, File)> {
             ptr::null_mut(),
         )
     })?;
-    Ok(unsafe {
-        (
-            File::from_raw_handle(read_handle),
-            File::from_raw_handle(write_handle),
-        )
-    })
+    Ok((unsafe { File::from_raw_handle(read_handle) }, write_file))
 }
 
 /// Create a manual-reset event object for use with overlapped I/O.
