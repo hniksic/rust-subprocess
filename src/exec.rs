@@ -23,7 +23,7 @@ use std::sync::Arc;
 use crate::job::Job;
 pub(crate) use crate::job::{ReadAdapter, ReadErrAdapter, WriteAdapter};
 use crate::pipeline::Pipeline;
-use crate::spawn::{Arg, OsOptions, SpawnResult, display_escape, spawn};
+use crate::spawn::{Arg, OsOptions, SpawnResult, display_escape, env_keys_cmp, spawn};
 
 use os::*;
 
@@ -299,7 +299,8 @@ impl Exec {
     /// Other environment variables are inherited by default.
     pub fn env_remove(mut self, key: impl Into<OsString>) -> Exec {
         let key = key.into();
-        self.ensure_env().retain(|(k, _v)| *k != key);
+        self.ensure_env()
+            .retain(|(k, _v)| env_keys_cmp(k, &key).is_ne());
         self
     }
 

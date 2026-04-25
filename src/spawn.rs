@@ -11,6 +11,7 @@ use crate::process::ExtProcessState;
 use crate::process::Process;
 
 pub(crate) use os::OsOptions;
+pub(crate) use os::env_keys_cmp;
 pub use os::make_pipe;
 
 /// A process argument, either regular (quoted on Windows) or raw
@@ -291,6 +292,12 @@ pub(crate) mod os {
 
     pub const NULL_DEVICE: &str = "/dev/null";
 
+    /// Compares two env var names under the platform's env semantics. Unix env
+    /// var names are case-sensitive, so this is byte ordering.
+    pub(crate) fn env_keys_cmp(a: &OsStr, b: &OsStr) -> std::cmp::Ordering {
+        a.cmp(b)
+    }
+
     use crate::posix;
     use std::collections::HashSet;
     use std::ffi::OsString;
@@ -523,7 +530,16 @@ pub(crate) mod os {
 
     pub const NULL_DEVICE: &str = "nul";
 
-    use std::collections::HashSet;
+    /// Compares two env var names under the platform's env semantics. Windows env
+    /// var names are case-insensitive; this delegates to the OS via
+    /// `CompareStringOrdinal(bIgnoreCase=TRUE)`, matching what the stdlib uses for
+    /// `std::sys::process::windows::EnvKey`.
+    pub(crate) fn env_keys_cmp(a: &OsStr, b: &OsStr) -> std::cmp::Ordering {
+        let a: Vec<u16> = a.encode_wide().collect();
+        let b: Vec<u16> = b.encode_wide().collect();
+        win32::compare_string_ordinal(&a, &b, true)
+    }
+
     use std::env;
     use std::ffi::{OsStr, OsString};
     use std::fs::File;
@@ -574,24 +590,14 @@ pub(crate) mod os {
     }
 
     fn format_env_block(env: &[(OsString, OsString)]) -> Vec<u16> {
-        fn to_uppercase(s: &OsStr) -> OsString {
-            OsString::from_wide(
-                &s.encode_wide()
-                    .map(|c| {
-                        if c < 128 {
-                            (c as u8).to_ascii_uppercase() as u16
-                        } else {
-                            c
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        }
+        // Dedupe by env-var-name semantics, keeping the last occurrence of each
+        // key. Walk in reverse, retain entries whose key isn't already seen, then
+        // reverse back to restore original relative order.
         let mut pruned: Vec<_> = {
-            let mut seen = HashSet::<OsString>::new();
+            let mut seen = std::collections::BTreeSet::<EnvKey>::new();
             env.iter()
                 .rev()
-                .filter(|&(k, _)| seen.insert(to_uppercase(k)))
+                .filter(|(k, _)| seen.insert(EnvKey::new(k)))
                 .collect()
         };
         pruned.reverse();
@@ -605,6 +611,37 @@ pub(crate) mod os {
         block.push(0);
         block
     }
+
+    /// `BTreeSet` key for env-block dedup. Caches the UTF-16 encoding so each
+    /// compare in the set hits the OS API directly without re-encoding -
+    /// matches the approach in `std::sys::process::windows::EnvKey`.
+    struct EnvKey(Vec<u16>);
+
+    impl EnvKey {
+        fn new(s: &OsStr) -> Self {
+            EnvKey(s.encode_wide().collect())
+        }
+    }
+
+    impl Ord for EnvKey {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            win32::compare_string_ordinal(&self.0, &other.0, true)
+        }
+    }
+
+    impl PartialOrd for EnvKey {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl PartialEq for EnvKey {
+        fn eq(&self, other: &Self) -> bool {
+            self.cmp(other).is_eq()
+        }
+    }
+
+    impl Eq for EnvKey {}
 
     fn ensure_child_stream(
         stream: &mut Option<Arc<Redirection>>,
@@ -724,5 +761,62 @@ pub(crate) mod os {
             i += 1;
         }
         cmdline.push('"' as u16);
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        // Parse a Windows env block (KEY=VALUE\0...KEY=VALUE\0\0) back to pairs.
+        fn parse_block(block: &[u16]) -> Vec<(OsString, OsString)> {
+            let mut entries = Vec::new();
+            let mut start = 0;
+            for (i, &u) in block.iter().enumerate() {
+                if u == 0 {
+                    if i == start {
+                        break;
+                    }
+                    let chunk = &block[start..i];
+                    let eq = chunk.iter().position(|&u| u == b'=' as u16).unwrap();
+                    entries.push((
+                        OsString::from_wide(&chunk[..eq]),
+                        OsString::from_wide(&chunk[eq + 1..]),
+                    ));
+                    start = i + 1;
+                }
+            }
+            entries
+        }
+
+        fn pair(k: &str, v: &str) -> (OsString, OsString) {
+            (OsString::from(k), OsString::from(v))
+        }
+
+        #[test]
+        fn format_env_block_dedup_keeps_last_occurrence() {
+            let env = vec![pair("A", "1"), pair("B", "x"), pair("A", "2")];
+            assert_eq!(
+                parse_block(&format_env_block(&env)),
+                vec![pair("B", "x"), pair("A", "2")]
+            );
+        }
+
+        #[test]
+        fn format_env_block_dedup_is_case_insensitive() {
+            let env = vec![pair("Path", "old"), pair("FOO", "y"), pair("PATH", "new")];
+            assert_eq!(
+                parse_block(&format_env_block(&env)),
+                vec![pair("FOO", "y"), pair("PATH", "new")]
+            );
+        }
+
+        #[test]
+        fn format_env_block_dedup_folds_non_ascii_case() {
+            // Beyond ASCII: U+00C4 LATIN CAPITAL LETTER A WITH DIAERESIS vs U+00E4
+            // (lowercase). Equal under Windows' case-insensitive ordinal compare;
+            // unequal under a naive ASCII-only fold.
+            let env = vec![pair("Ä", "old"), pair("ä", "new")];
+            assert_eq!(parse_block(&format_env_block(&env)), vec![pair("ä", "new")]);
+        }
     }
 }

@@ -484,6 +484,31 @@ pub fn SetHandleInformation(handle: &File, dwMask: u32, dwFlags: u32) -> Result<
     Ok(())
 }
 
+/// Compare two UTF-16 strings using the OS's ordinal comparison. With
+/// `ignore_case=true` the OS applies its language-independent uppercase mapping
+/// (operates per UTF-16 code unit, surrogate-preserving), then ordinal-compares
+/// the result. See https://learn.microsoft.com/en-us/windows/win32/api/stringapiset/nf-stringapiset-comparestringordinal
+pub fn compare_string_ordinal(a: &[u16], b: &[u16], ignore_case: bool) -> std::cmp::Ordering {
+    const CSTR_LESS_THAN: i32 = 1;
+    const CSTR_EQUAL: i32 = 2;
+    const CSTR_GREATER_THAN: i32 = 3;
+    let r = unsafe {
+        winapi::um::stringapiset::CompareStringOrdinal(
+            a.as_ptr(),
+            a.len() as i32,
+            b.as_ptr(),
+            b.len() as i32,
+            if ignore_case { TRUE } else { FALSE },
+        )
+    };
+    match r {
+        CSTR_LESS_THAN => std::cmp::Ordering::Less,
+        CSTR_EQUAL => std::cmp::Ordering::Equal,
+        CSTR_GREATER_THAN => std::cmp::Ordering::Greater,
+        _ => panic!("CompareStringOrdinal failed: {}", Error::last_os_error()),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn CreateProcess(
     appname: Option<&OsStr>,
