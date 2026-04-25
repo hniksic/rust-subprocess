@@ -404,32 +404,35 @@ pub(crate) mod os {
         // Called after fork - use ManuallyDrop to prevent deallocation on
         // early return via ?.
         let mut end = std::mem::ManuallyDrop::new(end);
+        let mut close_orig = false;
         if let Some(r) = &*end {
             let fd = child_file(r).as_raw_fd();
             if fd != target_fd {
                 posix::dup2(fd, target_fd)?;
+                // The original fd is redundant after dup2; let prevent_dealloc
+                // close it below.
+                close_orig = true;
             } else {
                 // dup2(fd, fd) is a no-op per POSIX and doesn't clear
-                // CLOEXEC. Clear it so the fd survives exec.
+                // CLOEXEC. Clear it so the fd survives exec. The child still
+                // needs target_fd open, so leave close_orig false.
                 set_inheritable(child_file(r), true)?;
             }
         }
         if let Some(end) = end.take() {
-            prevent_dealloc(end);
+            prevent_dealloc(end, close_orig);
         }
         Ok(())
     }
 
-    // Prevent deallocation of Arc while still closing the underlying resource if
-    // necessary. Needed because this runs after fork() - see prep_exec().
-    //
-    // Note that this never closes system streams returned by
-    // get_redirection_to_standard_stream() because it returns "leaked" Arcs which are
-    // immortal.
-    fn prevent_dealloc(r: Arc<Redirection>) {
-        // If Arc<Redirection> we received is the last one, manually close the File
-        // inside.
-        if Arc::strong_count(&r) == 1
+    // Forget the Arc so it doesn't deallocate (we run after fork, where
+    // deallocation is unsafe; see prep_exec()). If `close` is set and we hold
+    // the only reference, also close the underlying File. Pass `close=false`
+    // for fds the child still needs after exec; system streams are protected
+    // separately by the leaked clone in get_redirection_to_standard_stream.
+    fn prevent_dealloc(r: Arc<Redirection>, close: bool) {
+        if close
+            && Arc::strong_count(&r) == 1
             && let Redirection::File(f) = &*r
         {
             // SAFETY: strong_count == 1 guarantees no other Arc clone will access or

@@ -295,6 +295,61 @@ fn pipeline_setpgid_rejects_exec_setpgid() {
 }
 
 #[test]
+fn user_file_at_target_fd_survives_exec() {
+    // A File passed as redirection whose raw fd already equals the target
+    // stream fd must remain open in the child after exec. Set up by closing
+    // fd 0 in the parent and opening a file so it lands on fd 0.
+    //
+    // Serialize on FD0_LOCK so concurrent tests don't race on the parent's
+    // stdin.
+    use std::fs::File;
+    use std::os::fd::AsRawFd;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+
+    static FD0_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = FD0_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let tmpdir = TempDir::new().unwrap();
+    let tmpname = tmpdir.path().join("input");
+    std::fs::write(&tmpname, "stdin-payload").unwrap();
+
+    let saved = unsafe { libc::dup(0) };
+    assert!(saved >= 0);
+    let close_rc = unsafe { libc::close(0) };
+    assert_eq!(close_rc, 0);
+    let f = File::open(&tmpname).unwrap();
+    assert_eq!(f.as_raw_fd(), 0, "test setup: file did not land at fd 0");
+    // Park the parent's original stdin at fd 100 until we restore it.
+    let dup_rc = unsafe { libc::dup2(saved, 100) };
+    assert!(dup_rc >= 0);
+    unsafe {
+        libc::close(saved);
+    }
+
+    let result = Exec::cmd("cat")
+        .stdin(f)
+        .stdout(Redirection::Pipe)
+        .stderr(Redirection::Pipe)
+        .capture();
+
+    // Restore the parent's stdin.
+    unsafe {
+        libc::dup2(100, 0);
+        libc::close(100);
+    }
+
+    let c = result.expect("capture failed");
+    assert_eq!(
+        c.stdout_str(),
+        "stdin-payload",
+        "stderr was: {:?}",
+        c.stderr_str()
+    );
+    assert!(c.exit_status.success());
+}
+
+#[test]
 fn null_redirect_does_not_leak_fd() {
     // Regression test for issue #81. When bash spawns a background process ("sleep 10
     // &"), it won't return from "wait" until the backgrounded child also closes its
