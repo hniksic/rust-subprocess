@@ -121,8 +121,8 @@ let lines = Exec::cmd("sqlite3")
 Create pipelines using the `|` operator:
 
 ```rust
-let top_mem = (Exec::cmd("ps").args(&["aux"])
-    | Exec::cmd("sort").args(&["-k4", "-rn"])
+let top_mem = (Exec::cmd("ps").args(["aux"])
+    | Exec::cmd("sort").args(["-k4", "-rn"])
     | Exec::cmd("head").arg("-5"))
     .capture()?
     .stdout_str();
