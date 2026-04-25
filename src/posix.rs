@@ -311,6 +311,35 @@ pub fn waitpid(pid: u32, flags: i32) -> Result<(u32, ExitStatus)> {
     Ok((pid as u32, ExitStatus::from_raw(status)))
 }
 
+/// Block until `pid` has exited, leaving it as a zombie (does not reap).
+///
+/// The PID stays tied to the dead child until something calls `waitpid` to reap it, so a
+/// signal sent in the window between this returning and the reap is delivered to the
+/// original child (or to a zombie, which is a no-op) - never to a recycled PID.
+///
+/// Restarted automatically on `EINTR`.
+pub fn wait_no_reap(pid: u32) -> Result<()> {
+    loop {
+        let mut info: libc::siginfo_t = unsafe { mem::zeroed() };
+        let r = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        if r == 0 {
+            return Ok(());
+        }
+        let err = Error::last_os_error();
+        if err.raw_os_error() == Some(libc::EINTR) {
+            continue;
+        }
+        return Err(err);
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub fn pidfd_open(pid: u32) -> Result<std::os::unix::io::OwnedFd> {
     let fd =

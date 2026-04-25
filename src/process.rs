@@ -298,12 +298,87 @@ mod os {
 
     impl InnerProcess {
         pub(super) fn os_wait(&self) -> io::Result<ExitStatus> {
-            let mut state = self.state.lock().unwrap();
-            loop {
+            // Fast path: status already known.
+            {
+                let state = self.state.lock().unwrap();
                 if let Some(status) = state.exit_status {
                     return Ok(status);
                 }
-                Self::waitpid_into(&mut state, self.pid, true)?;
+            }
+
+            // On Linux with pidfd, poll(pidfd, INFINITE) is concurrent-safe and doesn't
+            // require holding any lock during the syscall.
+            #[cfg(target_os = "linux")]
+            {
+                let pidfd = self.state.lock().unwrap().pidfd.fd(self.pid);
+                if let Some(pidfd) = pidfd {
+                    return self.wait_pidfd(pidfd);
+                }
+            }
+
+            self.wait_blocking()
+        }
+
+        /// Wait indefinitely via pidfd. Linux-only fast path.
+        #[cfg(target_os = "linux")]
+        fn wait_pidfd(
+            &self,
+            pidfd: std::sync::Arc<std::os::unix::io::OwnedFd>,
+        ) -> io::Result<ExitStatus> {
+            use std::os::unix::io::AsFd;
+            loop {
+                {
+                    let state = self.state.lock().unwrap();
+                    if let Some(status) = state.exit_status {
+                        return Ok(status);
+                    }
+                }
+                let mut pfd = [posix::PollFd::new(Some(pidfd.as_fd()), posix::POLLIN)];
+                posix::poll(&mut pfd, None)?;
+                let mut state = self.state.lock().unwrap();
+                if state.exit_status.is_none() {
+                    let result = posix::waitpid(self.pid, posix::WNOHANG);
+                    Self::record_waitpid_result(&mut state, self.pid, result)?;
+                }
+                if let Some(status) = state.exit_status {
+                    return Ok(status);
+                }
+            }
+        }
+
+        /// Wait indefinitely via waitid()+waitpid(). Used when pidfd is unavailable
+        /// (non-Linux, or Linux with pidfd_open() failing).
+        ///
+        /// We block in waitid(WNOWAIT) rather than waitpid(0) so the kernel keeps the
+        /// child as a zombie until we reap under state lock. That closes the PID-reuse
+        /// window for a concurrent terminate()/kill(): while the zombie persists the PID
+        /// can't be recycled, and signals to a zombie are silently dropped by the kernel.
+        fn wait_blocking(&self) -> io::Result<ExitStatus> {
+            loop {
+                if let Some(status) = self.state.lock().unwrap().exit_status {
+                    return Ok(status);
+                }
+                if let Err(e) = posix::wait_no_reap(self.pid) {
+                    // ECHILD: someone else (an external waitpid) reaped before us.
+                    // Record it as undetermined and exit.
+                    if e.raw_os_error() == Some(posix::ECHILD) {
+                        let mut state = self.state.lock().unwrap();
+                        if state.exit_status.is_none() {
+                            state.exit_status = Some(ExitStatus(None));
+                        }
+                        return Ok(state.exit_status.unwrap());
+                    }
+                    return Err(e);
+                }
+                // Child is now a zombie. Reap and record under state lock.
+                let mut state = self.state.lock().unwrap();
+                if state.exit_status.is_none() {
+                    let result = posix::waitpid(self.pid, posix::WNOHANG);
+                    Self::record_waitpid_result(&mut state, self.pid, result)?;
+                }
+                if let Some(status) = state.exit_status {
+                    return Ok(status);
+                }
             }
         }
 
@@ -340,7 +415,7 @@ mod os {
 
             let mut state = self.state.lock().unwrap();
             if ready {
-                Self::waitpid_into(&mut state, self.pid, false)?;
+                self.try_reap(&mut state)?;
             }
             Ok(state.exit_status)
         }
@@ -355,7 +430,7 @@ mod os {
             let mut delay = Duration::from_millis(1);
 
             loop {
-                Self::waitpid_into(&mut state, self.pid, false)?;
+                self.try_reap(&mut state)?;
                 if state.exit_status.is_some() {
                     return Ok(state.exit_status);
                 }
@@ -402,11 +477,24 @@ mod os {
             }
         }
 
-        fn waitpid_into(state: &mut WaitState, pid: u32, block: bool) -> io::Result<()> {
+        /// Try a non-blocking (WNOHANG) waitpid for this process.
+        fn try_reap(&self, state: &mut WaitState) -> io::Result<()> {
             if state.exit_status.is_some() {
                 return Ok(());
             }
-            match posix::waitpid(pid, if block { 0 } else { posix::WNOHANG }) {
+            let result = posix::waitpid(self.pid, posix::WNOHANG);
+            Self::record_waitpid_result(state, self.pid, result)
+        }
+
+        fn record_waitpid_result(
+            state: &mut WaitState,
+            pid: u32,
+            result: io::Result<(u32, ExitStatus)>,
+        ) -> io::Result<()> {
+            if state.exit_status.is_some() {
+                return Ok(());
+            }
+            match result {
                 Ok((pid_out, exit_status)) if pid_out == pid => {
                     state.exit_status = Some(exit_status);
                 }

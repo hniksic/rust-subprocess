@@ -368,3 +368,63 @@ fn null_redirect_does_not_leak_fd() {
         "join() took too long, /dev/null fds may have leaked"
     );
 }
+
+#[test]
+fn poll_does_not_block_during_wait() {
+    // Process::poll() is documented as non-blocking. Verify that a poll() in one thread
+    // is not serialized behind a blocking wait() in another, even though both touch the
+    // shared exit-status state.
+    use std::thread;
+
+    let job = Exec::cmd("sleep").arg("5").start().unwrap();
+    let process = job.processes[0].clone();
+
+    // Park a thread in wait().
+    let waiter_proc = process.clone();
+    let waiter = thread::spawn(move || waiter_proc.wait().unwrap());
+
+    // Give the waiter time to actually enter the blocking syscall.
+    thread::sleep(Duration::from_millis(100));
+
+    let start = Instant::now();
+    let status = process.poll();
+    let elapsed = start.elapsed();
+    assert!(status.is_none(), "child should still be running");
+    assert!(
+        elapsed < Duration::from_millis(200),
+        "poll() took {:?}, expected to return immediately while wait() blocks",
+        elapsed
+    );
+
+    // Unblock the waiter so the test doesn't sit out the child's full sleep.
+    process.terminate().unwrap();
+    let _ = waiter.join().unwrap();
+}
+
+#[test]
+fn terminate_during_wait() {
+    // terminate() from one thread must reach the child while another thread is blocked
+    // in wait(), and must not signal a recycled PID after the child has been reaped.
+    use std::thread;
+
+    let job = Exec::cmd("sleep").arg("10").start().unwrap();
+    let process = job.processes[0].clone();
+
+    let waiter_proc = process.clone();
+    let waiter = thread::spawn(move || waiter_proc.wait().unwrap());
+
+    // Let the waiter reach its blocking syscall before we signal.
+    thread::sleep(Duration::from_millis(100));
+
+    let start = Instant::now();
+    process.terminate().unwrap();
+    let term_elapsed = start.elapsed();
+    assert!(
+        term_elapsed < Duration::from_millis(200),
+        "terminate() took {:?}, expected to return immediately while wait() blocks",
+        term_elapsed
+    );
+
+    let status = waiter.join().unwrap();
+    assert!(status.is_killed_by(libc::SIGTERM));
+}
