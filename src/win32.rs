@@ -477,8 +477,8 @@ pub fn WaitForMultipleObjects(
     }
 }
 
-pub fn SetHandleInformation(handle: &File, dwMask: u32, dwFlags: u32) -> Result<()> {
-    check(unsafe { handleapi::SetHandleInformation(handle.as_raw_handle(), dwMask, dwFlags) })?;
+pub fn SetHandleInformation(handle: RawHandle, mask: u32, flags: u32) -> Result<()> {
+    check(unsafe { handleapi::SetHandleInformation(handle, mask, flags) })?;
     Ok(())
 }
 

@@ -655,7 +655,7 @@ pub(crate) mod os {
 
     pub fn set_inheritable(f: &File, inheritable: bool) -> io::Result<()> {
         win32::SetHandleInformation(
-            f,
+            f.as_raw_handle(),
             win32::HANDLE_FLAG_INHERIT,
             if inheritable { 1 } else { 0 },
         )?;
