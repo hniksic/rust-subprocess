@@ -199,7 +199,10 @@ impl PrepExec {
         let mut exe = std::mem::ManuallyDrop::new(std::mem::take(&mut this.prealloc_exe));
 
         if let Some(ref search_path) = this.search_path {
-            let mut err = Ok(());
+            // Default to ENOENT so a PATH with no usable entries (e.g. ":::") yields
+            // a real error instead of Ok(()) - the caller would otherwise hit
+            // unreachable!() in the child after fork.
+            let mut err = Err(Error::from_raw_os_error(libc::ENOENT));
             // POSIX requires execvp and execve, but not execvpe (although glibc provides
             // one), so we have to iterate over PATH ourselves
             for dir in split_path(search_path.as_os_str()) {
