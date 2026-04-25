@@ -590,20 +590,18 @@ pub(crate) mod os {
     }
 
     fn format_env_block(env: &[(OsString, OsString)]) -> Vec<u16> {
-        // Dedupe by env-var-name semantics, keeping the last occurrence of each
-        // key. Walk in reverse, retain entries whose key isn't already seen, then
-        // reverse back to restore original relative order.
-        let mut pruned: Vec<_> = {
-            let mut seen = std::collections::BTreeSet::<EnvKey>::new();
-            env.iter()
-                .rev()
-                .filter(|(k, _)| seen.insert(EnvKey::new(k)))
-                .collect()
-        };
-        pruned.reverse();
+        // Sort and dedup in one pass via BTreeMap<EnvKey, _>. EnvKey orders entries by
+        // case-insensitive ordinal compare, which is exactly the order CreateProcessW
+        // requires for Unicode environment blocks. Walking input in reverse with
+        // or_insert means the latest occurrence of each key wins, both for value
+        // (matching "last value used" semantics) and for the key's case form.
+        let mut sorted = std::collections::BTreeMap::<EnvKey, &OsStr>::new();
+        for (k, v) in env.iter().rev() {
+            sorted.entry(EnvKey::new(k)).or_insert(v);
+        }
         let mut block = vec![];
-        for (k, v) in pruned {
-            block.extend(k.encode_wide());
+        for (k, v) in sorted {
+            block.extend(k.0);
             block.push('=' as u16);
             block.extend(v.encode_wide());
             block.push(0);
@@ -612,8 +610,8 @@ pub(crate) mod os {
         block
     }
 
-    /// `BTreeSet` key for env-block dedup. Caches the UTF-16 encoding so each
-    /// compare in the set hits the OS API directly without re-encoding -
+    /// `BTreeMap` key for env-block sort+dedup. Caches the UTF-16 encoding so
+    /// each compare in the map hits the OS API directly without re-encoding -
     /// matches the approach in `std::sys::process::windows::EnvKey`.
     struct EnvKey(Vec<u16>);
 
@@ -797,7 +795,18 @@ pub(crate) mod os {
             let env = vec![pair("A", "1"), pair("B", "x"), pair("A", "2")];
             assert_eq!(
                 parse_block(&format_env_block(&env)),
-                vec![pair("B", "x"), pair("A", "2")]
+                vec![pair("A", "2"), pair("B", "x")]
+            );
+        }
+
+        #[test]
+        fn format_env_block_is_sorted() {
+            // CreateProcessW requires Unicode env blocks to be sorted by name
+            // with case-insensitive ordinal comparison.
+            let env = vec![pair("Z", "1"), pair("a", "2"), pair("M", "3")];
+            assert_eq!(
+                parse_block(&format_env_block(&env)),
+                vec![pair("a", "2"), pair("M", "3"), pair("Z", "1")]
             );
         }
 
