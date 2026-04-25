@@ -68,7 +68,7 @@ fn exec_setpgid() {
     // child. Signaling the group should terminate both the shell and
     // its child.
     let job = Exec::cmd("sh")
-        .args(&["-c", "sleep 10 & wait"])
+        .args(["-c", "sleep 10 & wait"])
         .setpgid()
         .start()
         .unwrap();
@@ -83,7 +83,7 @@ fn send_signal_group() {
     // child. Signaling the group should terminate both the shell and
     // its child.
     let job = Exec::cmd("sh")
-        .args(&["-c", "sleep 10 & wait"])
+        .args(["-c", "sleep 10 & wait"])
         .setpgid()
         .start()
         .unwrap();
@@ -234,7 +234,7 @@ fn pre_exec_multiple() {
 fn arg0_override() {
     let out = Exec::cmd("sh")
         .arg0("custom-name")
-        .args(&["-c", "echo $0"])
+        .args(["-c", "echo $0"])
         .capture()
         .unwrap()
         .stdout_str();
@@ -255,7 +255,7 @@ fn started_send_signal() {
 #[test]
 fn started_send_signal_group() {
     let job = Exec::cmd("sh")
-        .args(&["-c", "sleep 10 & wait"])
+        .args(["-c", "sleep 10 & wait"])
         .setpgid()
         .start()
         .unwrap();
@@ -302,7 +302,7 @@ fn null_redirect_does_not_leak_fd() {
     // backgrounded sleep keeps them open and join() hangs.
     let start = Instant::now();
     let status = Exec::cmd("sh")
-        .args(&["-c", "sleep 10 &"])
+        .args(["-c", "sleep 10 &"])
         .stdout(Redirection::Null)
         .stderr(Redirection::Null)
         .join()

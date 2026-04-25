@@ -38,7 +38,7 @@ fn pipeline_stream_in() {
 
 #[test]
 fn pipeline_stream_err() {
-    let stream = { Exec::cmd("sh").args(&["-c", "printf foo >&2"]) | Exec::cmd("true") }
+    let stream = { Exec::cmd("sh").args(["-c", "printf foo >&2"]) | Exec::cmd("true") }
         .stream_stderr_all()
         .unwrap();
     assert_eq!(io::read_to_string(stream).unwrap(), "foo");

@@ -6,8 +6,8 @@ use subprocess::Exec;
 
 fn main() -> std::io::Result<()> {
     // Simple pipeline: generate data, transform it, capture output
-    let data = (Exec::cmd("echo").args(&["cherry", "apple", "banana"])
-        | Exec::cmd("tr").args(&[" ", "\n"])
+    let data = (Exec::cmd("echo").args(["cherry", "apple", "banana"])
+        | Exec::cmd("tr").args([" ", "\n"])
         | Exec::cmd("sort"))
     .capture()?
     .stdout_str();
