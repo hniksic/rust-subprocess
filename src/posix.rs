@@ -436,11 +436,12 @@ impl PollFd<'_> {
 pub use libc::{POLLHUP, POLLIN, POLLOUT};
 
 pub fn poll(fds: &mut [PollFd<'_>], mut timeout: Option<Duration>) -> Result<usize> {
+    // The loop handles two cases:
+    //   - poll() accepts a maximum timeout of 2**31-1 ms (less than 25 days), and the
+    //     caller can specify larger Durations.
+    //   - poll() fails with EINTR when interrupted by a signal handler.
     let deadline = timeout.map(|timeout| Instant::now() + timeout);
     loop {
-        // poll() accepts a maximum timeout of 2**31-1 ms, which is less than 25 days.
-        // The caller can specify Durations much larger than that, so support them by
-        // waiting in a loop.
         let (timeout_ms, overflow) = timeout
             .map(|timeout| {
                 let timeout = timeout.as_millis();
@@ -452,17 +453,28 @@ pub fn poll(fds: &mut [PollFd<'_>], mut timeout: Option<Duration>) -> Result<usi
             })
             .unwrap_or((-1, false));
         let fds_ptr = fds.as_ptr() as *mut libc::pollfd;
-        let cnt = unsafe { check_err(libc::poll(fds_ptr, fds.len() as libc::nfds_t, timeout_ms))? };
-        if cnt != 0 || !overflow {
-            return Ok(cnt as usize);
+        let raw = unsafe { libc::poll(fds_ptr, fds.len() as libc::nfds_t, timeout_ms) };
+        if raw >= 0 {
+            let cnt = raw as usize;
+            if cnt != 0 || !overflow {
+                return Ok(cnt);
+            }
+            // Timeout fired on the clamped value; loop to wait the rest.
+        } else {
+            let err = Error::last_os_error();
+            if err.raw_os_error() != Some(libc::EINTR) {
+                return Err(err);
+            }
+            // Interrupted by a signal; loop and retry.
         }
 
-        let deadline = deadline.unwrap();
-        let now = Instant::now();
-        if now >= deadline {
-            return Ok(0);
+        if let Some(deadline) = deadline {
+            let now = Instant::now();
+            if now >= deadline {
+                return Ok(0);
+            }
+            timeout = Some(deadline - now);
         }
-        timeout = Some(deadline - now);
     }
 }
 
