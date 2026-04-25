@@ -11,6 +11,7 @@ use crate::process::ExtProcessState;
 use crate::process::Process;
 
 pub(crate) use os::OsOptions;
+pub(crate) use os::env_keys_cmp;
 pub use os::make_pipe;
 
 /// A process argument, either regular (quoted on Windows) or raw
@@ -291,6 +292,12 @@ pub(crate) mod os {
 
     pub const NULL_DEVICE: &str = "/dev/null";
 
+    /// Compares two env var names under the platform's env semantics. Unix env
+    /// var names are case-sensitive, so this is byte ordering.
+    pub(crate) fn env_keys_cmp(a: &OsStr, b: &OsStr) -> std::cmp::Ordering {
+        a.cmp(b)
+    }
+
     use crate::posix;
     use std::collections::HashSet;
     use std::ffi::OsString;
@@ -523,7 +530,24 @@ pub(crate) mod os {
 
     pub const NULL_DEVICE: &str = "nul";
 
-    use std::collections::HashSet;
+    /// Compares two env var names under the platform's env semantics. Windows env
+    /// var names are case-insensitive. The case-fold is currently ASCII-only,
+    /// which misses non-ASCII case mappings; the stdlib uses the OS's
+    /// `CompareStringOrdinal` (see `std::sys::process::windows::EnvKey`) for full
+    /// correctness. Switching to that means rewriting only this function.
+    pub(crate) fn env_keys_cmp(a: &OsStr, b: &OsStr) -> std::cmp::Ordering {
+        fn fold_unit(c: u16) -> u16 {
+            if c < 128 {
+                (c as u8).to_ascii_uppercase() as u16
+            } else {
+                c
+            }
+        }
+        a.encode_wide()
+            .map(fold_unit)
+            .cmp(b.encode_wide().map(fold_unit))
+    }
+
     use std::env;
     use std::ffi::{OsStr, OsString};
     use std::fs::File;
@@ -574,24 +598,14 @@ pub(crate) mod os {
     }
 
     fn format_env_block(env: &[(OsString, OsString)]) -> Vec<u16> {
-        fn to_uppercase(s: &OsStr) -> OsString {
-            OsString::from_wide(
-                &s.encode_wide()
-                    .map(|c| {
-                        if c < 128 {
-                            (c as u8).to_ascii_uppercase() as u16
-                        } else {
-                            c
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        }
+        // Dedupe by env-var-name semantics, keeping the last occurrence of each
+        // key. Walk in reverse, retain entries whose key isn't already seen, then
+        // reverse back to restore original relative order.
         let mut pruned: Vec<_> = {
-            let mut seen = HashSet::<OsString>::new();
+            let mut seen = std::collections::BTreeSet::<EnvKey<'_>>::new();
             env.iter()
                 .rev()
-                .filter(|&(k, _)| seen.insert(to_uppercase(k)))
+                .filter(|(k, _)| seen.insert(EnvKey(k)))
                 .collect()
         };
         pruned.reverse();
@@ -605,6 +619,32 @@ pub(crate) mod os {
         block.push(0);
         block
     }
+
+    /// Wrapper used as a `BTreeSet` key for env-block dedup. All comparison
+    /// operators delegate to `env_keys_cmp`, so the dedup uses the platform's
+    /// env-name semantics without any case-fold logic leaking outside
+    /// `env_keys_cmp`.
+    struct EnvKey<'a>(&'a OsStr);
+
+    impl Ord for EnvKey<'_> {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            env_keys_cmp(self.0, other.0)
+        }
+    }
+
+    impl PartialOrd for EnvKey<'_> {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl PartialEq for EnvKey<'_> {
+        fn eq(&self, other: &Self) -> bool {
+            self.cmp(other).is_eq()
+        }
+    }
+
+    impl Eq for EnvKey<'_> {}
 
     fn ensure_child_stream(
         stream: &mut Option<Arc<Redirection>>,
@@ -724,5 +764,53 @@ pub(crate) mod os {
             i += 1;
         }
         cmdline.push('"' as u16);
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        // Parse a Windows env block (KEY=VALUE\0...KEY=VALUE\0\0) back to pairs.
+        fn parse_block(block: &[u16]) -> Vec<(OsString, OsString)> {
+            let mut entries = Vec::new();
+            let mut start = 0;
+            for (i, &u) in block.iter().enumerate() {
+                if u == 0 {
+                    if i == start {
+                        break;
+                    }
+                    let chunk = &block[start..i];
+                    let eq = chunk.iter().position(|&u| u == b'=' as u16).unwrap();
+                    entries.push((
+                        OsString::from_wide(&chunk[..eq]),
+                        OsString::from_wide(&chunk[eq + 1..]),
+                    ));
+                    start = i + 1;
+                }
+            }
+            entries
+        }
+
+        fn pair(k: &str, v: &str) -> (OsString, OsString) {
+            (OsString::from(k), OsString::from(v))
+        }
+
+        #[test]
+        fn format_env_block_dedup_keeps_last_occurrence() {
+            let env = vec![pair("A", "1"), pair("B", "x"), pair("A", "2")];
+            assert_eq!(
+                parse_block(&format_env_block(&env)),
+                vec![pair("B", "x"), pair("A", "2")]
+            );
+        }
+
+        #[test]
+        fn format_env_block_dedup_is_case_insensitive() {
+            let env = vec![pair("Path", "old"), pair("FOO", "y"), pair("PATH", "new")];
+            assert_eq!(
+                parse_block(&format_env_block(&env)),
+                vec![pair("FOO", "y"), pair("PATH", "new")]
+            );
+        }
     }
 }
