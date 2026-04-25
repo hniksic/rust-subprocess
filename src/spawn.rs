@@ -531,21 +531,13 @@ pub(crate) mod os {
     pub const NULL_DEVICE: &str = "nul";
 
     /// Compares two env var names under the platform's env semantics. Windows env
-    /// var names are case-insensitive. The case-fold is currently ASCII-only,
-    /// which misses non-ASCII case mappings; the stdlib uses the OS's
-    /// `CompareStringOrdinal` (see `std::sys::process::windows::EnvKey`) for full
-    /// correctness. Switching to that means rewriting only this function.
+    /// var names are case-insensitive; this delegates to the OS via
+    /// `CompareStringOrdinal(bIgnoreCase=TRUE)`, matching what the stdlib uses for
+    /// `std::sys::process::windows::EnvKey`.
     pub(crate) fn env_keys_cmp(a: &OsStr, b: &OsStr) -> std::cmp::Ordering {
-        fn fold_unit(c: u16) -> u16 {
-            if c < 128 {
-                (c as u8).to_ascii_uppercase() as u16
-            } else {
-                c
-            }
-        }
-        a.encode_wide()
-            .map(fold_unit)
-            .cmp(b.encode_wide().map(fold_unit))
+        let a: Vec<u16> = a.encode_wide().collect();
+        let b: Vec<u16> = b.encode_wide().collect();
+        win32::compare_string_ordinal(&a, &b, true)
     }
 
     use std::env;
@@ -602,10 +594,10 @@ pub(crate) mod os {
         // key. Walk in reverse, retain entries whose key isn't already seen, then
         // reverse back to restore original relative order.
         let mut pruned: Vec<_> = {
-            let mut seen = std::collections::BTreeSet::<EnvKey<'_>>::new();
+            let mut seen = std::collections::BTreeSet::<EnvKey>::new();
             env.iter()
                 .rev()
-                .filter(|(k, _)| seen.insert(EnvKey(k)))
+                .filter(|(k, _)| seen.insert(EnvKey::new(k)))
                 .collect()
         };
         pruned.reverse();
@@ -620,31 +612,36 @@ pub(crate) mod os {
         block
     }
 
-    /// Wrapper used as a `BTreeSet` key for env-block dedup. All comparison
-    /// operators delegate to `env_keys_cmp`, so the dedup uses the platform's
-    /// env-name semantics without any case-fold logic leaking outside
-    /// `env_keys_cmp`.
-    struct EnvKey<'a>(&'a OsStr);
+    /// `BTreeSet` key for env-block dedup. Caches the UTF-16 encoding so each
+    /// compare in the set hits the OS API directly without re-encoding -
+    /// matches the approach in `std::sys::process::windows::EnvKey`.
+    struct EnvKey(Vec<u16>);
 
-    impl Ord for EnvKey<'_> {
-        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            env_keys_cmp(self.0, other.0)
+    impl EnvKey {
+        fn new(s: &OsStr) -> Self {
+            EnvKey(s.encode_wide().collect())
         }
     }
 
-    impl PartialOrd for EnvKey<'_> {
+    impl Ord for EnvKey {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            win32::compare_string_ordinal(&self.0, &other.0, true)
+        }
+    }
+
+    impl PartialOrd for EnvKey {
         fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
             Some(self.cmp(other))
         }
     }
 
-    impl PartialEq for EnvKey<'_> {
+    impl PartialEq for EnvKey {
         fn eq(&self, other: &Self) -> bool {
             self.cmp(other).is_eq()
         }
     }
 
-    impl Eq for EnvKey<'_> {}
+    impl Eq for EnvKey {}
 
     fn ensure_child_stream(
         stream: &mut Option<Arc<Redirection>>,
@@ -811,6 +808,15 @@ pub(crate) mod os {
                 parse_block(&format_env_block(&env)),
                 vec![pair("FOO", "y"), pair("PATH", "new")]
             );
+        }
+
+        #[test]
+        fn format_env_block_dedup_folds_non_ascii_case() {
+            // Beyond ASCII: U+00C4 LATIN CAPITAL LETTER A WITH DIAERESIS vs U+00E4
+            // (lowercase). Equal under Windows' case-insensitive ordinal compare;
+            // unequal under a naive ASCII-only fold.
+            let env = vec![pair("Ä", "old"), pair("ä", "new")];
+            assert_eq!(parse_block(&format_env_block(&env)), vec![pair("ä", "new")]);
         }
     }
 }
