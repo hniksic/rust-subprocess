@@ -361,6 +361,7 @@ pub fn killpg(pgid: u32, signal: i32) -> Result<()> {
 
 pub const F_GETFD: i32 = libc::F_GETFD;
 pub const F_SETFD: i32 = libc::F_SETFD;
+pub const F_DUPFD_CLOEXEC: i32 = libc::F_DUPFD_CLOEXEC;
 pub const FD_CLOEXEC: i32 = libc::FD_CLOEXEC;
 
 pub fn fcntl(fd: i32, cmd: i32, arg1: Option<i32>) -> Result<i32> {
