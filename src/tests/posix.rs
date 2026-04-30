@@ -1,14 +1,56 @@
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use super::exec_signal_delay;
 use crate::unix::{ExitStatusExt, JobExt, PipelineExt};
 use crate::{Exec, ExecExt, ExitStatus, Redirection};
 
-// Serializes any test that mutates the parent's fds 0/1/2 or parks them at a
-// reserved high fd. Without a single shared lock, two such tests running on
-// different fds would still race on the parking fd.
-static FD_LOCK: Mutex<()> = Mutex::new(());
+// Tests that close fds 0/1/2 in the parent and let `File::create` reclaim the
+// freed slot run their body in a fresh single-test child process. While the
+// parent has fd 0/1/2 pointed at a tempfile, any sibling thread writing to
+// that fd (notably libtest's "test ... ok" status line) would leak into the
+// file and corrupt the test's assertions. Re-execing isolates each such test
+// from the rest of the run.
+//
+// The env var name embeds the parent's PID. The child recognizes itself by
+// looking up SUBPROCESS_ISOLATED_FD_TEST_<getppid()> - a stray variable the
+// user happens to have set can't match a PID assigned to a not-yet-running
+// `cargo test`, so a generic environment leak can't silently disable the
+// isolation.
+const ISOLATED_TEST_PREFIX: &str = "SUBPROCESS_ISOLATED_FD_TEST_";
+
+fn run_isolated(name: &str, body: impl FnOnce()) {
+    let parent_var = format!("{ISOLATED_TEST_PREFIX}{}", unsafe { libc::getppid() });
+    if std::env::var_os(&parent_var).is_some() {
+        body();
+        return;
+    }
+    let exe = std::env::current_exe().expect("current_exe");
+    let test_path = format!("tests::posix::{name}");
+    let child_var = format!("{ISOLATED_TEST_PREFIX}{}", std::process::id());
+    let output = std::process::Command::new(&exe)
+        .args(["--exact", &test_path])
+        .env(&child_var, "1")
+        .output()
+        .expect("spawning isolated test child");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "isolated child for {test_path} failed: {status}\n\
+         --- child stdout ---\n{stdout}\
+         --- child stderr ---\n{stderr}",
+        status = output.status,
+    );
+    // Defense against `name` not matching the surrounding fn name: libtest
+    // exits 0 when --exact matches no tests, so the call would silently pass
+    // without running the body. "1 passed" only appears when exactly one
+    // matching test ran successfully.
+    assert!(
+        stdout.contains("1 passed"),
+        "isolated child for {test_path} matched no tests (typo in name?):\n\
+         --- child stdout ---\n{stdout}",
+    );
+}
 
 #[test]
 fn err_terminate() {
@@ -305,52 +347,49 @@ fn user_file_at_target_fd_survives_exec() {
     // A File passed as redirection whose raw fd already equals the target
     // stream fd must remain open in the child after exec. Set up by closing
     // fd 0 in the parent and opening a file so it lands on fd 0.
-    //
-    // Serialize on FD_LOCK so concurrent tests don't race on the parent's
-    // stdin or on the parking fd.
-    use std::fs::File;
-    use std::os::fd::AsRawFd;
-    use tempfile::TempDir;
+    run_isolated("user_file_at_target_fd_survives_exec", || {
+        use std::fs::File;
+        use std::os::fd::AsRawFd;
+        use tempfile::TempDir;
 
-    let _guard = FD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmpdir = TempDir::new().unwrap();
+        let tmpname = tmpdir.path().join("input");
+        std::fs::write(&tmpname, "stdin-payload").unwrap();
 
-    let tmpdir = TempDir::new().unwrap();
-    let tmpname = tmpdir.path().join("input");
-    std::fs::write(&tmpname, "stdin-payload").unwrap();
+        let saved = unsafe { libc::dup(0) };
+        assert!(saved >= 0);
+        let close_rc = unsafe { libc::close(0) };
+        assert_eq!(close_rc, 0);
+        let f = File::open(&tmpname).unwrap();
+        assert_eq!(f.as_raw_fd(), 0, "test setup: file did not land at fd 0");
+        // Park the parent's original stdin at fd 100 until we restore it.
+        let dup_rc = unsafe { libc::dup2(saved, 100) };
+        assert!(dup_rc >= 0);
+        unsafe {
+            libc::close(saved);
+        }
 
-    let saved = unsafe { libc::dup(0) };
-    assert!(saved >= 0);
-    let close_rc = unsafe { libc::close(0) };
-    assert_eq!(close_rc, 0);
-    let f = File::open(&tmpname).unwrap();
-    assert_eq!(f.as_raw_fd(), 0, "test setup: file did not land at fd 0");
-    // Park the parent's original stdin at fd 100 until we restore it.
-    let dup_rc = unsafe { libc::dup2(saved, 100) };
-    assert!(dup_rc >= 0);
-    unsafe {
-        libc::close(saved);
-    }
+        let result = Exec::cmd("cat")
+            .stdin(f)
+            .stdout(Redirection::Pipe)
+            .stderr(Redirection::Pipe)
+            .capture();
 
-    let result = Exec::cmd("cat")
-        .stdin(f)
-        .stdout(Redirection::Pipe)
-        .stderr(Redirection::Pipe)
-        .capture();
+        // Restore the parent's stdin.
+        unsafe {
+            libc::dup2(100, 0);
+            libc::close(100);
+        }
 
-    // Restore the parent's stdin.
-    unsafe {
-        libc::dup2(100, 0);
-        libc::close(100);
-    }
-
-    let c = result.expect("capture failed");
-    assert_eq!(
-        c.stdout_str(),
-        "stdin-payload",
-        "stderr was: {:?}",
-        c.stderr_str()
-    );
-    assert!(c.exit_status.success());
+        let c = result.expect("capture failed");
+        assert_eq!(
+            c.stdout_str(),
+            "stdin-payload",
+            "stderr was: {:?}",
+            c.stderr_str()
+        );
+        assert!(c.exit_status.success());
+    });
 }
 
 #[test]
@@ -362,61 +401,65 @@ fn user_file_at_other_standard_fd_preserves_inherited_stream() {
     //
     // Set up by closing fd 2 and opening a file so it lands on fd 2, then use
     // it as stdout. fd 2 must still be open in the child when pre_exec runs.
-    use std::fs::File;
-    use std::io::Read;
-    use std::os::fd::AsRawFd;
-    use tempfile::TempDir;
+    run_isolated(
+        "user_file_at_other_standard_fd_preserves_inherited_stream",
+        || {
+            use std::fs::File;
+            use std::io::Read;
+            use std::os::fd::AsRawFd;
+            use tempfile::TempDir;
 
-    let _guard = FD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let tmpdir = TempDir::new().unwrap();
+            let tmpname = tmpdir.path().join("output");
 
-    let tmpdir = TempDir::new().unwrap();
-    let tmpname = tmpdir.path().join("output");
+            let saved = unsafe { libc::dup(2) };
+            assert!(saved >= 0);
+            let close_rc = unsafe { libc::close(2) };
+            assert_eq!(close_rc, 0);
+            let f = File::create(&tmpname).unwrap();
+            assert_eq!(f.as_raw_fd(), 2, "test setup: file did not land at fd 2");
+            // Park the parent's original stderr at fd 100 until we restore it.
+            let dup_rc = unsafe { libc::dup2(saved, 100) };
+            assert!(dup_rc >= 0);
+            unsafe {
+                libc::close(saved);
+            }
 
-    let saved = unsafe { libc::dup(2) };
-    assert!(saved >= 0);
-    let close_rc = unsafe { libc::close(2) };
-    assert_eq!(close_rc, 0);
-    let f = File::create(&tmpname).unwrap();
-    assert_eq!(f.as_raw_fd(), 2, "test setup: file did not land at fd 2");
-    // Park the parent's original stderr at fd 100 until we restore it.
-    let dup_rc = unsafe { libc::dup2(saved, 100) };
-    assert!(dup_rc >= 0);
-    unsafe {
-        libc::close(saved);
-    }
+            // Pipe to receive the child's report on whether fd 2 is still open
+            // after install_child_fd has run. The pipe ends are CLOEXEC, so the
+            // write end closes at exec without us needing to set anything up
+            // here.
+            let (mut read_end, write_end) = crate::posix::pipe().unwrap();
+            let report_fd = write_end.as_raw_fd();
 
-    // Pipe to receive the child's report on whether fd 2 is still open after
-    // install_child_fd has run. The pipe ends are CLOEXEC, so the write end
-    // closes at exec without us needing to set anything up here.
-    let (mut read_end, write_end) = crate::posix::pipe().unwrap();
-    let report_fd = write_end.as_raw_fd();
+            let result = unsafe {
+                Exec::cmd("true")
+                    .stdout(f)
+                    .pre_exec(move || {
+                        let r = libc::fcntl(2, libc::F_GETFD);
+                        let msg: &[u8] = if r >= 0 { b"open" } else { b"clsd" };
+                        libc::write(report_fd, msg.as_ptr().cast(), msg.len());
+                        Ok(())
+                    })
+                    .start()
+            };
 
-    let result = unsafe {
-        Exec::cmd("true")
-            .stdout(f)
-            .pre_exec(move || {
-                let r = libc::fcntl(2, libc::F_GETFD);
-                let msg: &[u8] = if r >= 0 { b"open" } else { b"clsd" };
-                libc::write(report_fd, msg.as_ptr().cast(), msg.len());
-                Ok(())
-            })
-            .start()
-    };
+            // Restore the parent's stderr.
+            unsafe {
+                libc::dup2(100, 2);
+                libc::close(100);
+            }
+            drop(write_end);
 
-    // Restore the parent's stderr.
-    unsafe {
-        libc::dup2(100, 2);
-        libc::close(100);
-    }
-    drop(write_end);
-
-    let job = result.expect("start failed");
-    let mut buf = [0u8; 4];
-    read_end.read_exact(&mut buf).unwrap();
-    let _ = job.wait();
-    assert_eq!(
-        &buf, b"open",
-        "fd 2 was closed in the child by install_child_fd"
+            let job = result.expect("start failed");
+            let mut buf = [0u8; 4];
+            read_end.read_exact(&mut buf).unwrap();
+            let _ = job.wait();
+            assert_eq!(
+                &buf, b"open",
+                "fd 2 was closed in the child by install_child_fd"
+            );
+        },
     );
 }
 
@@ -426,45 +469,45 @@ fn stdin_pipe_with_user_stdout_at_fd_0() {
     // clobbered by the install_child_fd call that places stdin onto fd 0.
     // redirect_streams must install stdout (which dup2s from fd 0) before
     // stdin (which overwrites fd 0).
-    use std::fs::File;
-    use std::os::fd::AsRawFd;
-    use tempfile::TempDir;
+    run_isolated("stdin_pipe_with_user_stdout_at_fd_0", || {
+        use std::fs::File;
+        use std::os::fd::AsRawFd;
+        use tempfile::TempDir;
 
-    let _guard = FD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmpdir = TempDir::new().unwrap();
+        let outfile = tmpdir.path().join("output");
 
-    let tmpdir = TempDir::new().unwrap();
-    let outfile = tmpdir.path().join("output");
+        let saved = unsafe { libc::dup(0) };
+        assert!(saved >= 0);
+        assert_eq!(unsafe { libc::close(0) }, 0);
+        let f = File::create(&outfile).unwrap();
+        assert_eq!(f.as_raw_fd(), 0, "test setup: file did not land at fd 0");
+        assert!(unsafe { libc::dup2(saved, 100) } >= 0);
+        unsafe {
+            libc::close(saved);
+        }
 
-    let saved = unsafe { libc::dup(0) };
-    assert!(saved >= 0);
-    assert_eq!(unsafe { libc::close(0) }, 0);
-    let f = File::create(&outfile).unwrap();
-    assert_eq!(f.as_raw_fd(), 0, "test setup: file did not land at fd 0");
-    assert!(unsafe { libc::dup2(saved, 100) } >= 0);
-    unsafe {
-        libc::close(saved);
-    }
+        let result = Exec::cmd("printf")
+            .args(["%s", "hello"])
+            .stdin(Redirection::Pipe)
+            .stdout(f)
+            .stderr(Redirection::Pipe)
+            .capture();
 
-    let result = Exec::cmd("printf")
-        .args(["%s", "hello"])
-        .stdin(Redirection::Pipe)
-        .stdout(f)
-        .stderr(Redirection::Pipe)
-        .capture();
+        unsafe {
+            libc::dup2(100, 0);
+            libc::close(100);
+        }
 
-    unsafe {
-        libc::dup2(100, 0);
-        libc::close(100);
-    }
-
-    let c = result.expect("capture failed");
-    assert!(
-        c.exit_status.success(),
-        "printf failed; stderr: {:?}",
-        c.stderr_str()
-    );
-    let content = std::fs::read_to_string(&outfile).unwrap();
-    assert_eq!(content, "hello");
+        let c = result.expect("capture failed");
+        assert!(
+            c.exit_status.success(),
+            "printf failed; stderr: {:?}",
+            c.stderr_str()
+        );
+        let content = std::fs::read_to_string(&outfile).unwrap();
+        assert_eq!(content, "hello");
+    });
 }
 
 #[test]
@@ -473,82 +516,82 @@ fn stdout_pipe_with_user_stderr_at_fd_1() {
     // clobbered by the install_child_fd call that places stdout onto fd 1.
     // redirect_streams must install stderr (which dup2s from fd 1) before
     // stdout (which overwrites fd 1).
-    use std::fs::File;
-    use std::os::fd::AsRawFd;
-    use tempfile::TempDir;
+    run_isolated("stdout_pipe_with_user_stderr_at_fd_1", || {
+        use std::fs::File;
+        use std::os::fd::AsRawFd;
+        use tempfile::TempDir;
 
-    let _guard = FD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmpdir = TempDir::new().unwrap();
+        let errfile = tmpdir.path().join("err");
 
-    let tmpdir = TempDir::new().unwrap();
-    let errfile = tmpdir.path().join("err");
+        let saved = unsafe { libc::dup(1) };
+        assert!(saved >= 0);
+        assert_eq!(unsafe { libc::close(1) }, 0);
+        let f = File::create(&errfile).unwrap();
+        assert_eq!(f.as_raw_fd(), 1, "test setup: file did not land at fd 1");
+        assert!(unsafe { libc::dup2(saved, 100) } >= 0);
+        unsafe {
+            libc::close(saved);
+        }
 
-    let saved = unsafe { libc::dup(1) };
-    assert!(saved >= 0);
-    assert_eq!(unsafe { libc::close(1) }, 0);
-    let f = File::create(&errfile).unwrap();
-    assert_eq!(f.as_raw_fd(), 1, "test setup: file did not land at fd 1");
-    assert!(unsafe { libc::dup2(saved, 100) } >= 0);
-    unsafe {
-        libc::close(saved);
-    }
+        let result = Exec::cmd("sh")
+            .args(["-c", "echo to-stdout; echo to-stderr >&2"])
+            .stdout(Redirection::Pipe)
+            .stderr(f)
+            .capture();
 
-    let result = Exec::cmd("sh")
-        .args(["-c", "echo to-stdout; echo to-stderr >&2"])
-        .stdout(Redirection::Pipe)
-        .stderr(f)
-        .capture();
+        unsafe {
+            libc::dup2(100, 1);
+            libc::close(100);
+        }
 
-    unsafe {
-        libc::dup2(100, 1);
-        libc::close(100);
-    }
-
-    let c = result.expect("capture failed");
-    assert!(c.exit_status.success());
-    assert_eq!(c.stdout_str().trim(), "to-stdout");
-    let stderr_content = std::fs::read_to_string(&errfile).unwrap();
-    assert_eq!(stderr_content.trim(), "to-stderr");
+        let c = result.expect("capture failed");
+        assert!(c.exit_status.success());
+        assert_eq!(c.stdout_str().trim(), "to-stdout");
+        let stderr_content = std::fs::read_to_string(&errfile).unwrap();
+        assert_eq!(stderr_content.trim(), "to-stderr");
+    });
 }
 
 #[test]
 fn stdin_pipe_with_user_stderr_at_fd_0() {
     // A user-supplied File whose raw fd is 0, used as stderr, must not be
     // clobbered by the install_child_fd call that places stdin onto fd 0.
-    use std::fs::File;
-    use std::os::fd::AsRawFd;
-    use tempfile::TempDir;
+    run_isolated("stdin_pipe_with_user_stderr_at_fd_0", || {
+        use std::fs::File;
+        use std::os::fd::AsRawFd;
+        use tempfile::TempDir;
 
-    let _guard = FD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmpdir = TempDir::new().unwrap();
+        let errfile = tmpdir.path().join("err");
 
-    let tmpdir = TempDir::new().unwrap();
-    let errfile = tmpdir.path().join("err");
+        let saved = unsafe { libc::dup(0) };
+        assert!(saved >= 0);
+        assert_eq!(unsafe { libc::close(0) }, 0);
+        let f = File::create(&errfile).unwrap();
+        assert_eq!(f.as_raw_fd(), 0, "test setup: file did not land at fd 0");
+        assert!(unsafe { libc::dup2(saved, 100) } >= 0);
+        unsafe {
+            libc::close(saved);
+        }
 
-    let saved = unsafe { libc::dup(0) };
-    assert!(saved >= 0);
-    assert_eq!(unsafe { libc::close(0) }, 0);
-    let f = File::create(&errfile).unwrap();
-    assert_eq!(f.as_raw_fd(), 0, "test setup: file did not land at fd 0");
-    assert!(unsafe { libc::dup2(saved, 100) } >= 0);
-    unsafe {
-        libc::close(saved);
-    }
+        let result = Exec::cmd("sh")
+            .args(["-c", "echo to-stderr >&2"])
+            .stdin(Redirection::Pipe)
+            .stdout(Redirection::Pipe)
+            .stderr(f)
+            .capture();
 
-    let result = Exec::cmd("sh")
-        .args(["-c", "echo to-stderr >&2"])
-        .stdin(Redirection::Pipe)
-        .stdout(Redirection::Pipe)
-        .stderr(f)
-        .capture();
+        unsafe {
+            libc::dup2(100, 0);
+            libc::close(100);
+        }
 
-    unsafe {
-        libc::dup2(100, 0);
-        libc::close(100);
-    }
-
-    let c = result.expect("capture failed");
-    assert!(c.exit_status.success());
-    let stderr_content = std::fs::read_to_string(&errfile).unwrap();
-    assert_eq!(stderr_content.trim(), "to-stderr");
+        let c = result.expect("capture failed");
+        assert!(c.exit_status.success());
+        let stderr_content = std::fs::read_to_string(&errfile).unwrap();
+        assert_eq!(stderr_content.trim(), "to-stderr");
+    });
 }
 
 #[test]
@@ -557,63 +600,63 @@ fn user_files_with_swapped_fds_resolve_cycle() {
     // source fd is stdout's target. No reorder alone can install both
     // correctly; redirect_streams must dup one source via F_DUPFD_CLOEXEC to
     // break the cycle.
-    use std::fs::File;
-    use std::os::fd::AsRawFd;
-    use tempfile::TempDir;
+    run_isolated("user_files_with_swapped_fds_resolve_cycle", || {
+        use std::fs::File;
+        use std::os::fd::AsRawFd;
+        use tempfile::TempDir;
 
-    let _guard = FD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmpdir = TempDir::new().unwrap();
+        let path_at_1 = tmpdir.path().join("at_fd_1");
+        let path_at_2 = tmpdir.path().join("at_fd_2");
 
-    let tmpdir = TempDir::new().unwrap();
-    let path_at_1 = tmpdir.path().join("at_fd_1");
-    let path_at_2 = tmpdir.path().join("at_fd_2");
+        let saved_1 = unsafe { libc::dup(1) };
+        let saved_2 = unsafe { libc::dup(2) };
+        assert!(saved_1 >= 0 && saved_2 >= 0);
+        assert_eq!(unsafe { libc::close(1) }, 0);
+        assert_eq!(unsafe { libc::close(2) }, 0);
 
-    let saved_1 = unsafe { libc::dup(1) };
-    let saved_2 = unsafe { libc::dup(2) };
-    assert!(saved_1 >= 0 && saved_2 >= 0);
-    assert_eq!(unsafe { libc::close(1) }, 0);
-    assert_eq!(unsafe { libc::close(2) }, 0);
+        let file_at_1 = File::create(&path_at_1).unwrap();
+        assert_eq!(file_at_1.as_raw_fd(), 1);
+        let file_at_2 = File::create(&path_at_2).unwrap();
+        assert_eq!(file_at_2.as_raw_fd(), 2);
 
-    let file_at_1 = File::create(&path_at_1).unwrap();
-    assert_eq!(file_at_1.as_raw_fd(), 1);
-    let file_at_2 = File::create(&path_at_2).unwrap();
-    assert_eq!(file_at_2.as_raw_fd(), 2);
+        assert!(unsafe { libc::dup2(saved_1, 100) } >= 0);
+        assert!(unsafe { libc::dup2(saved_2, 101) } >= 0);
+        unsafe {
+            libc::close(saved_1);
+            libc::close(saved_2);
+        }
 
-    assert!(unsafe { libc::dup2(saved_1, 100) } >= 0);
-    assert!(unsafe { libc::dup2(saved_2, 101) } >= 0);
-    unsafe {
-        libc::close(saved_1);
-        libc::close(saved_2);
-    }
+        // file_at_2 (fd=2) used as stdout, file_at_1 (fd=1) used as stderr -> cycle.
+        let result = Exec::cmd("sh")
+            .args(["-c", "echo out; echo err >&2"])
+            .stdout(file_at_2)
+            .stderr(file_at_1)
+            .join();
 
-    // file_at_2 (fd=2) used as stdout, file_at_1 (fd=1) used as stderr -> cycle.
-    let result = Exec::cmd("sh")
-        .args(["-c", "echo out; echo err >&2"])
-        .stdout(file_at_2)
-        .stderr(file_at_1)
-        .join();
+        unsafe {
+            libc::dup2(100, 1);
+            libc::dup2(101, 2);
+            libc::close(100);
+            libc::close(101);
+        }
 
-    unsafe {
-        libc::dup2(100, 1);
-        libc::dup2(101, 2);
-        libc::close(100);
-        libc::close(101);
-    }
+        let status = result.expect("spawn failed");
+        assert!(status.success());
 
-    let status = result.expect("spawn failed");
-    assert!(status.success());
-
-    let content_at_1 = std::fs::read_to_string(&path_at_1).unwrap();
-    let content_at_2 = std::fs::read_to_string(&path_at_2).unwrap();
-    assert_eq!(
-        content_at_1.trim(),
-        "err",
-        "stderr file should contain 'err'"
-    );
-    assert_eq!(
-        content_at_2.trim(),
-        "out",
-        "stdout file should contain 'out'"
-    );
+        let content_at_1 = std::fs::read_to_string(&path_at_1).unwrap();
+        let content_at_2 = std::fs::read_to_string(&path_at_2).unwrap();
+        assert_eq!(
+            content_at_1.trim(),
+            "err",
+            "stderr file should contain 'err'"
+        );
+        assert_eq!(
+            content_at_2.trim(),
+            "out",
+            "stdout file should contain 'out'"
+        );
+    });
 }
 
 #[cfg(target_os = "linux")]
