@@ -11,7 +11,9 @@ use std::time::Duration;
 /// representation. Use the provided methods to query the exit status.
 ///
 /// On Unix, the raw value is the status from `waitpid()`. On Windows, it is the exit code
-/// from `GetExitCodeProcess()`.
+/// from `GetExitCodeProcess()`. The exit status may also be undetermined, in which case
+/// `code()` and `signal()` both return `None`; this happens when the child was reaped
+/// outside of this library and its status is no longer available.
 #[derive(Eq, PartialEq, Hash, Copy, Clone)]
 pub struct ExitStatus(pub(crate) Option<os::RawExitStatus>);
 
@@ -50,12 +52,15 @@ impl ExitStatus {
 ///
 /// # Drop behavior
 ///
-/// When the last clone of a `Process` is dropped, it waits for the child process to
-/// finish unless [`detach`](Self::detach) has been called. Because `Process` does not own
-/// any pipes to the child, callers must ensure that any pipes connected to the child's
-/// stdin are dropped *before* the `Process` is dropped. Otherwise, the child may block
-/// waiting for input while the `Process` drop waits for the child to exit, resulting in a
-/// deadlock. [`Job`] handles this automatically via field declaration order.
+/// When the last clone of a `Process` is dropped, it waits for the child to finish.
+/// Call [`detach`](Self::detach) to skip the wait.
+///
+/// `Process` does not own any pipes to the child, so callers must drop pipes to the
+/// child's standard streams *before* the `Process` itself. Otherwise the child may
+/// block on a full stdout/stderr pipe or on a stdin pipe that never sees EOF, while
+/// the `Process` drop waits for the child to exit -- a deadlock.
+///
+/// [`Job`] handles this automatically via field declaration order.
 ///
 /// [`Exec::start`]: crate::Exec::start
 /// [`Pipeline::start`]: crate::Pipeline::start
@@ -248,8 +253,8 @@ mod os {
     impl ExitStatus {
         /// Returns the exit code if the process exited normally.
         ///
-        /// On Unix, this returns `Some` only if the process exited voluntarily (not
-        /// killed by a signal).
+        /// On Unix, this returns `Some` only if the process exited normally, as opposed
+        /// to being killed by a signal.
         pub fn code(&self) -> Option<u32> {
             let raw = self.0?;
             libc::WIFEXITED(raw).then(|| libc::WEXITSTATUS(raw) as u32)
@@ -298,12 +303,87 @@ mod os {
 
     impl InnerProcess {
         pub(super) fn os_wait(&self) -> io::Result<ExitStatus> {
-            let mut state = self.state.lock().unwrap();
-            loop {
+            // Fast path: status already known.
+            {
+                let state = self.state.lock().unwrap();
                 if let Some(status) = state.exit_status {
                     return Ok(status);
                 }
-                Self::waitpid_into(&mut state, self.pid, true)?;
+            }
+
+            // On Linux with pidfd, poll(pidfd, INFINITE) is concurrent-safe and doesn't
+            // require holding any lock during the syscall.
+            #[cfg(target_os = "linux")]
+            {
+                let pidfd = self.state.lock().unwrap().pidfd.fd(self.pid);
+                if let Some(pidfd) = pidfd {
+                    return self.wait_pidfd(pidfd);
+                }
+            }
+
+            self.wait_blocking()
+        }
+
+        /// Wait indefinitely via pidfd. Linux-only fast path.
+        #[cfg(target_os = "linux")]
+        fn wait_pidfd(
+            &self,
+            pidfd: std::sync::Arc<std::os::unix::io::OwnedFd>,
+        ) -> io::Result<ExitStatus> {
+            use std::os::unix::io::AsFd;
+            loop {
+                {
+                    let state = self.state.lock().unwrap();
+                    if let Some(status) = state.exit_status {
+                        return Ok(status);
+                    }
+                }
+                let mut pfd = [posix::PollFd::new(Some(pidfd.as_fd()), posix::POLLIN)];
+                posix::poll(&mut pfd, None)?;
+                let mut state = self.state.lock().unwrap();
+                if state.exit_status.is_none() {
+                    let result = posix::waitpid(self.pid, posix::WNOHANG);
+                    Self::record_waitpid_result(&mut state, self.pid, result)?;
+                }
+                if let Some(status) = state.exit_status {
+                    return Ok(status);
+                }
+            }
+        }
+
+        /// Wait indefinitely via waitid()+waitpid(). Used when pidfd is unavailable
+        /// (non-Linux, or Linux with pidfd_open() failing).
+        ///
+        /// We block in waitid(WNOWAIT) rather than waitpid(0) so the kernel keeps the
+        /// child as a zombie until we reap under state lock. That closes the PID-reuse
+        /// window for a concurrent terminate()/kill(): while the zombie persists the PID
+        /// can't be recycled, and signals to a zombie are silently dropped by the kernel.
+        fn wait_blocking(&self) -> io::Result<ExitStatus> {
+            loop {
+                if let Some(status) = self.state.lock().unwrap().exit_status {
+                    return Ok(status);
+                }
+                if let Err(e) = posix::wait_no_reap(self.pid) {
+                    // ECHILD: someone else (an external waitpid) reaped before us.
+                    // Record it as undetermined and exit.
+                    if e.raw_os_error() == Some(posix::ECHILD) {
+                        let mut state = self.state.lock().unwrap();
+                        if state.exit_status.is_none() {
+                            state.exit_status = Some(ExitStatus(None));
+                        }
+                        return Ok(state.exit_status.unwrap());
+                    }
+                    return Err(e);
+                }
+                // Child is now a zombie. Reap and record under state lock.
+                let mut state = self.state.lock().unwrap();
+                if state.exit_status.is_none() {
+                    let result = posix::waitpid(self.pid, posix::WNOHANG);
+                    Self::record_waitpid_result(&mut state, self.pid, result)?;
+                }
+                if let Some(status) = state.exit_status {
+                    return Ok(status);
+                }
             }
         }
 
@@ -340,7 +420,7 @@ mod os {
 
             let mut state = self.state.lock().unwrap();
             if ready {
-                Self::waitpid_into(&mut state, self.pid, false)?;
+                self.try_reap(&mut state)?;
             }
             Ok(state.exit_status)
         }
@@ -355,7 +435,7 @@ mod os {
             let mut delay = Duration::from_millis(1);
 
             loop {
-                Self::waitpid_into(&mut state, self.pid, false)?;
+                self.try_reap(&mut state)?;
                 if state.exit_status.is_some() {
                     return Ok(state.exit_status);
                 }
@@ -402,11 +482,24 @@ mod os {
             }
         }
 
-        fn waitpid_into(state: &mut WaitState, pid: u32, block: bool) -> io::Result<()> {
+        /// Try a non-blocking (WNOHANG) waitpid for this process.
+        fn try_reap(&self, state: &mut WaitState) -> io::Result<()> {
             if state.exit_status.is_some() {
                 return Ok(());
             }
-            match posix::waitpid(pid, if block { 0 } else { posix::WNOHANG }) {
+            let result = posix::waitpid(self.pid, posix::WNOHANG);
+            Self::record_waitpid_result(state, self.pid, result)
+        }
+
+        fn record_waitpid_result(
+            state: &mut WaitState,
+            pid: u32,
+            result: io::Result<(u32, ExitStatus)>,
+        ) -> io::Result<()> {
+            if state.exit_status.is_some() {
+                return Ok(());
+            }
+            match result {
                 Ok((pid_out, exit_status)) if pid_out == pid => {
                     state.exit_status = Some(exit_status);
                 }
@@ -433,8 +526,9 @@ mod os {
         pub trait ProcessExt {
             /// Send the specified signal to the child process.
             ///
-            /// If the child process is known to have finished (due to e.g.  a previous
-            /// call to [`wait`] or [`poll`]), this will do nothing and return `Ok`.
+            /// If the process has already been reaped (e.g. by a previous call to
+            /// [`wait`] or [`poll`]), this is a no-op to avoid signaling a potentially
+            /// reused PID.
             ///
             /// [`poll`]: crate::Process::poll
             /// [`wait`]: crate::Process::wait
@@ -447,8 +541,8 @@ mod os {
             /// [`ExecExt::setpgid`] set, which places the child in a new process group
             /// with PGID equal to its PID.
             ///
-            /// If the child process is known to have finished, this will do nothing and
-            /// return `Ok`.
+            /// If the process has already been reaped, this is a no-op to avoid signaling
+            /// an unrelated process group that may now exist under the reused PID.
             ///
             /// [`ExecExt::setpgid`]: crate::ExecExt::setpgid
             fn send_signal_group(&self, signal: i32) -> io::Result<()>;

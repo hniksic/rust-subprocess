@@ -42,7 +42,7 @@ fn reject_empty_argv() {
 #[test]
 fn err_exit() {
     let status = Exec::cmd("sh")
-        .args(&["-c", "exit 13"])
+        .args(["-c", "exit 13"])
         .start()
         .unwrap()
         .wait()
@@ -114,7 +114,7 @@ fn stream_stdout() {
 #[test]
 fn stream_stderr() {
     let stream = Exec::cmd("sh")
-        .args(&["-c", "printf foo >&2"])
+        .args(["-c", "printf foo >&2"])
         .stream_stderr()
         .unwrap();
     assert_eq!(io::read_to_string(stream).unwrap(), "foo");
@@ -226,7 +226,7 @@ fn reject_input_data_stream_stdin() {
 fn env_set() {
     assert!(
         Exec::cmd("sh")
-            .args(&["-c", r#"test "$SOMEVAR" = "foo""#])
+            .args(["-c", r#"test "$SOMEVAR" = "foo""#])
             .env("SOMEVAR", "foo")
             .join()
             .unwrap()
@@ -238,7 +238,7 @@ fn env_set() {
 fn env_extend() {
     assert!(
         Exec::cmd("sh")
-            .args(&["-c", r#"test "$VAR1" = "foo" && test "$VAR2" = "bar""#])
+            .args(["-c", r#"test "$VAR1" = "foo" && test "$VAR2" = "bar""#])
             .env_extend([("VAR1", "foo"), ("VAR2", "bar")])
             .join()
             .unwrap()
@@ -282,7 +282,7 @@ fn tmp_env_var<'a>(varname: &'static str, tmp_value: &'static str) -> TmpEnvVar<
 #[test]
 fn env_add() {
     let status = Exec::cmd("sh")
-        .args(&["-c", r#"test "$SOMEVAR" = "foo""#])
+        .args(["-c", r#"test "$SOMEVAR" = "foo""#])
         .env("SOMEVAR", "foo")
         .start()
         .unwrap()
@@ -294,7 +294,7 @@ fn env_add() {
 #[test]
 fn env_dup() {
     let status = Exec::cmd("sh")
-        .args(&["-c", r#"test "$SOMEVAR" = "bar""#])
+        .args(["-c", r#"test "$SOMEVAR" = "bar""#])
         .env_clear()
         .env("SOMEVAR", "foo")
         .env("SOMEVAR", "bar")
@@ -313,7 +313,7 @@ fn env_inherit() {
     let _guard = tmp_env_var(varname, "inherited");
     assert!(
         Exec::cmd("sh")
-            .args(&["-c", &format!(r#"test "${}" = "inherited""#, varname)])
+            .args(["-c", &format!(r#"test "${}" = "inherited""#, varname)])
             .join()
             .unwrap()
             .success()
@@ -327,7 +327,7 @@ fn env_inherit_set() {
     let _guard = tmp_env_var(varname, "inherited");
     assert!(
         Exec::cmd("sh")
-            .args(&["-c", &format!(r#"test "${}" = "new""#, varname)])
+            .args(["-c", &format!(r#"test "${}" = "new""#, varname)])
             .env(varname, "new")
             .join()
             .unwrap()
@@ -377,7 +377,7 @@ fn exec_capture_auto_stdout_when_stderr_set() {
     // Exec::capture() auto-pipes stdout and stderr independently.
     // Setting stderr(Pipe) does not suppress stdout auto-piping.
     let c = Exec::cmd("sh")
-        .args(&["-c", "echo out; echo err >&2"])
+        .args(["-c", "echo out; echo err >&2"])
         .stderr(Redirection::Pipe)
         .capture()
         .unwrap();
@@ -389,7 +389,7 @@ fn exec_capture_auto_stdout_when_stderr_set() {
 fn exec_capture_auto_pipes_both() {
     // Bare Exec::cmd(...).capture() auto-pipes both stdout and stderr.
     let c = Exec::cmd("sh")
-        .args(&["-c", "echo out; echo err >&2"])
+        .args(["-c", "echo out; echo err >&2"])
         .capture()
         .unwrap();
     assert_eq!(c.stdout_str().trim(), "out");
@@ -401,7 +401,7 @@ fn exec_communicate_auto_stdout_when_stderr_set() {
     // Exec::communicate() auto-pipes stdout and stderr independently.
     // Setting stderr(Pipe) does not suppress stdout auto-piping.
     let mut comm = Exec::cmd("sh")
-        .args(&["-c", "echo out; echo err >&2"])
+        .args(["-c", "echo out; echo err >&2"])
         .stderr(Redirection::Pipe)
         .communicate()
         .unwrap();

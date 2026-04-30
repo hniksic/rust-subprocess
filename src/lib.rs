@@ -33,7 +33,7 @@
 //! # }
 //! ```
 //!
-//! Use the [`Exec`] builder to execute a pipeline of commands and capture the output:
+//! Combine [`Exec`] instances with `|` to build a [`Pipeline`] and capture its output:
 //!
 //! ```no_run
 //! # use subprocess::*;

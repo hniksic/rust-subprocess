@@ -93,8 +93,8 @@ impl Job {
 
     /// Returns the PIDs of all processes in the pipeline, in pipeline order.
     ///
-    /// If the job was started by a single process, this will return its pid. It will be
-    /// empty for a job started by an empty pipeline.
+    /// If the job was started from a single command (`Exec`), this returns one PID. It
+    /// will be empty for a job started by an empty pipeline.
     pub fn pids(&self) -> Vec<u32> {
         self.processes.iter().map(|p| p.pid()).collect()
     }

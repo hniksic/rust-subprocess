@@ -28,7 +28,7 @@ fn communicate_input() {
 fn communicate_output() {
     // Capture both stdout and stderr from a command that writes to both.
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "echo foo; echo bar >&2"])
+        .args(["-c", "echo foo; echo bar >&2"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -43,7 +43,7 @@ fn communicate_output() {
 fn communicate_input_output() {
     // Feed input data and capture both stdout and stderr.
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "cat; echo foo >&2"])
+        .args(["-c", "cat; echo foo >&2"])
         .stdin("hello world")
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
@@ -60,7 +60,7 @@ fn communicate_input_output_long() {
     // Large data in both directions with simultaneous stdout and stderr
     // output, testing deadlock prevention.
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "cat; printf '%100000s' '' >&2"])
+        .args(["-c", "cat; printf '%100000s' '' >&2"])
         .stdin(vec![65u8; 1_000_000])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
@@ -77,7 +77,7 @@ fn communicate_timeout() {
     // A command that produces partial output then sleeps should time out,
     // and the partial output should still be available.
     let mut job = Exec::cmd("sh")
-        .args(&["-c", "printf foo; sleep 1"])
+        .args(["-c", "printf foo; sleep 1"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -99,7 +99,7 @@ fn communicate_timeout() {
 fn communicate_size_limit_small() {
     // Read with a small size limit, then continue reading in chunks.
     let mut job = Exec::cmd("sh")
-        .args(&["-c", "printf '%5s' a"])
+        .args(["-c", "printf '%5s' a"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -120,7 +120,7 @@ fn check_vec(v: &[u8], size: usize, content: u8) {
 fn communicate_size_limit_large() {
     // Read large output in chunks using limit_size.
     let mut job = Exec::cmd("sh")
-        .args(&["-c", "printf '%20001s' a"])
+        .args(["-c", "printf '%20001s' a"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -144,7 +144,7 @@ fn communicate_size_limit_different_sizes() {
     // Change the size limit between successive reads to verify that
     // the communicator respects the new limit each time.
     let mut job = Exec::cmd("sh")
-        .args(&["-c", "printf '%20001s' a"])
+        .args(["-c", "printf '%20001s' a"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -181,7 +181,7 @@ fn communicate_stdout_only() {
     // Capture only stdout (no stderr pipe). Stderr output goes to the
     // parent's stderr and is not captured.
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "echo hello; echo ignored >&2"])
+        .args(["-c", "echo hello; echo ignored >&2"])
         .stdout(Redirection::Pipe)
         .start()
         .unwrap();
@@ -196,7 +196,7 @@ fn communicate_stderr_only() {
     // Capture only stderr (no stdout pipe). Stdout output goes to the
     // parent's stdout and is not captured.
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "echo ignored; echo error >&2"])
+        .args(["-c", "echo ignored; echo error >&2"])
         .stderr(Redirection::Pipe)
         .start()
         .unwrap();
@@ -249,7 +249,7 @@ fn communicate_empty_output() {
 fn communicate_large_stderr() {
     // Test large output on stderr specifically.
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "printf '%50000s' x >&2"])
+        .args(["-c", "printf '%50000s' x >&2"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -266,7 +266,7 @@ fn communicate_interleaved_output() {
     // Test interleaved stdout/stderr - both should be captured correctly
     // in their respective buffers.
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "echo out1; echo err1 >&2; echo out2; echo err2 >&2"])
+        .args(["-c", "echo out1; echo err1 >&2; echo out2; echo err2 >&2"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -281,7 +281,7 @@ fn communicate_interleaved_output() {
 fn communicate_quick_exit() {
     // Process exits immediately without producing output.
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "exit 0"])
+        .args(["-c", "exit 0"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -297,7 +297,7 @@ fn communicate_process_fails() {
     // Process exits with non-zero status. Communicate should still
     // succeed and return the captured data.
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "echo output; echo error >&2; exit 42"])
+        .args(["-c", "echo output; echo error >&2; exit 42"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -313,7 +313,7 @@ fn communicate_size_limit_zero() {
     // Size limit of 0 should return empty immediately; continue reading
     // with a larger limit to get the remaining data.
     let mut job = Exec::cmd("sh")
-        .args(&["-c", "printf 'data'"])
+        .args(["-c", "printf 'data'"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -334,7 +334,7 @@ fn communicate_size_limit_zero() {
 fn communicate_size_limit_stderr() {
     // Size limit should apply to the combined total of stdout + stderr.
     let mut job = Exec::cmd("sh")
-        .args(&["-c", "printf out; printf err >&2"])
+        .args(["-c", "printf out; printf err >&2"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -351,7 +351,7 @@ fn communicate_size_limit_stderr() {
 fn communicate_timeout_zero() {
     // Immediate timeout (zero duration) on a sleeping process.
     let mut job = Exec::cmd("sh")
-        .args(&["-c", "sleep 1; echo done"])
+        .args(["-c", "sleep 1; echo done"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -414,7 +414,7 @@ fn communicate_partial_read_continue() {
     // Read with a size limit, then continue reading in multiple chunks
     // until all data is consumed.
     let mut job = Exec::cmd("sh")
-        .args(&["-c", "printf 'abcdefghij'"])
+        .args(["-c", "printf 'abcdefghij'"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()
@@ -455,7 +455,7 @@ fn communicate_no_streams() {
 fn communicate_very_long_lines() {
     // Test with very long output that contains no newlines.
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "printf '%100000s' x"])
+        .args(["-c", "printf '%100000s' x"])
         .stdout(Redirection::Pipe)
         .start()
         .unwrap();
@@ -470,7 +470,7 @@ fn communicate_timeout_with_partial_and_continue() {
     // Time out while reading, capture partial data, then continue
     // reading with a longer timeout to get the rest.
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "printf first; sleep 0.5; printf second"])
+        .args(["-c", "printf first; sleep 0.5; printf second"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Pipe)
         .start()

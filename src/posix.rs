@@ -54,14 +54,25 @@ pub fn pipe() -> Result<(File, File)> {
 pub fn pipe() -> Result<(File, File)> {
     let mut fds = [0; 2];
     check_err(unsafe { libc::pipe(fds.as_mut_ptr()) })?;
+    // Wrap in File immediately so an fcntl failure below closes both fds via Drop
+    // instead of leaking them.
+    let (read, write) = unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) };
     // Set CLOEXEC on both ends. There is a small race window between pipe() and fcntl()
     // where another thread's fork()+exec() could inherit these fds - this matches what
     // Rust stdlib does on these platforms that lack pipe2().
     unsafe {
-        check_err(libc::fcntl(fds[0], libc::F_SETFD, libc::FD_CLOEXEC))?;
-        check_err(libc::fcntl(fds[1], libc::F_SETFD, libc::FD_CLOEXEC))?;
+        check_err(libc::fcntl(
+            read.as_raw_fd(),
+            libc::F_SETFD,
+            libc::FD_CLOEXEC,
+        ))?;
+        check_err(libc::fcntl(
+            write.as_raw_fd(),
+            libc::F_SETFD,
+            libc::FD_CLOEXEC,
+        ))?;
     }
-    Ok(unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) })
+    Ok((read, write))
 }
 
 // marked unsafe because the child must not allocate before exec-ing
@@ -188,7 +199,10 @@ impl PrepExec {
         let mut exe = std::mem::ManuallyDrop::new(std::mem::take(&mut this.prealloc_exe));
 
         if let Some(ref search_path) = this.search_path {
-            let mut err = Ok(());
+            // Default to ENOENT so a PATH with no usable entries (e.g. ":::") yields
+            // a real error instead of Ok(()) - the caller would otherwise hit
+            // unreachable!() in the child after fork.
+            let mut err = Err(Error::from_raw_os_error(libc::ENOENT));
             // POSIX requires execvp and execve, but not execvpe (although glibc provides
             // one), so we have to iterate over PATH ourselves
             for dir in split_path(search_path.as_os_str()) {
@@ -297,6 +311,35 @@ pub fn waitpid(pid: u32, flags: i32) -> Result<(u32, ExitStatus)> {
     Ok((pid as u32, ExitStatus::from_raw(status)))
 }
 
+/// Block until `pid` has exited, leaving it as a zombie (does not reap).
+///
+/// The PID stays tied to the dead child until something calls `waitpid` to reap it, so a
+/// signal sent in the window between this returning and the reap is delivered to the
+/// original child (or to a zombie, which is a no-op) - never to a recycled PID.
+///
+/// Restarted automatically on `EINTR`.
+pub fn wait_no_reap(pid: u32) -> Result<()> {
+    loop {
+        let mut info: libc::siginfo_t = unsafe { mem::zeroed() };
+        let r = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        if r == 0 {
+            return Ok(());
+        }
+        let err = Error::last_os_error();
+        if err.raw_os_error() == Some(libc::EINTR) {
+            continue;
+        }
+        return Err(err);
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub fn pidfd_open(pid: u32) -> Result<std::os::unix::io::OwnedFd> {
     let fd =
@@ -318,6 +361,7 @@ pub fn killpg(pgid: u32, signal: i32) -> Result<()> {
 
 pub const F_GETFD: i32 = libc::F_GETFD;
 pub const F_SETFD: i32 = libc::F_SETFD;
+pub const F_DUPFD_CLOEXEC: i32 = libc::F_DUPFD_CLOEXEC;
 pub const FD_CLOEXEC: i32 = libc::FD_CLOEXEC;
 
 pub fn fcntl(fd: i32, cmd: i32, arg1: Option<i32>) -> Result<i32> {
@@ -393,11 +437,12 @@ impl PollFd<'_> {
 pub use libc::{POLLHUP, POLLIN, POLLOUT};
 
 pub fn poll(fds: &mut [PollFd<'_>], mut timeout: Option<Duration>) -> Result<usize> {
+    // The loop handles two cases:
+    //   - poll() accepts a maximum timeout of 2**31-1 ms (less than 25 days), and the
+    //     caller can specify larger Durations.
+    //   - poll() fails with EINTR when interrupted by a signal handler.
     let deadline = timeout.map(|timeout| Instant::now() + timeout);
     loop {
-        // poll() accepts a maximum timeout of 2**31-1 ms, which is less than 25 days.
-        // The caller can specify Durations much larger than that, so support them by
-        // waiting in a loop.
         let (timeout_ms, overflow) = timeout
             .map(|timeout| {
                 let timeout = timeout.as_millis();
@@ -409,17 +454,28 @@ pub fn poll(fds: &mut [PollFd<'_>], mut timeout: Option<Duration>) -> Result<usi
             })
             .unwrap_or((-1, false));
         let fds_ptr = fds.as_ptr() as *mut libc::pollfd;
-        let cnt = unsafe { check_err(libc::poll(fds_ptr, fds.len() as libc::nfds_t, timeout_ms))? };
-        if cnt != 0 || !overflow {
-            return Ok(cnt as usize);
+        let raw = unsafe { libc::poll(fds_ptr, fds.len() as libc::nfds_t, timeout_ms) };
+        if raw >= 0 {
+            let cnt = raw as usize;
+            if cnt != 0 || !overflow {
+                return Ok(cnt);
+            }
+            // Timeout fired on the clamped value; loop to wait the rest.
+        } else {
+            let err = Error::last_os_error();
+            if err.raw_os_error() != Some(libc::EINTR) {
+                return Err(err);
+            }
+            // Interrupted by a signal; loop and retry.
         }
 
-        let deadline = deadline.unwrap();
-        let now = Instant::now();
-        if now >= deadline {
-            return Ok(0);
+        if let Some(deadline) = deadline {
+            let now = Instant::now();
+            if now >= deadline {
+                return Ok(0);
+            }
+            timeout = Some(deadline - now);
         }
-        timeout = Some(deadline - now);
     }
 }
 

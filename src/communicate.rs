@@ -435,12 +435,13 @@ use win32::RawCommunicator;
 /// serially, our process could block waiting to write input while the subprocess blocks
 /// waiting for us to read its output, or vice versa.
 ///
-/// Create a `Communicator` by calling [`Job::communicate`], then call [`read`] or
-/// [`read_string`] to perform the data exchange.
+/// Create a `Communicator` by calling [`Job::communicate`], then call [`read`],
+/// [`read_string`], or [`read_to`] to perform the data exchange.
 ///
 /// [`Job::communicate`]: crate::Job::communicate
 /// [`read`]: #method.read
 /// [`read_string`]: #method.read_string
+/// [`read_to`]: #method.read_to
 #[must_use]
 pub struct Communicator {
     inner: RawCommunicator,
@@ -539,7 +540,7 @@ impl Communicator {
     ///
     /// Note that this method does not wait for the subprocess to finish, only to close its
     /// output/error streams.  It is rare but possible for the program to continue running
-    /// after having closed the streams, in which case `Process::Drop` will wait for it
+    /// after having closed the streams, in which case `Process::drop()` will wait for it
     /// to finish.  If such a wait is undesirable, it can be prevented by waiting
     /// explicitly using `wait()`, by detaching the process using `detach()`, or by
     /// terminating it with `terminate()`.
@@ -564,7 +565,10 @@ impl Communicator {
         Ok((from_utf8_lossy(out), from_utf8_lossy(err)))
     }
 
-    /// Limit the amount of data the next `read()` will read from the subprocess.
+    /// Limit the amount of data each `read()` will read from the subprocess.
+    ///
+    /// The limit applies per call and persists across subsequent reads, so any data
+    /// beyond the limit is left buffered for the next `read()` to retrieve.
     ///
     /// On Windows, when capturing both stdout and stderr, the limit is approximate
     /// and may be exceeded by several kilobytes.
@@ -573,7 +577,7 @@ impl Communicator {
         self
     }
 
-    /// Limit the amount of time the next `read()` will spend reading from the subprocess.
+    /// Limit the amount of time each `read()` will spend reading from the subprocess.
     pub fn limit_time(mut self, time: Duration) -> Communicator {
         self.time_limit = Some(time);
         self

@@ -137,9 +137,9 @@ impl Pipeline {
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-    /// * a `Vec<u8>`, `&str`, `&[u8]`, `Box<[u8]>`, or `[u8; N]`, which will set up a
-    ///   `Redirection::Pipe` for stdin, feeding that data into the standard input of the
-    ///   subprocess;
+    /// * a `Vec<u8>`, `&'static str`, `&'static [u8]`, `Box<[u8]>`, or `[u8; N]`, which
+    ///   will set up a `Redirection::Pipe` for stdin, feeding that data into the standard
+    ///   input of the subprocess;
     /// * an [`InputData`], which also sets up a pipe, but wraps any reader and feeds its
     ///   content to the standard input of the subprocess. Use [`InputData::from_bytes`]
     ///   for in-memory byte containers not covered by the above, like `bytes::Bytes` or
@@ -188,10 +188,9 @@ impl Pipeline {
     /// Specifies the sink for the standard error of all commands in the pipeline.
     ///
     /// Unlike `stdout()`, which only affects the last command in the pipeline, this
-    /// affects all commands.  The difference is because standard output is piped from one
-    /// command to the next, so only the output of the last command is "free".  In
-    /// contrast, the standard errors are not connected to each other and can be
-    /// configured *en masse*.
+    /// affects all commands.  This is because standard output is piped from one command
+    /// to the next, so only the output of the last command is "free".  In contrast, the
+    /// standard errors are not connected to each other and can be configured *en masse*.
     ///
     /// The sink can be:
     ///

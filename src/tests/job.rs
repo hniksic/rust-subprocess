@@ -62,7 +62,7 @@ fn exec_start_stdin_write() {
 #[test]
 fn exec_start_stderr() {
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "echo err-output >&2"])
+        .args(["-c", "echo err-output >&2"])
         .stderr(Redirection::Pipe)
         .start()
         .unwrap();
@@ -177,7 +177,7 @@ fn write_to_subprocess() {
 #[test]
 fn merge_err_to_out_pipe() {
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "echo foo; echo bar >&2"])
+        .args(["-c", "echo foo; echo bar >&2"])
         .stdout(Redirection::Pipe)
         .stderr(Redirection::Merge)
         .start()
@@ -191,7 +191,7 @@ fn merge_err_to_out_pipe() {
 #[test]
 fn merge_out_to_err_pipe() {
     let mut handle = Exec::cmd("sh")
-        .args(&["-c", "echo foo; echo bar >&2"])
+        .args(["-c", "echo foo; echo bar >&2"])
         .stdout(Redirection::Merge)
         .stderr(Redirection::Pipe)
         .start()
@@ -207,7 +207,7 @@ fn merge_err_to_out_file() {
     let tmpdir = TempDir::new().unwrap();
     let tmpname = tmpdir.path().join("output");
     let status = Exec::cmd("sh")
-        .args(&["-c", "printf foo; printf bar >&2"])
+        .args(["-c", "printf foo; printf bar >&2"])
         .stdout(File::create(&tmpname).unwrap())
         .stderr(Redirection::Merge)
         .start()
@@ -320,7 +320,7 @@ fn poll_finished_process() {
 
 #[test]
 fn wait_multiple_times() {
-    let job = Exec::cmd("sh").args(&["-c", "exit 42"]).start().unwrap();
+    let job = Exec::cmd("sh").args(["-c", "exit 42"]).start().unwrap();
     let s1 = job.wait().unwrap();
     let s2 = job.wait().unwrap();
     let s3 = job.wait().unwrap();
@@ -391,14 +391,14 @@ fn detach_does_not_wait_on_drop() {
 #[test]
 fn capture_timeout() {
     match Exec::cmd("sleep")
-        .args(&["0.5"])
+        .args(["0.5"])
         .start()
         .unwrap()
         .capture_timeout(Duration::from_millis(100))
     {
         Ok(_) => panic!("expected timeout return"),
         Err(e) => match e.kind() {
-            ErrorKind::TimedOut => assert!(true),
+            ErrorKind::TimedOut => {}
             _ => panic!("expected timeout return"),
         },
     }

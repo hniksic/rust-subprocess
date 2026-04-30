@@ -124,25 +124,20 @@ fn prepare_child_stream(
     redir: Arc<Redirection>,
     is_input: bool,
 ) -> io::Result<(Option<File>, Option<Arc<Redirection>>)> {
-    // File is the only variant holding a resource - handle specially to avoid dup() when
-    // the Arc is shared.
-    if matches!(&*redir, Redirection::File(_)) {
-        return match Arc::try_unwrap(redir) {
-            Ok(Redirection::File(f)) => Ok((None, Some(os::prepare_file(f)?))),
-            Err(arc) => Ok((None, Some(os::prepare_file_shared(arc)?))),
-            _ => unreachable!(),
-        };
-    }
-    // Other variants are trivially cheap - just peek and handle.
     match &*redir {
+        Redirection::File(_) => Ok((None, Some(os::prepare_file(redir)?))),
         Redirection::Pipe => {
             let (parent, child) = prepare_pipe(is_input)?;
             Ok((Some(parent), Some(child)))
         }
         Redirection::Null => Ok((None, Some(prepare_null_file(is_input)?))),
         Redirection::None => Ok((None, None)),
-        _ => unreachable!(),
+        Redirection::Merge => unreachable!(),
     }
+}
+
+fn wrap_file(file: File) -> Arc<Redirection> {
+    Arc::new(Redirection::File(file))
 }
 
 fn prepare_pipe(parent_writes: bool) -> io::Result<(File, Arc<Redirection>)> {
@@ -152,7 +147,7 @@ fn prepare_pipe(parent_writes: bool) -> io::Result<(File, Arc<Redirection>)> {
     } else {
         (read, write)
     };
-    Ok((parent_end, os::prepare_file(child_end)?))
+    Ok((parent_end, os::prepare_file(wrap_file(child_end))?))
 }
 
 fn prepare_null_file(for_read: bool) -> io::Result<Arc<Redirection>> {
@@ -161,7 +156,7 @@ fn prepare_null_file(for_read: bool) -> io::Result<Arc<Redirection>> {
     } else {
         OpenOptions::new().write(true).open(os::NULL_DEVICE)?
     };
-    os::prepare_file(file)
+    os::prepare_file(wrap_file(file))
 }
 
 // Share a child stream via Arc::clone - zero dup syscalls.
@@ -303,7 +298,7 @@ pub(crate) mod os {
     use std::ffi::OsString;
     use std::fs::File;
     use std::io::{self, Read, Write};
-    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::fd::{AsRawFd, RawFd};
 
     pub use crate::posix::make_redirection_to_standard_stream;
 
@@ -400,43 +395,67 @@ pub(crate) mod os {
         formatted
     }
 
-    fn install_child_fd(end: Option<Arc<Redirection>>, target_fd: i32) -> io::Result<()> {
-        // Called after fork - use ManuallyDrop to prevent deallocation on
-        // early return via ?.
-        let mut end = std::mem::ManuallyDrop::new(end);
-        if let Some(r) = &*end {
-            let fd = child_file(r).as_raw_fd();
-            if fd != target_fd {
-                posix::dup2(fd, target_fd)?;
-            } else {
-                // dup2(fd, fd) is a no-op per POSIX and doesn't clear
-                // CLOEXEC. Clear it so the fd survives exec.
-                set_inheritable(child_file(r), true)?;
+    // Install all three child-end fds onto stdin/stdout/stderr in fixed
+    // [0, 1, 2] order. Pre-pass: for any source fd that another stream's
+    // dup2 would clobber, F_DUPFD_CLOEXEC it to a fresh fd >= 3. Cycles
+    // (stdout source = 2, stderr source = 1, etc.) fall out for free:
+    // every node in a cycle would be overwritten, so every node gets duped.
+    //
+    // The fixed install order is correct because, after the pre-pass,
+    // every slot i with source S satisfies one of:
+    //   - S >= 3 (no slot's dup2 lands on S; targets are 0..=2 only), or
+    //   - S == i (slot i does no dup2; the question doesn't arise), or
+    //   - slots[S] does no dup2 either: it is None, or its source == S
+    //     (so fd S is untouched by the time slot i reads it).
+    // The will_be_overwritten predicate below is the precise negation of these.
+    //
+    // `slots` is borrowed (not mutated): the source fds remain valid for the
+    // duration of this call because the caller keeps the underlying Arcs alive
+    // (in a ManuallyDrop, post-fork).
+    fn redirect_streams(slots: &[Option<Arc<Redirection>>; 3]) -> io::Result<()> {
+        let mut sources: [Option<i32>; 3] = [
+            slots[0].as_ref().map(|a| child_file(a).as_raw_fd()),
+            slots[1].as_ref().map(|a| child_file(a).as_raw_fd()),
+            slots[2].as_ref().map(|a| child_file(a).as_raw_fd()),
+        ];
+
+        for i in 0..3 {
+            if let Some(fd) = sources[i] {
+                // Will be overwritten iff fd is a low fd (a possible dup2
+                // target) other than this stream's own target, AND the stream
+                // owning fd as its target will actually dup2 to it (source !=
+                // target there too). The normal case (sources > 2) skips this
+                // entirely.
+                let will_be_overwritten = (0..=2).contains(&fd)
+                    && fd != i as i32
+                    && sources[fd as usize].is_some_and(|s| s != fd);
+                if will_be_overwritten {
+                    sources[i] = Some(posix::fcntl(fd, posix::F_DUPFD_CLOEXEC, Some(3))?);
+                }
             }
         }
-        if let Some(end) = end.take() {
-            prevent_dealloc(end);
+
+        for (i, &source) in sources.iter().enumerate() {
+            let target = i as i32;
+            let Some(fd) = source else { continue };
+            if fd == target {
+                // dup2(fd, fd) is a no-op and doesn't clear CLOEXEC; clear it
+                // so the fd survives exec.
+                set_inheritable(fd, true)?;
+            } else {
+                posix::dup2(fd, target)?;
+                // Source fd is redundant after dup2; for fd > 2, set CLOEXEC
+                // so it closes at exec. (Pre-pass dups already have CLOEXEC,
+                // so this is a single F_GETFD no-op for them.) fd in 0..=2 is
+                // an inherited standard stream the child may still need -
+                // notably the standard-stream wrapper used to back a Merge
+                // against an unredirected stdout/stderr - so leave it.
+                if fd >= 3 {
+                    let _ = set_inheritable(fd, false);
+                }
+            }
         }
         Ok(())
-    }
-
-    // Prevent deallocation of Arc while still closing the underlying resource if
-    // necessary. Needed because this runs after fork() - see prep_exec().
-    //
-    // Note that this never closes system streams returned by
-    // get_redirection_to_standard_stream() because it returns "leaked" Arcs which are
-    // immortal.
-    fn prevent_dealloc(r: Arc<Redirection>) {
-        // If Arc<Redirection> we received is the last one, manually close the File
-        // inside.
-        if Arc::strong_count(&r) == 1
-            && let Redirection::File(f) = &*r
-        {
-            // SAFETY: strong_count == 1 guarantees no other Arc clone will access or
-            // close the fd. std::mem::forget() prevents double-close.
-            let _ = unsafe { File::from_raw_fd(f.as_raw_fd()) };
-        };
-        std::mem::forget(r);
     }
 
     fn do_exec(
@@ -452,9 +471,7 @@ pub(crate) mod os {
         // Called after fork - use ManuallyDrop to prevent deallocation on
         // early return via ?.
         let (stdin, stdout, stderr) = child_ends;
-        let mut stdin = std::mem::ManuallyDrop::new(stdin);
-        let mut stdout = std::mem::ManuallyDrop::new(stdout);
-        let mut stderr = std::mem::ManuallyDrop::new(stderr);
+        let slots = std::mem::ManuallyDrop::new([stdin, stdout, stderr]);
         let mut just_exec = std::mem::ManuallyDrop::new(just_exec);
         let mut os_options = std::mem::ManuallyDrop::new(os_options);
 
@@ -462,9 +479,7 @@ pub(crate) mod os {
             chdir()?;
         }
 
-        install_child_fd(stdin.take(), 0)?;
-        install_child_fd(stdout.take(), 1)?;
-        install_child_fd(stderr.take(), 2)?;
+        redirect_streams(&slots)?;
         posix::reset_sigpipe()?;
 
         if let Some(gid) = os_options.setgid {
@@ -485,8 +500,7 @@ pub(crate) mod os {
         unreachable!();
     }
 
-    pub fn set_inheritable(f: &File, inheritable: bool) -> io::Result<()> {
-        let fd = f.as_raw_fd();
+    pub fn set_inheritable(fd: RawFd, inheritable: bool) -> io::Result<()> {
         let old = posix::fcntl(fd, posix::F_GETFD, None)?;
         let new = if inheritable {
             old & !posix::FD_CLOEXEC
@@ -499,21 +513,17 @@ pub(crate) mod os {
         Ok(())
     }
 
-    pub fn prepare_file(file: File) -> io::Result<Arc<Redirection>> {
+    pub fn prepare_file(redir: Arc<Redirection>) -> io::Result<Arc<Redirection>> {
         // On Unix, child fds don't need CLOEXEC cleared before fork.  dup2() in the child
         // atomically places them on fd 0/1/2 and clears CLOEXEC on the target.
-        Ok(Arc::new(Redirection::File(file)))
-    }
-
-    pub fn prepare_file_shared(arc: Arc<Redirection>) -> io::Result<Arc<Redirection>> {
-        Ok(arc)
+        Ok(redir)
     }
 
     /// Create a pipe.
     ///
     /// Child processes won't inherit these fds across exec. To pass a pipe end to a
     /// child, dup2() it to a standard fd (which clears CLOEXEC), or call
-    /// `set_inheritable(f, true)`.
+    /// `set_inheritable(fd, true)`.
     pub fn make_pipe() -> io::Result<(File, File)> {
         posix::pipe()
     }
@@ -590,20 +600,18 @@ pub(crate) mod os {
     }
 
     fn format_env_block(env: &[(OsString, OsString)]) -> Vec<u16> {
-        // Dedupe by env-var-name semantics, keeping the last occurrence of each
-        // key. Walk in reverse, retain entries whose key isn't already seen, then
-        // reverse back to restore original relative order.
-        let mut pruned: Vec<_> = {
-            let mut seen = std::collections::BTreeSet::<EnvKey>::new();
-            env.iter()
-                .rev()
-                .filter(|(k, _)| seen.insert(EnvKey::new(k)))
-                .collect()
-        };
-        pruned.reverse();
+        // Sort and dedup in one pass via BTreeMap<EnvKey, _>. EnvKey orders entries by
+        // case-insensitive ordinal compare, which is exactly the order CreateProcessW
+        // requires for Unicode environment blocks. Walking input in reverse with
+        // or_insert means the latest occurrence of each key wins, both for value
+        // (matching "last value used" semantics) and for the key's case form.
+        let mut sorted = std::collections::BTreeMap::<EnvKey, &OsStr>::new();
+        for (k, v) in env.iter().rev() {
+            sorted.entry(EnvKey::new(k)).or_insert(v);
+        }
         let mut block = vec![];
-        for (k, v) in pruned {
-            block.extend(k.encode_wide());
+        for (k, v) in sorted {
+            block.extend(k.0);
             block.push('=' as u16);
             block.extend(v.encode_wide());
             block.push(0);
@@ -612,8 +620,8 @@ pub(crate) mod os {
         block
     }
 
-    /// `BTreeSet` key for env-block dedup. Caches the UTF-16 encoding so each
-    /// compare in the set hits the OS API directly without re-encoding -
+    /// `BTreeMap` key for env-block sort+dedup. Caches the UTF-16 encoding so
+    /// each compare in the map hits the OS API directly without re-encoding -
     /// matches the approach in `std::sys::process::windows::EnvKey`.
     struct EnvKey(Vec<u16>);
 
@@ -655,23 +663,18 @@ pub(crate) mod os {
 
     pub fn set_inheritable(f: &File, inheritable: bool) -> io::Result<()> {
         win32::SetHandleInformation(
-            f,
+            f.as_raw_handle(),
             win32::HANDLE_FLAG_INHERIT,
             if inheritable { 1 } else { 0 },
         )?;
         Ok(())
     }
 
-    pub fn prepare_file(file: File) -> io::Result<Arc<Redirection>> {
+    pub fn prepare_file(redir: Arc<Redirection>) -> io::Result<Arc<Redirection>> {
         // On Windows, child handles must be marked inheritable for CreateProcess to pass
         // them to the child.
-        set_inheritable(&file, true)?;
-        Ok(Arc::new(Redirection::File(file)))
-    }
-
-    pub fn prepare_file_shared(arc: Arc<Redirection>) -> io::Result<Arc<Redirection>> {
-        set_inheritable(child_file(&arc), true)?;
-        Ok(arc)
+        set_inheritable(child_file(&redir), true)?;
+        Ok(redir)
     }
 
     /// Create a pipe where both ends support overlapped I/O.
@@ -797,7 +800,18 @@ pub(crate) mod os {
             let env = vec![pair("A", "1"), pair("B", "x"), pair("A", "2")];
             assert_eq!(
                 parse_block(&format_env_block(&env)),
-                vec![pair("B", "x"), pair("A", "2")]
+                vec![pair("A", "2"), pair("B", "x")]
+            );
+        }
+
+        #[test]
+        fn format_env_block_is_sorted() {
+            // CreateProcessW requires Unicode env blocks to be sorted by name
+            // with case-insensitive ordinal comparison.
+            let env = vec![pair("Z", "1"), pair("a", "2"), pair("M", "3")];
+            assert_eq!(
+                parse_block(&format_env_block(&env)),
+                vec![pair("a", "2"), pair("M", "3"), pair("Z", "1")]
             );
         }
 
