@@ -11,7 +11,9 @@ use std::time::Duration;
 /// representation. Use the provided methods to query the exit status.
 ///
 /// On Unix, the raw value is the status from `waitpid()`. On Windows, it is the exit code
-/// from `GetExitCodeProcess()`.
+/// from `GetExitCodeProcess()`. The exit status may also be undetermined, in which case
+/// `code()` and `signal()` both return `None`; this happens when the child was reaped
+/// outside of this library and its status is no longer available.
 #[derive(Eq, PartialEq, Hash, Copy, Clone)]
 pub struct ExitStatus(pub(crate) Option<os::RawExitStatus>);
 
@@ -50,12 +52,15 @@ impl ExitStatus {
 ///
 /// # Drop behavior
 ///
-/// When the last clone of a `Process` is dropped, it waits for the child process to
-/// finish unless [`detach`](Self::detach) has been called. Because `Process` does not own
-/// any pipes to the child, callers must ensure that any pipes connected to the child's
-/// stdin are dropped *before* the `Process` is dropped. Otherwise, the child may block
-/// waiting for input while the `Process` drop waits for the child to exit, resulting in a
-/// deadlock. [`Job`] handles this automatically via field declaration order.
+/// When the last clone of a `Process` is dropped, it waits for the child to finish.
+/// Call [`detach`](Self::detach) to skip the wait.
+///
+/// `Process` does not own any pipes to the child, so callers must drop pipes to the
+/// child's standard streams *before* the `Process` itself. Otherwise the child may
+/// block on a full stdout/stderr pipe or on a stdin pipe that never sees EOF, while
+/// the `Process` drop waits for the child to exit -- a deadlock.
+///
+/// [`Job`] handles this automatically via field declaration order.
 ///
 /// [`Exec::start`]: crate::Exec::start
 /// [`Pipeline::start`]: crate::Pipeline::start
@@ -248,8 +253,8 @@ mod os {
     impl ExitStatus {
         /// Returns the exit code if the process exited normally.
         ///
-        /// On Unix, this returns `Some` only if the process exited voluntarily (not
-        /// killed by a signal).
+        /// On Unix, this returns `Some` only if the process exited normally, as opposed
+        /// to being killed by a signal.
         pub fn code(&self) -> Option<u32> {
             let raw = self.0?;
             libc::WIFEXITED(raw).then(|| libc::WEXITSTATUS(raw) as u32)
@@ -521,8 +526,9 @@ mod os {
         pub trait ProcessExt {
             /// Send the specified signal to the child process.
             ///
-            /// If the child process is known to have finished (due to e.g.  a previous
-            /// call to [`wait`] or [`poll`]), this will do nothing and return `Ok`.
+            /// If the process has already been reaped (e.g. by a previous call to
+            /// [`wait`] or [`poll`]), this is a no-op to avoid signaling a potentially
+            /// reused PID.
             ///
             /// [`poll`]: crate::Process::poll
             /// [`wait`]: crate::Process::wait
@@ -535,8 +541,8 @@ mod os {
             /// [`ExecExt::setpgid`] set, which places the child in a new process group
             /// with PGID equal to its PID.
             ///
-            /// If the child process is known to have finished, this will do nothing and
-            /// return `Ok`.
+            /// If the process has already been reaped, this is a no-op to avoid signaling
+            /// an unrelated process group that may now exist under the reused PID.
             ///
             /// [`ExecExt::setpgid`]: crate::ExecExt::setpgid
             fn send_signal_group(&self, signal: i32) -> io::Result<()>;

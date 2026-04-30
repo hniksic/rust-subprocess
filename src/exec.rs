@@ -213,7 +213,8 @@ impl Exec {
     /// code is prone to errors and, if `filename` comes from an untrusted source, to
     /// shell injection attacks. Instead, use `Exec::cmd("sort").arg(filename)`.
     pub fn shell(cmdstr: impl Into<OsString>) -> Exec {
-        let cmd = Exec::cmd(SHELL[0]).args(&SHELL[1..]);
+        let [shell, flag] = SHELL;
+        let cmd = Exec::cmd(shell).arg(flag);
         #[cfg(not(windows))]
         {
             cmd.arg(cmdstr)
@@ -331,9 +332,9 @@ impl Exec {
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-    /// * a `Vec<u8>`, `&str`, `&[u8]`, `Box<[u8]>`, or `[u8; N]`, which will set up a
-    ///   `Redirection::Pipe` for stdin, feeding that data into the standard input of the
-    ///   subprocess;
+    /// * a `Vec<u8>`, `&'static str`, `&'static [u8]`, `Box<[u8]>`, or `[u8; N]`, which
+    ///   will set up a `Redirection::Pipe` for stdin, feeding that data into the standard
+    ///   input of the subprocess;
     /// * an [`InputData`], which also sets up a pipe, but wraps any reader and feeds its
     ///   content to the standard input of the subprocess. Use [`InputData::from_bytes`]
     ///   for in-memory byte containers not covered by the above, like `bytes::Bytes` or
@@ -543,7 +544,10 @@ impl Exec {
         self.start()?.capture()
     }
 
-    /// Show Exec as command-line string quoted in the Unix style.
+    /// Show `Exec` as a command-line string using POSIX shell quoting.
+    ///
+    /// The output uses POSIX shell quoting rules on all platforms, including Windows;
+    /// it is intended for display and debugging, not for re-execution by `cmd.exe`.
     pub fn to_cmdline_lossy(&self) -> String {
         let mut out = String::new();
         if let Some(cmd_env) = &self.env {
