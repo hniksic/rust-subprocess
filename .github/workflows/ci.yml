@@ -93,3 +93,30 @@ jobs:
           run: |
             cargo build
             cargo test
+
+  alpine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jirutka/setup-alpine@v1
+        with:
+          packages: build-base rust cargo
+      - run: |
+          cargo build
+          cargo test
+        shell: alpine.sh {0}
+
+  illumos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test on illumos (OmniOS)
+        uses: vmactions/omnios-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install --accept ooce/developer/rust
+          run: |
+            export PATH=/opt/ooce/bin:$PATH
+            cargo build
+            cargo test

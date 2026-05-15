@@ -4,11 +4,11 @@ use std::io::Read;
 use std::path::PathBuf;
 use subprocess::{Exec, Redirection};
 
-fn just_echo_path() -> String {
+fn argv_echo_path() -> String {
     let prog = PathBuf::from(&::std::env::args().next().unwrap());
     prog.parent()
         .unwrap()
-        .join("../just-echo")
+        .join("../argv-echo")
         .to_str()
         .unwrap()
         .to_owned()
@@ -23,7 +23,7 @@ fn escape_args() {
         "x", "", " ", "  ", r" \ ", r" \\ ", r" \\\ ", r#"""#, r#""""#, r#"\"\\""#, "æ÷", "šđ",
         "本", "❤", "☃",
     ] {
-        let mut handle = Exec::cmd(just_echo_path())
+        let mut handle = Exec::cmd(argv_echo_path())
             .arg(arg)
             .stdout(Redirection::Pipe)
             .start()

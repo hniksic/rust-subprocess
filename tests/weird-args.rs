@@ -4,11 +4,11 @@ use std::io::Read;
 use std::path::Path;
 use subprocess::{Exec, Redirection};
 
-fn just_echo_path() -> String {
+fn argv_echo_path() -> String {
     let prog = Path::new(&::std::env::args().next().unwrap()).to_owned();
     let prog = prog.parent().unwrap(); // dirname
     let prog = prog.parent().unwrap(); // parent dir
-    prog.join("just-echo").to_str().unwrap().to_owned()
+    prog.join("argv-echo").to_str().unwrap().to_owned()
 }
 
 #[test]
@@ -21,8 +21,8 @@ fn weird_args() {
     ]
     .iter()
     {
-        println!("running {:?} {:?}", arg, just_echo_path());
-        let mut handle = Exec::cmd(just_echo_path())
+        println!("running {:?} {:?}", arg, argv_echo_path());
+        let mut handle = Exec::cmd(argv_echo_path())
             .arg(arg)
             .stdout(Redirection::Pipe)
             .start()

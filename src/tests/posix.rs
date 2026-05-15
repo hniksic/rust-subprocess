@@ -278,15 +278,25 @@ fn pre_exec_multiple() {
 
 // --- arg0 tests ---
 
+fn argv_echo_path() -> std::path::PathBuf {
+    // For unit tests, current_exe() is target/<profile>/deps/<crate>-<hash>;
+    // the argv-echo helper binary sits one level up at target/<profile>/.
+    let exe = std::env::current_exe().expect("current_exe");
+    exe.parent().unwrap().parent().unwrap().join("argv-echo")
+}
+
 #[test]
 fn arg0_override() {
-    let out = Exec::cmd("sh")
+    // Spawn the argv-echo helper with argv[0] overridden.  Invoked with no
+    // additional arguments it prints argv[0], which lets us verify the
+    // override propagated through exec without depending on shell behavior
+    // (BusyBox's ash sets $0 differently than bash/dash).
+    let out = Exec::cmd(argv_echo_path())
         .arg0("custom-name")
-        .args(["-c", "echo $0"])
         .capture()
         .unwrap()
         .stdout_str();
-    assert_eq!(out.trim(), "custom-name");
+    assert_eq!(out, "custom-name");
 }
 
 // --- JobExt tests ---
