@@ -188,6 +188,17 @@ fn capture_out_with_input_data_bytes() {
 }
 
 #[test]
+fn capture_out_with_input_data_string() {
+    let c = Exec::cmd("cat").stdin("foo".to_owned()).capture().unwrap();
+    assert_eq!(c.stdout_str(), "foo");
+    let c = Exec::cmd("cat")
+        .stdin("bar".to_owned().into_boxed_str())
+        .capture()
+        .unwrap();
+    assert_eq!(c.stdout_str(), "bar");
+}
+
+#[test]
 fn exec_shell() {
     let stream = Exec::shell("printf foo").stream_stdout().unwrap();
     assert_eq!(io::read_to_string(stream).unwrap(), "foo");

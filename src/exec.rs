@@ -332,9 +332,9 @@ impl Exec {
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-    /// * a `Vec<u8>`, `&'static str`, `&'static [u8]`, `Box<[u8]>`, or `[u8; N]`, which
-    ///   will set up a `Redirection::Pipe` for stdin, feeding that data into the standard
-    ///   input of the subprocess;
+    /// * a `Vec<u8>`, `String`, `&'static str`, `&'static [u8]`, `Box<[u8]>`,
+    ///   `Box<str>`, or `[u8; N]`, which will set up a `Redirection::Pipe` for stdin,
+    ///   feeding that data into the standard input of the subprocess;
     /// * an [`InputData`], which also sets up a pipe, but wraps any reader and feeds its
     ///   content to the standard input of the subprocess. Use [`InputData::from_bytes`]
     ///   for in-memory byte containers not covered by the above, like `bytes::Bytes` or
@@ -754,6 +754,12 @@ impl FromSource<Vec<u8>> for InputRedirection {
     }
 }
 
+impl FromSource<String> for InputRedirection {
+    fn from_source(source: String) -> Self {
+        InputRedirection::Data(InputData::from_bytes(source))
+    }
+}
+
 impl FromSource<&'static str> for InputRedirection {
     fn from_source(source: &'static str) -> Self {
         InputRedirection::Data(InputData::from_bytes(source))
@@ -781,6 +787,12 @@ impl<const N: usize> FromSource<[u8; N]> for InputRedirection {
 impl FromSource<Box<[u8]>> for InputRedirection {
     fn from_source(source: Box<[u8]>) -> Self {
         InputRedirection::Data(InputData::from_bytes(source))
+    }
+}
+
+impl FromSource<Box<str>> for InputRedirection {
+    fn from_source(source: Box<str>) -> Self {
+        InputRedirection::Data(InputData::from_bytes(String::from(source)))
     }
 }
 
