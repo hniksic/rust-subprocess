@@ -58,7 +58,7 @@ fn null_byte_in_cmd() {
 
 #[test]
 fn merge_on_stdin_rejected() {
-    // Redirection::Merge on stdin panics in the FromSource impl
+    // Redirection::Merge on stdin panics in the IntoInputSource impl
     // for Exec, so we test Merge on stdin at the spawn level directly.
     let result = spawn(
         vec![Arg::Regular("true".into())],
