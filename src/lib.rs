@@ -76,7 +76,7 @@ pub use exec::unix::JobExt;
 pub use exec::unix::PipelineExt;
 #[cfg(windows)]
 pub use exec::windows::ExecExt;
-pub use exec::{Capture, Exec, FromSink, FromSource, InputData};
+pub use exec::{Capture, Exec, InputData, IntoInputSource, IntoOutputSink};
 pub use job::Job;
 pub use pipeline::Pipeline;
 pub use process::ExitStatus;

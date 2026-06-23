@@ -332,9 +332,9 @@ impl Exec {
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-    /// * a `Vec<u8>`, `&'static str`, `&'static [u8]`, `Box<[u8]>`, or `[u8; N]`, which
-    ///   will set up a `Redirection::Pipe` for stdin, feeding that data into the standard
-    ///   input of the subprocess;
+    /// * a `Vec<u8>`, `String`, `&'static str`, `&'static [u8]`, `Box<[u8]>`,
+    ///   `Box<str>`, or `[u8; N]`, which will set up a `Redirection::Pipe` for stdin,
+    ///   feeding that data into the standard input of the subprocess;
     /// * an [`InputData`], which also sets up a pipe, but wraps any reader and feeds its
     ///   content to the standard input of the subprocess. Use [`InputData::from_bytes`]
     ///   for in-memory byte containers not covered by the above, like `bytes::Bytes` or
@@ -347,11 +347,8 @@ impl Exec {
     ///
     /// [`Redirection`]: enum.Redirection.html
     /// [`InputData`]: struct.InputData.html
-    pub fn stdin<T>(mut self, stdin: T) -> Exec
-    where
-        InputRedirection: FromSource<T>,
-    {
-        match InputRedirection::from_source(stdin) {
+    pub fn stdin<T: IntoInputSource>(mut self, stdin: T) -> Exec {
+        match stdin.into_input_source() {
             InputRedirection::Redirection(new) => {
                 self.stdin_redirect = Arc::new(new);
                 self.stdin_data = None;
@@ -372,11 +369,8 @@ impl Exec {
     /// * a `File`, which is a shorthand for `Redirection::File(file)`.
     ///
     /// [`Redirection`]: enum.Redirection.html
-    pub fn stdout<T>(mut self, stdout: T) -> Exec
-    where
-        Redirection: FromSink<T>,
-    {
-        self.stdout_redirect = Arc::new(Redirection::from_sink(stdout));
+    pub fn stdout<T: IntoOutputSink>(mut self, stdout: T) -> Exec {
+        self.stdout_redirect = Arc::new(stdout.into_output_sink());
         self
     }
 
@@ -388,11 +382,8 @@ impl Exec {
     /// * a `File`, which is a shorthand for `Redirection::File(file)`.
     ///
     /// [`Redirection`]: enum.Redirection.html
-    pub fn stderr<T>(mut self, stderr: T) -> Exec
-    where
-        Redirection: FromSink<T>,
-    {
-        self.stderr_redirect = Arc::new(Redirection::from_sink(stderr));
+    pub fn stderr<T: IntoOutputSink>(mut self, stderr: T) -> Exec {
+        self.stderr_redirect = Arc::new(stderr.into_output_sink());
         self
     }
 
@@ -703,96 +694,124 @@ impl fmt::Debug for InputData {
     }
 }
 
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Resolved form of a standard-input source: a redirection or data fed via a pipe.
 #[derive(Debug)]
 pub enum InputRedirection {
     Redirection(Redirection),
     Data(InputData),
 }
 
-/// Trait for converting a source type into an input redirection.
+/// A type that can be used as the standard input of a child process.
 ///
-/// Implemented for each type accepted by [`Exec::stdin`] and
-/// [`Pipeline::stdin`](crate::Pipeline::stdin).
-pub trait FromSource<T> {
-    /// Create the input redirection from the given source.
-    fn from_source(source: T) -> Self;
+/// Implemented for the types accepted by [`Exec::stdin`] and
+/// [`Pipeline::stdin`](crate::Pipeline::stdin). This trait is sealed and cannot be
+/// implemented outside this crate.
+pub trait IntoInputSource: sealed::Sealed {
+    #[doc(hidden)]
+    fn into_input_source(self) -> InputRedirection;
 }
 
-/// Trait for converting a sink type into an output redirection.
+/// A type that can be used as the standard output or standard error of a child process.
 ///
-/// Implemented on [`Redirection`] for each type accepted by
-/// [`Exec::stdout`], [`Exec::stderr`], and their `Pipeline` equivalents.
-pub trait FromSink<T> {
-    /// Create the output redirection from the given sink.
-    fn from_sink(sink: T) -> Self;
+/// Implemented for the types accepted by [`Exec::stdout`], [`Exec::stderr`], and their
+/// `Pipeline` equivalents. This trait is sealed and cannot be implemented outside this
+/// crate.
+pub trait IntoOutputSink: sealed::Sealed {
+    #[doc(hidden)]
+    fn into_output_sink(self) -> Redirection;
 }
 
-impl FromSource<Redirection> for InputRedirection {
-    fn from_source(source: Redirection) -> Self {
-        if let Redirection::Merge = source {
+impl sealed::Sealed for Redirection {}
+impl IntoInputSource for Redirection {
+    fn into_input_source(self) -> InputRedirection {
+        if let Redirection::Merge = self {
             panic!("Redirection::Merge is only allowed for output streams");
         }
-        InputRedirection::Redirection(source)
+        InputRedirection::Redirection(self)
+    }
+}
+impl IntoOutputSink for Redirection {
+    fn into_output_sink(self) -> Redirection {
+        self
     }
 }
 
-impl FromSource<File> for InputRedirection {
-    fn from_source(source: File) -> Self {
-        InputRedirection::Redirection(Redirection::File(source))
+impl sealed::Sealed for File {}
+impl IntoInputSource for File {
+    fn into_input_source(self) -> InputRedirection {
+        InputRedirection::Redirection(Redirection::File(self))
+    }
+}
+impl IntoOutputSink for File {
+    fn into_output_sink(self) -> Redirection {
+        Redirection::File(self)
     }
 }
 
-impl FromSource<InputData> for InputRedirection {
-    fn from_source(source: InputData) -> Self {
-        InputRedirection::Data(source)
+impl sealed::Sealed for InputData {}
+impl IntoInputSource for InputData {
+    fn into_input_source(self) -> InputRedirection {
+        InputRedirection::Data(self)
     }
 }
 
-impl FromSource<Vec<u8>> for InputRedirection {
-    fn from_source(source: Vec<u8>) -> Self {
-        InputRedirection::Data(InputData::from_bytes(source))
+impl sealed::Sealed for Vec<u8> {}
+impl IntoInputSource for Vec<u8> {
+    fn into_input_source(self) -> InputRedirection {
+        InputRedirection::Data(InputData::from_bytes(self))
     }
 }
 
-impl FromSource<&'static str> for InputRedirection {
-    fn from_source(source: &'static str) -> Self {
-        InputRedirection::Data(InputData::from_bytes(source))
+impl sealed::Sealed for String {}
+impl IntoInputSource for String {
+    fn into_input_source(self) -> InputRedirection {
+        InputRedirection::Data(InputData::from_bytes(self))
     }
 }
 
-impl FromSource<&'static [u8]> for InputRedirection {
-    fn from_source(source: &'static [u8]) -> Self {
-        InputRedirection::Data(InputData::from_bytes(source))
+impl sealed::Sealed for &'static str {}
+impl IntoInputSource for &'static str {
+    fn into_input_source(self) -> InputRedirection {
+        InputRedirection::Data(InputData::from_bytes(self))
     }
 }
 
-impl<const N: usize> FromSource<&'static [u8; N]> for InputRedirection {
-    fn from_source(source: &'static [u8; N]) -> Self {
-        InputRedirection::Data(InputData::from_bytes(source))
+impl sealed::Sealed for &'static [u8] {}
+impl IntoInputSource for &'static [u8] {
+    fn into_input_source(self) -> InputRedirection {
+        InputRedirection::Data(InputData::from_bytes(self))
     }
 }
 
-impl<const N: usize> FromSource<[u8; N]> for InputRedirection {
-    fn from_source(source: [u8; N]) -> Self {
-        InputRedirection::Data(InputData::from_bytes(source))
+impl<const N: usize> sealed::Sealed for &'static [u8; N] {}
+impl<const N: usize> IntoInputSource for &'static [u8; N] {
+    fn into_input_source(self) -> InputRedirection {
+        InputRedirection::Data(InputData::from_bytes(self))
     }
 }
 
-impl FromSource<Box<[u8]>> for InputRedirection {
-    fn from_source(source: Box<[u8]>) -> Self {
-        InputRedirection::Data(InputData::from_bytes(source))
+impl<const N: usize> sealed::Sealed for [u8; N] {}
+impl<const N: usize> IntoInputSource for [u8; N] {
+    fn into_input_source(self) -> InputRedirection {
+        InputRedirection::Data(InputData::from_bytes(self))
     }
 }
 
-impl FromSink<Redirection> for Redirection {
-    fn from_sink(sink: Redirection) -> Self {
-        sink
+impl sealed::Sealed for Box<[u8]> {}
+impl IntoInputSource for Box<[u8]> {
+    fn into_input_source(self) -> InputRedirection {
+        InputRedirection::Data(InputData::from_bytes(self))
     }
 }
 
-impl FromSink<File> for Redirection {
-    fn from_sink(sink: File) -> Self {
-        Redirection::File(sink)
+impl sealed::Sealed for Box<str> {}
+impl IntoInputSource for Box<str> {
+    fn into_input_source(self) -> InputRedirection {
+        InputRedirection::Data(InputData::from_bytes(String::from(self)))
     }
 }
 

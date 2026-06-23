@@ -58,7 +58,7 @@ fn null_byte_in_cmd() {
 
 #[test]
 fn merge_on_stdin_rejected() {
-    // Redirection::Merge on stdin panics in the FromSource impl
+    // Redirection::Merge on stdin panics in the IntoInputSource impl
     // for Exec, so we test Merge on stdin at the spawn level directly.
     let result = spawn(
         vec![Arg::Regular("true".into())],
@@ -184,6 +184,17 @@ fn capture_out_with_input_data_bytes() {
     let c = Exec::cmd("cat").stdin(b"foo" as &[u8]).capture().unwrap();
     assert_eq!(c.stdout_str(), "foo");
     let c = Exec::cmd("cat").stdin(b"bar").capture().unwrap();
+    assert_eq!(c.stdout_str(), "bar");
+}
+
+#[test]
+fn capture_out_with_input_data_string() {
+    let c = Exec::cmd("cat").stdin("foo".to_owned()).capture().unwrap();
+    assert_eq!(c.stdout_str(), "foo");
+    let c = Exec::cmd("cat")
+        .stdin("bar".to_owned().into_boxed_str())
+        .capture()
+        .unwrap();
     assert_eq!(c.stdout_str(), "bar");
 }
 

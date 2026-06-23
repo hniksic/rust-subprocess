@@ -26,8 +26,8 @@ use crate::process::ExitStatus;
 use crate::process::Process;
 
 use crate::exec::{
-    Capture, Exec, FromSink, FromSource, InputData, InputRedirection, ReadAdapter, ReadErrAdapter,
-    WriteAdapter,
+    Capture, Exec, InputData, InputRedirection, IntoInputSource, IntoOutputSink, ReadAdapter,
+    ReadErrAdapter, WriteAdapter,
 };
 use crate::job::Job;
 
@@ -137,9 +137,9 @@ impl Pipeline {
     ///
     /// * a [`Redirection`];
     /// * a `File`, which is a shorthand for `Redirection::File(file)`;
-    /// * a `Vec<u8>`, `&'static str`, `&'static [u8]`, `Box<[u8]>`, or `[u8; N]`, which
-    ///   will set up a `Redirection::Pipe` for stdin, feeding that data into the standard
-    ///   input of the subprocess;
+    /// * a `Vec<u8>`, `String`, `&'static str`, `&'static [u8]`, `Box<[u8]>`,
+    ///   `Box<str>`, or `[u8; N]`, which will set up a `Redirection::Pipe` for stdin,
+    ///   feeding that data into the standard input of the subprocess;
     /// * an [`InputData`], which also sets up a pipe, but wraps any reader and feeds its
     ///   content to the standard input of the subprocess. Use [`InputData::from_bytes`]
     ///   for in-memory byte containers not covered by the above, like `bytes::Bytes` or
@@ -152,11 +152,8 @@ impl Pipeline {
     ///
     /// [`Redirection`]: enum.Redirection.html
     /// [`InputData`]: struct.InputData.html
-    pub fn stdin<T>(mut self, stdin: T) -> Pipeline
-    where
-        InputRedirection: FromSource<T>,
-    {
-        match InputRedirection::from_source(stdin) {
+    pub fn stdin<T: IntoInputSource>(mut self, stdin: T) -> Pipeline {
+        match stdin.into_input_source() {
             InputRedirection::Redirection(r) => {
                 self.stdin_redirect = Arc::new(r);
                 self.stdin_data = None;
@@ -177,11 +174,8 @@ impl Pipeline {
     /// * a `File`, which is a shorthand for `Redirection::File(file)`.
     ///
     /// [`Redirection`]: enum.Redirection.html
-    pub fn stdout<T>(mut self, stdout: T) -> Pipeline
-    where
-        Redirection: FromSink<T>,
-    {
-        self.stdout = Arc::new(Redirection::from_sink(stdout));
+    pub fn stdout<T: IntoOutputSink>(mut self, stdout: T) -> Pipeline {
+        self.stdout = Arc::new(stdout.into_output_sink());
         self
     }
 
@@ -215,11 +209,8 @@ impl Pipeline {
     /// will be available via [`Job::stderr`].
     ///
     /// [`Redirection`]: enum.Redirection.html
-    pub fn stderr_all<T>(mut self, stderr: T) -> Pipeline
-    where
-        Redirection: FromSink<T>,
-    {
-        self.stderr = Arc::new(Redirection::from_sink(stderr));
+    pub fn stderr_all<T: IntoOutputSink>(mut self, stderr: T) -> Pipeline {
+        self.stderr = Arc::new(stderr.into_output_sink());
         self
     }
 
