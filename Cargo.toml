@@ -11,6 +11,7 @@ description = """
 Execution and control of child processes and pipelines.
 """
 edition = "2024"
+rust-version = "1.88"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.78"

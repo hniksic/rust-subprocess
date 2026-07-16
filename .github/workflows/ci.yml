@@ -42,6 +42,17 @@ jobs:
       - run: cargo build
       - run: cargo test
 
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+          targets: x86_64-pc-windows-gnu
+      - run: cargo check --all-targets
+      - run: cargo check --target x86_64-pc-windows-gnu
+
   macos:
     runs-on: macos-latest
     steps:
