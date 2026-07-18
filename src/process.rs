@@ -303,56 +303,85 @@ mod os {
 
     impl InnerProcess {
         pub(super) fn os_wait(&self) -> io::Result<ExitStatus> {
-            // Fast path: status already known.
-            {
-                let state = self.state.lock().unwrap();
-                if let Some(status) = state.exit_status {
-                    return Ok(status);
-                }
-            }
-
-            // On Linux with pidfd, poll(pidfd, INFINITE) is concurrent-safe and doesn't
-            // require holding any lock during the syscall.
-            #[cfg(target_os = "linux")]
-            {
-                let pidfd = self.state.lock().unwrap().pidfd.fd(self.pid);
-                if let Some(pidfd) = pidfd {
-                    return self.wait_pidfd(pidfd);
-                }
-            }
-
-            self.wait_blocking()
+            let status = self.wait_timeout_opt(None)?;
+            // A wait with no deadline only returns once the exit status is known.
+            Ok(status.expect("indefinite wait returned without exit status"))
         }
 
-        /// Wait indefinitely via pidfd. Linux-only fast path.
-        #[cfg(target_os = "linux")]
-        fn wait_pidfd(
-            &self,
-            pidfd: std::sync::Arc<std::os::unix::io::OwnedFd>,
-        ) -> io::Result<ExitStatus> {
-            use std::os::unix::io::AsFd;
-            {
-                let state = self.state.lock().unwrap();
-                if let Some(status) = state.exit_status {
-                    return Ok(status);
-                }
+        pub(super) fn os_wait_timeout(&self, dur: Duration) -> io::Result<Option<ExitStatus>> {
+            self.wait_timeout_opt(Some(dur))
+        }
+
+        /// Wait for the process to finish, or until `timeout` expires if one is given.
+        ///
+        /// With a `timeout` of `None` this returns only when the exit status is known,
+        /// so the returned option is always `Some`.
+        fn wait_timeout_opt(&self, timeout: Option<Duration>) -> io::Result<Option<ExitStatus>> {
+            #[allow(unused_mut)]
+            let mut state = self.state.lock().unwrap();
+            if let Some(status) = state.exit_status {
+                return Ok(Some(status));
             }
+            let deadline = timeout.map(|dur| Instant::now() + dur);
+
+            #[cfg(target_os = "linux")]
+            if let Some(pidfd) = state.pidfd.fd(self.pid) {
+                return self.wait_pidfd(state, pidfd, deadline);
+            }
+
+            self.wait_fallback(state, deadline)
+        }
+
+        /// Wait via pidfd + poll(). Linux-only fast path; a `deadline` of `None` waits
+        /// indefinitely.
+        #[cfg(target_os = "linux")]
+        fn wait_pidfd<'a>(
+            &'a self,
+            state: std::sync::MutexGuard<'a, WaitState>,
+            pidfd: std::sync::Arc<std::os::unix::io::OwnedFd>,
+            deadline: Option<Instant>,
+        ) -> io::Result<Option<ExitStatus>> {
+            use std::os::unix::io::AsFd;
+
+            // Release the lock while sleeping so other threads can access the state.
+            drop(state);
+            let timeout =
+                deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
             let mut pfd = [posix::PollFd::new(Some(pidfd.as_fd()), posix::POLLIN)];
-            posix::poll(&mut pfd, None)?;
-            {
-                let mut state = self.state.lock().unwrap();
-                self.try_reap(&mut state)?;
-                if let Some(status) = state.exit_status {
-                    return Ok(status);
-                }
+            let ready = posix::poll(&mut pfd, timeout)? > 0;
+
+            let mut state = self.state.lock().unwrap();
+            if !ready {
+                // Timed out; only possible when a deadline was given.
+                return Ok(state.exit_status);
+            }
+            self.try_reap(&mut state)?;
+            if state.exit_status.is_some() {
+                return Ok(state.exit_status);
             }
             // The pidfd signaled ready, but the child couldn't be reaped. This can happen
             // when an external tracer holds the child's exit notification: the pidfd
             // becomes readable as soon as the child exits, but waitpid() doesn't see the
             // child until the tracer releases it. Since the pidfd remains permanently
-            // readable, re-polling it would busy-loop; fall back to the blocking wait,
-            // which sleeps in waitid() until the child is actually waitable.
-            self.wait_blocking()
+            // readable, re-polling it would busy-loop; fall back to the waitid/sleep
+            // paths, which handle this correctly.
+            self.wait_fallback(state, deadline)
+        }
+
+        /// Wait without pidfd: blocking waitid() for an indefinite wait, waitpid()
+        /// polling with sleep for a timed one.
+        fn wait_fallback<'a>(
+            &'a self,
+            state: std::sync::MutexGuard<'a, WaitState>,
+            deadline: Option<Instant>,
+        ) -> io::Result<Option<ExitStatus>> {
+            match deadline {
+                None => {
+                    drop(state);
+                    self.wait_blocking().map(Some)
+                }
+                Some(deadline) => self.wait_timeout_sleep(state, deadline),
+            }
         }
 
         /// Wait indefinitely via waitid()+waitpid(). Used when pidfd is unavailable
@@ -391,59 +420,12 @@ mod os {
             }
         }
 
-        pub(super) fn os_wait_timeout(&self, dur: Duration) -> io::Result<Option<ExitStatus>> {
-            #[allow(unused_mut)]
-            let mut state = self.state.lock().unwrap();
-            if let Some(status) = state.exit_status {
-                return Ok(Some(status));
-            }
-
-            #[cfg(target_os = "linux")]
-            if let Some(pidfd) = state.pidfd.fd(self.pid) {
-                return self.wait_timeout_pidfd(state, pidfd, dur);
-            }
-
-            // fall back to polling if not on Linux or pidfd unavailable
-            self.wait_timeout_sleep(state, dur)
-        }
-
-        /// Wait exactly using pidfd + poll().
-        #[cfg(target_os = "linux")]
-        fn wait_timeout_pidfd<'a>(
-            &'a self,
-            state: std::sync::MutexGuard<'a, WaitState>,
-            pidfd: std::sync::Arc<std::os::unix::io::OwnedFd>,
-            dur: Duration,
-        ) -> io::Result<Option<ExitStatus>> {
-            use std::os::unix::io::AsFd;
-
-            let deadline = Instant::now() + dur;
-            // Release the lock while sleeping so other threads can access the state.
-            drop(state);
-            let mut pfd = [posix::PollFd::new(Some(pidfd.as_fd()), posix::POLLIN)];
-            let ready = posix::poll(&mut pfd, Some(dur))? > 0;
-
-            let mut state = self.state.lock().unwrap();
-            if !ready {
-                return Ok(state.exit_status);
-            }
-            self.try_reap(&mut state)?;
-            if state.exit_status.is_some() {
-                return Ok(state.exit_status);
-            }
-            // The pidfd signaled ready, but the child couldn't be reaped (see the comment
-            // in wait_pidfd). Fall back to sleep polling for the rest of the timeout
-            // instead of reporting a premature timeout.
-            self.wait_timeout_sleep(state, deadline.saturating_duration_since(Instant::now()))
-        }
-
         /// Wait using waitpid polling with sleep and exponential backoff.
         fn wait_timeout_sleep<'a>(
             &'a self,
             mut state: std::sync::MutexGuard<'a, WaitState>,
-            dur: Duration,
+            deadline: Instant,
         ) -> io::Result<Option<ExitStatus>> {
-            let deadline = Instant::now() + dur;
             let mut delay = Duration::from_millis(1);
 
             loop {
@@ -645,32 +627,23 @@ mod os {
 
     impl InnerProcess {
         pub(super) fn os_wait(&self) -> io::Result<ExitStatus> {
-            {
-                let state = self.state.lock().unwrap();
-                if let Some(status) = state.exit_status {
-                    return Ok(status);
-                }
-            }
-            // Wait without holding the lock - the handle is immutable and
-            // doesn't need mutex protection.
-            let event = win32::WaitForSingleObject(&self.ext.0, None)?;
-            let mut state = self.state.lock().unwrap();
-            if let Some(status) = state.exit_status {
-                return Ok(status);
-            }
-            if let win32::WaitEvent::OBJECT_0 = event {
-                let exit_code = win32::GetExitCodeProcess(&self.ext.0)?;
-                let status = ExitStatus::from_raw(exit_code);
-                state.exit_status = Some(status);
-                Ok(status)
-            } else {
-                Err(io::Error::other(
+            match self.wait_timeout_opt(None)? {
+                Some(status) => Ok(status),
+                None => Err(io::Error::other(
                     "os_wait: child state is not Finished after WaitForSingleObject",
-                ))
+                )),
             }
         }
 
         pub(super) fn os_wait_timeout(&self, dur: Duration) -> io::Result<Option<ExitStatus>> {
+            self.wait_timeout_opt(Some(dur))
+        }
+
+        /// Wait for the process to finish, or until `timeout` expires if one is given.
+        ///
+        /// Returns `Ok(None)` if the wait returned without the process having finished:
+        /// on timeout, or on a wait result other than WAIT_OBJECT_0.
+        fn wait_timeout_opt(&self, timeout: Option<Duration>) -> io::Result<Option<ExitStatus>> {
             {
                 let state = self.state.lock().unwrap();
                 if let Some(status) = state.exit_status {
@@ -679,7 +652,7 @@ mod os {
             }
             // Wait without holding the lock - the handle is immutable and
             // doesn't need mutex protection.
-            let event = win32::WaitForSingleObject(&self.ext.0, Some(dur))?;
+            let event = win32::WaitForSingleObject(&self.ext.0, timeout)?;
             let mut state = self.state.lock().unwrap();
             if let Some(status) = state.exit_status {
                 return Ok(Some(status));
