@@ -331,24 +331,28 @@ mod os {
             pidfd: std::sync::Arc<std::os::unix::io::OwnedFd>,
         ) -> io::Result<ExitStatus> {
             use std::os::unix::io::AsFd;
-            loop {
-                {
-                    let state = self.state.lock().unwrap();
-                    if let Some(status) = state.exit_status {
-                        return Ok(status);
-                    }
-                }
-                let mut pfd = [posix::PollFd::new(Some(pidfd.as_fd()), posix::POLLIN)];
-                posix::poll(&mut pfd, None)?;
-                let mut state = self.state.lock().unwrap();
-                if state.exit_status.is_none() {
-                    let result = posix::waitpid(self.pid, posix::WNOHANG);
-                    Self::record_waitpid_result(&mut state, self.pid, result)?;
-                }
+            {
+                let state = self.state.lock().unwrap();
                 if let Some(status) = state.exit_status {
                     return Ok(status);
                 }
             }
+            let mut pfd = [posix::PollFd::new(Some(pidfd.as_fd()), posix::POLLIN)];
+            posix::poll(&mut pfd, None)?;
+            {
+                let mut state = self.state.lock().unwrap();
+                self.try_reap(&mut state)?;
+                if let Some(status) = state.exit_status {
+                    return Ok(status);
+                }
+            }
+            // The pidfd signaled ready, but the child couldn't be reaped. This can happen
+            // when an external tracer holds the child's exit notification: the pidfd
+            // becomes readable as soon as the child exits, but waitpid() doesn't see the
+            // child until the tracer releases it. Since the pidfd remains permanently
+            // readable, re-polling it would busy-loop; fall back to the blocking wait,
+            // which sleeps in waitid() until the child is actually waitable.
+            self.wait_blocking()
         }
 
         /// Wait indefinitely via waitid()+waitpid(). Used when pidfd is unavailable
@@ -405,24 +409,32 @@ mod os {
 
         /// Wait exactly using pidfd + poll().
         #[cfg(target_os = "linux")]
-        fn wait_timeout_pidfd(
-            &self,
-            state: std::sync::MutexGuard<'_, WaitState>,
+        fn wait_timeout_pidfd<'a>(
+            &'a self,
+            state: std::sync::MutexGuard<'a, WaitState>,
             pidfd: std::sync::Arc<std::os::unix::io::OwnedFd>,
             dur: Duration,
         ) -> io::Result<Option<ExitStatus>> {
             use std::os::unix::io::AsFd;
 
+            let deadline = Instant::now() + dur;
             // Release the lock while sleeping so other threads can access the state.
             drop(state);
             let mut pfd = [posix::PollFd::new(Some(pidfd.as_fd()), posix::POLLIN)];
             let ready = posix::poll(&mut pfd, Some(dur))? > 0;
 
             let mut state = self.state.lock().unwrap();
-            if ready {
-                self.try_reap(&mut state)?;
+            if !ready {
+                return Ok(state.exit_status);
             }
-            Ok(state.exit_status)
+            self.try_reap(&mut state)?;
+            if state.exit_status.is_some() {
+                return Ok(state.exit_status);
+            }
+            // The pidfd signaled ready, but the child couldn't be reaped (see the comment
+            // in wait_pidfd). Fall back to sleep polling for the rest of the timeout
+            // instead of reporting a premature timeout.
+            self.wait_timeout_sleep(state, deadline.saturating_duration_since(Instant::now()))
         }
 
         /// Wait using waitpid polling with sleep and exponential backoff.
