@@ -445,7 +445,7 @@ pub fn poll(fds: &mut [PollFd<'_>], mut timeout: Option<Duration>) -> Result<usi
     loop {
         let (timeout_ms, overflow) = timeout
             .map(|timeout| {
-                let timeout = timeout.as_millis();
+                let timeout = crate::util::duration_to_ms_ceil(timeout);
                 if timeout <= i32::MAX as u128 {
                     (timeout as i32, false)
                 } else {

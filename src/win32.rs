@@ -415,6 +415,23 @@ pub enum WaitResult {
     Timeout,
 }
 
+/// Converts an optional timeout to the millisecond argument of the wait functions,
+/// clamping values that don't fit below INFINITE. The second element of the returned
+/// pair indicates that clamping took place and the wait has to be repeated if it times
+/// out before the caller's deadline.
+fn wait_timeout_to_ms(timeout: Option<Duration>) -> (u32, bool) {
+    timeout
+        .map(|timeout| {
+            let timeout = crate::util::duration_to_ms_ceil(timeout);
+            if timeout < INFINITE as u128 {
+                (timeout as u32, false)
+            } else {
+                (INFINITE - 1, true)
+            }
+        })
+        .unwrap_or((INFINITE, false))
+}
+
 /// Wait for multiple objects, returns the index of the first signaled object.
 pub fn WaitForMultipleObjects(
     handles: &[RawHandle],
@@ -429,16 +446,7 @@ pub fn WaitForMultipleObjects(
     let deadline = timeout.map(|t| Instant::now() + t);
 
     loop {
-        let (timeout_ms, overflow) = remaining_timeout
-            .map(|timeout| {
-                let timeout = timeout.as_millis();
-                if timeout < INFINITE as u128 {
-                    (timeout as u32, false)
-                } else {
-                    (INFINITE - 1, true)
-                }
-            })
-            .unwrap_or((INFINITE, false));
+        let (timeout_ms, overflow) = wait_timeout_to_ms(remaining_timeout);
 
         let result = unsafe {
             synchapi::WaitForMultipleObjects(
@@ -571,16 +579,7 @@ pub fn WaitForSingleObject(handle: &Handle, mut timeout: Option<Duration>) -> Re
     let result = loop {
         // Allow timeouts greater than 50 days by clamping the timeout and sleeping in a
         // loop.
-        let (timeout_ms, overflow) = timeout
-            .map(|timeout| {
-                let timeout = timeout.as_millis();
-                if timeout < INFINITE as u128 {
-                    (timeout as u32, false)
-                } else {
-                    (INFINITE - 1, true)
-                }
-            })
-            .unwrap_or((INFINITE, false));
+        let (timeout_ms, overflow) = wait_timeout_to_ms(timeout);
 
         let result = unsafe { synchapi::WaitForSingleObject(handle.as_raw_handle(), timeout_ms) };
         if result != WAIT_TIMEOUT || !overflow {
