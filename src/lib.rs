@@ -56,6 +56,7 @@ mod job;
 mod pipeline;
 mod process;
 mod spawn;
+mod util;
 
 #[cfg(unix)]
 mod posix;
