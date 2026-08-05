@@ -299,16 +299,22 @@ pub fn _exit(status: u8) -> ! {
 
 pub const WNOHANG: i32 = libc::WNOHANG;
 
+/// Restarted automatically on `EINTR`.
 pub fn waitpid(pid: u32, flags: i32) -> Result<(u32, ExitStatus)> {
-    let mut status = 0 as c_int;
-    let pid = check_err(unsafe {
-        libc::waitpid(
-            pid as libc::pid_t,
-            &mut status as *mut c_int,
-            flags as c_int,
-        )
-    })?;
-    Ok((pid as u32, ExitStatus::from_raw(status)))
+    loop {
+        let mut status = 0 as c_int;
+        match check_err(unsafe {
+            libc::waitpid(
+                pid as libc::pid_t,
+                &mut status as *mut c_int,
+                flags as c_int,
+            )
+        }) {
+            Ok(pid) => return Ok((pid as u32, ExitStatus::from_raw(status))),
+            Err(e) if e.raw_os_error() == Some(libc::EINTR) => continue,
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Block until `pid` has exited, leaving it as a zombie (does not reap).

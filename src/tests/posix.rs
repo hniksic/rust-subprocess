@@ -53,6 +53,26 @@ fn run_isolated(name: &str, body: impl FnOnce()) {
 }
 
 #[test]
+fn failed_exec_reaps_child() {
+    // os_start() forks before it can know that exec will fail, so the failure path
+    // must wait on the child; otherwise it would linger as a zombie. Isolated so that
+    // waitpid(-1) cannot observe a child belonging to a concurrent test.
+    run_isolated("failed_exec_reaps_child", || {
+        assert!(
+            Exec::cmd("/nonexistent/subprocess-exec-failure")
+                .capture()
+                .is_err()
+        );
+
+        let mut status = 0;
+        let reaped = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+        let errno = std::io::Error::last_os_error().raw_os_error();
+        assert_eq!(reaped, -1, "exec failure left a child unreaped");
+        assert_eq!(errno, Some(libc::ECHILD));
+    });
+}
+
+#[test]
 fn err_terminate() {
     let job = Exec::cmd("sleep").arg("5").start().unwrap();
     exec_signal_delay();
