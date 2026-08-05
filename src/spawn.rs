@@ -373,6 +373,11 @@ pub(crate) mod os {
             None => Ok(Process::new(pid, (), detached)),
             Some(error_buf) => {
                 let error_code = u32::from_le_bytes(error_buf);
+                // The child exits right after reporting the error, so reap it here to
+                // avoid leaving a zombie. A wait error (e.g. an application-level
+                // SIGCHLD handler having already reaped the child) is ignored in favor
+                // of reporting the exec errno.
+                let _ = posix::waitpid(pid, 0);
                 Err(io::Error::from_raw_os_error(error_code as i32))
             }
         }
