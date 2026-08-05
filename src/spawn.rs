@@ -369,10 +369,16 @@ pub(crate) mod os {
         drop(child_ends);
 
         drop(exec_fail_pipe.1);
+        // The fork happened before we could learn that exec would fail, so the child exists
+        // either way and has to be waited for. Construct the Process before reading the pipe
+        // so the failure path owns the pid instead of abandoning it as a zombie. The wait
+        // error, if any, is discarded to report the more useful exec errno.
+        let process = Process::new(pid, (), detached);
         match read_exact_or_eof::<4>(&mut exec_fail_pipe.0)? {
-            None => Ok(Process::new(pid, (), detached)),
+            None => Ok(process),
             Some(error_buf) => {
                 let error_code = u32::from_le_bytes(error_buf);
+                let _ = process.wait();
                 Err(io::Error::from_raw_os_error(error_code as i32))
             }
         }
