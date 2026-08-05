@@ -299,10 +299,15 @@ fn pre_exec_multiple() {
 // --- arg0 tests ---
 
 fn argv_echo_path() -> std::path::PathBuf {
-    // For unit tests, current_exe() is target/<profile>/deps/<crate>-<hash>;
-    // the argv-echo helper binary sits one level up at target/<profile>/.
+    // Cargo doesn't provide CARGO_BIN_EXE_* to unit tests, and the location of the
+    // test executable relative to target/<profile>/ varies with the cargo version and
+    // target dir layout. Walk up from the test executable until we reach the directory
+    // that holds the argv-echo helper.
     let exe = std::env::current_exe().expect("current_exe");
-    exe.parent().unwrap().parent().unwrap().join("argv-echo")
+    exe.ancestors()
+        .map(|dir| dir.join("argv-echo"))
+        .find(|path| path.exists())
+        .expect("argv-echo helper not found near test executable")
 }
 
 #[test]

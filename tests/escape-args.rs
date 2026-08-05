@@ -1,17 +1,12 @@
 extern crate subprocess;
 
 use std::io::Read;
-use std::path::PathBuf;
 use subprocess::{Exec, Redirection};
 
-fn argv_echo_path() -> String {
-    let prog = PathBuf::from(&::std::env::args().next().unwrap());
-    prog.parent()
-        .unwrap()
-        .join("../argv-echo")
-        .to_str()
-        .unwrap()
-        .to_owned()
+fn argv_echo_path() -> &'static str {
+    // Provided by cargo when building integration tests; doesn't depend on the target
+    // dir layout.
+    env!("CARGO_BIN_EXE_argv-echo")
 }
 
 #[test]
