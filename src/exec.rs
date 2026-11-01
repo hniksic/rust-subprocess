@@ -820,7 +820,9 @@ pub mod unix {
     use super::Exec;
     use crate::job::Job;
     use crate::pipeline::Pipeline;
+    use crate::spawn::{Arg, exec_replace};
     use crate::unix::ProcessExt;
+    use std::convert::Infallible;
     use std::io;
 
     /// Unix-specific extension methods for [`Job`].
@@ -914,6 +916,28 @@ pub mod unix {
         unsafe fn pre_exec<F>(self, f: F) -> Self
         where
             F: FnMut() -> io::Result<()> + Send + Sync + 'static;
+
+        /// Replaces the current process with the configured command.
+        ///
+        /// Performs the setup configured on this `Exec` and then calls `execve(2)`
+        /// without forking, searching `PATH` as `execvp(3)` would. On success this
+        /// function does not return. Otherwise it returns the error that caused the
+        /// exec, or the setup preceding it, to fail.
+        ///
+        /// `Redirection::Pipe` is not supported, including input data passed to
+        /// [`Exec::stdin`], as there is no parent process to hold the other end of the
+        /// pipe.
+        ///
+        /// Not returning has the same implications as calling `process::exit`: no
+        /// destructors on this or any other thread's stack are run. If this function
+        /// does return an error, the process may be in a broken state, since the
+        /// working directory, standard streams, or user and group IDs may already have
+        /// changed.
+        ///
+        /// [`Exec::stdin`]: crate::Exec::stdin
+        //
+        // Infallible stands in for `!`, which it is slated to become an alias for.
+        fn exec_replace(self) -> io::Result<Infallible>;
     }
 
     impl ExecExt for Exec {
@@ -938,6 +962,21 @@ pub mod unix {
         {
             self.os_options.pre_exec_fns.push(Box::new(f));
             self
+        }
+
+        fn exec_replace(self) -> io::Result<Infallible> {
+            let mut argv = self.args;
+            argv.insert(0, Arg::Regular(self.command));
+            exec_replace(
+                argv,
+                self.stdin_redirect,
+                self.stdout_redirect,
+                self.stderr_redirect,
+                self.executable.as_deref(),
+                self.env.as_deref(),
+                self.cwd.as_deref(),
+                self.os_options,
+            )
         }
     }
 

@@ -820,3 +820,118 @@ fn terminate_during_wait() {
     let status = waiter.join().unwrap();
     assert!(status.is_killed_by(libc::SIGTERM));
 }
+
+// --- exec_replace tests ---
+
+// Replacing the process ends the test binary, so the tests that exercise a successful
+// exec_replace() run it in a child copy of the test binary. The env var name embeds
+// the parent's PID, in the same way as run_isolated() above.
+const EXEC_REPLACE_PREFIX: &str = "SUBPROCESS_EXEC_REPLACE_TEST_";
+
+// Spawn a copy of the test binary running `name`, with the env var that makes it call
+// exec_replace(), and return its output.
+fn run_exec_replace_child(name: &str) -> std::process::Output {
+    let exe = std::env::current_exe().expect("current_exe");
+    let test_path = format!("tests::posix::{name}");
+    let child_var = format!("{EXEC_REPLACE_PREFIX}{}", std::process::id());
+    std::process::Command::new(&exe)
+        .args(["--exact", &test_path])
+        .env(&child_var, "1")
+        .output()
+        .expect("spawning exec_replace test child")
+}
+
+fn in_exec_replace_child() -> bool {
+    let parent_var = format!("{EXEC_REPLACE_PREFIX}{}", unsafe { libc::getppid() });
+    std::env::var_os(&parent_var).is_some()
+}
+
+#[test]
+fn exec_replace_replaces_process() {
+    if in_exec_replace_child() {
+        // Replace this test process with a shell. libtest's own output is irrelevant
+        // from here on; the parent inspects the shell's output and exit status.
+        let err = Exec::cmd("sh")
+            .arg("-c")
+            .arg("echo out; echo err >&2; exit 42")
+            .stderr(Redirection::Merge)
+            .exec_replace()
+            .unwrap_err();
+        panic!("exec_replace returned: {err}");
+    }
+    let output = run_exec_replace_child("exec_replace_replaces_process");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    // Both lines land on stdout because stderr was merged into it. libtest prints a
+    // "running 1 test" header before the test body runs, so check the tail only.
+    assert!(stdout.ends_with("out\nerr\n"), "stdout: {stdout}");
+    assert!(!stderr.contains("err"), "stderr: {stderr}");
+}
+
+#[test]
+fn exec_replace_applies_cwd_and_env() {
+    if in_exec_replace_child() {
+        let err = Exec::cmd("sh")
+            .arg("-c")
+            .arg("echo \"$PWD\" \"$SUBPROCESS_EXEC_REPLACE_VAR\"")
+            .cwd("/")
+            .env("SUBPROCESS_EXEC_REPLACE_VAR", "set")
+            .exec_replace()
+            .unwrap_err();
+        panic!("exec_replace returned: {err}");
+    }
+    let output = run_exec_replace_child("exec_replace_applies_cwd_and_env");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "status: {}\nstdout: {stdout}",
+        output.status
+    );
+    assert!(stdout.ends_with("/ set\n"), "stdout: {stdout}");
+}
+
+#[test]
+fn exec_replace_pre_exec_error() {
+    // pre_exec closures run in the calling process right before exec; an error from
+    // one aborts the exec and is returned. With no redirections or cwd configured,
+    // the failed attempt leaves the process untouched, so this runs in-process.
+    let err =
+        unsafe { Exec::cmd("true").pre_exec(|| Err(std::io::Error::other("pre_exec refused"))) }
+            .exec_replace()
+            .unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::Other);
+    assert_eq!(err.to_string(), "pre_exec refused");
+}
+
+#[test]
+fn exec_replace_rejects_pipe() {
+    // These must fail before touching the process, so they can run in-process.
+    for exec in [
+        Exec::cmd("true").stdin(Redirection::Pipe),
+        Exec::cmd("true").stdout(Redirection::Pipe),
+        Exec::cmd("true").stderr(Redirection::Pipe),
+        Exec::cmd("true").stdin("data"),
+    ] {
+        let err = exec.exec_replace().unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{err}");
+    }
+}
+
+#[test]
+fn exec_replace_missing_command() {
+    // With no redirections or other setup, a failed exec leaves the process untouched,
+    // so this is safe to run in-process.
+    let err = Exec::cmd("/nonexistent/subprocess-exec-replace-test")
+        .exec_replace()
+        .unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound, "{err}");
+    let err = Exec::cmd("nonexistent-subprocess-exec-replace-test")
+        .exec_replace()
+        .unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound, "{err}");
+}

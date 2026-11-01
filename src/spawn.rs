@@ -12,6 +12,8 @@ use crate::process::Process;
 
 pub(crate) use os::OsOptions;
 pub(crate) use os::env_keys_cmp;
+#[cfg(unix)]
+pub(crate) use os::exec_replace;
 pub use os::make_pipe;
 
 /// A process argument, either regular (quoted on Windows) or raw
@@ -295,6 +297,7 @@ pub(crate) mod os {
 
     use crate::posix;
     use std::collections::HashSet;
+    use std::convert::Infallible;
     use std::ffi::OsString;
     use std::fs::File;
     use std::io::{self, Read, Write};
@@ -461,6 +464,50 @@ pub(crate) mod os {
             }
         }
         Ok(())
+    }
+
+    /// Replace the current process with the command described by `argv`.
+    ///
+    /// Runs the same setup as the child side of `os_start` (chdir, stream redirection,
+    /// SIGPIPE reset, setgid/setuid/setpgid, pre_exec hooks) in the calling process and
+    /// then execs. On success the process is replaced; on failure some of the setup may
+    /// have already taken effect.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn exec_replace(
+        argv: Vec<Arg>,
+        stdin: Arc<Redirection>,
+        stdout: Arc<Redirection>,
+        stderr: Arc<Redirection>,
+        executable: Option<&OsStr>,
+        env: Option<&[(OsString, OsString)]>,
+        cwd: Option<&OsStr>,
+        os_options: OsOptions,
+    ) -> io::Result<Infallible> {
+        if argv.is_empty() {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "argv must not be empty",
+            ));
+        }
+        // A pipe needs a parent to hold the other end, which no longer exists once the
+        // process is replaced.
+        for redir in [&stdin, &stdout, &stderr] {
+            if matches!(&**redir, Redirection::Pipe) {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "Redirection::Pipe not valid for exec_replace",
+                ));
+            }
+        }
+        let argv: Vec<OsString> = argv.into_iter().map(|Arg::Regular(s)| s).collect();
+        let child_env = env.map(format_env);
+        let cmd_to_exec = executable.unwrap_or(&argv[0]);
+        let just_exec = posix::prep_exec(cmd_to_exec, &argv, child_env.as_deref())?;
+        let do_chdir = cwd.map(posix::prep_chdir).transpose()?;
+        // Without a Pipe redirection there are no parent ends to keep.
+        let (_, child_ends) = setup_streams(stdin, stdout, stderr)?;
+        do_exec(just_exec, child_ends, do_chdir, os_options)?;
+        unreachable!("do_exec returned without replacing the process");
     }
 
     fn do_exec(
