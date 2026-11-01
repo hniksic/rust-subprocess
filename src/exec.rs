@@ -872,13 +872,19 @@ pub mod unix {
 
         /// Put the subprocess into its own process group.
         ///
-        /// This calls `setpgid(0, 0)` before exec'ing the child process, making it the
-        /// leader of a new process group.  Useful for a single process that spawns
-        /// children, allowing them all to be signaled as a group with
-        /// [`ProcessExt::send_signal_group`].
+        /// Normally the child shares the parent's process group, so pressing Ctrl-C in
+        /// the terminal kills both: the kernel sends SIGINT to the whole foreground group,
+        /// and the child's handlers are reset to default on `exec()` regardless of what
+        /// the parent installed. With `setpgid()`, only the parent gets the signal and
+        /// can decide what to do with the child.
         ///
-        /// For pipelines, use [`PipelineExt::setpgid`] instead, which puts all pipeline
-        /// processes into a shared group.
+        /// A new process group also makes it possible to signal the child together with
+        /// any processes it spawns, using [`ProcessExt::send_signal_group`].
+        ///
+        /// Note that a process outside the foreground group is stopped if it tries to
+        /// read from the terminal, so this is not suitable for interactive children.
+        ///
+        /// For pipelines, use [`PipelineExt::setpgid`] instead.
         ///
         /// [`ProcessExt::send_signal_group`]: crate::unix::ProcessExt::send_signal_group
         /// [`PipelineExt::setpgid`]: PipelineExt::setpgid
@@ -941,7 +947,9 @@ pub mod unix {
         ///
         /// The first process becomes the group leader (via `setpgid(0, 0)`) and
         /// subsequent processes join its group.  This allows signaling the entire
-        /// pipeline as a unit using [`JobExt::send_signal_group`].
+        /// pipeline as a unit using [`JobExt::send_signal_group`], and keeps the
+        /// pipeline running when the user presses Ctrl-C; see [`ExecExt::setpgid`] for
+        /// details.
         ///
         /// For single processes that spawn children, use [`ExecExt::setpgid`] instead.
         fn setpgid(self) -> Self;
