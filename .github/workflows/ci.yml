@@ -107,15 +107,13 @@ jobs:
 
   alpine:
     runs-on: ubuntu-latest
+    container: alpine:latest
     steps:
+      - run: apk add --no-cache build-base rust cargo
       - uses: actions/checkout@v4
-      - uses: jirutka/setup-alpine@v1
-        with:
-          packages: build-base rust cargo
       - run: |
           cargo build
           cargo test
-        shell: alpine.sh {0}
 
   illumos:
     runs-on: ubuntu-latest
