@@ -8,8 +8,8 @@ The `subprocess` crate makes it convenient to execute and interact with external
 and pipelines.  It is [hosted on crates.io](https://crates.io/crates/subprocess), with
 [API documentation on docs.rs](https://docs.rs/subprocess/).
 
-The crate has minimal dependencies (only `libc` on Unix and `winapi` on Windows), and is
-tested on Linux, macOS, and Windows.
+The crate has minimal dependencies (only `libc` on Unix and `windows-sys` on Windows),
+and is tested on Linux, macOS, and Windows.
 
 If you're upgrading from version 0.2, see the [migration guide](MIGRATION.md).
 

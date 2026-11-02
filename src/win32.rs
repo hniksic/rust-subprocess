@@ -13,26 +13,32 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use winapi::shared::{
-    minwindef::{BOOL, DWORD, FALSE, LPVOID, TRUE},
-    winerror::{ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_NOT_FOUND, WAIT_TIMEOUT},
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_NOT_FOUND, FALSE, GENERIC_READ,
+    INVALID_HANDLE_VALUE, TRUE, WAIT_ABANDONED, WAIT_ABANDONED_0, WAIT_FAILED, WAIT_OBJECT_0,
+    WAIT_TIMEOUT,
 };
-use winapi::um::fileapi::CreateFileW;
-use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
-use winapi::um::ioapiset::GetOverlappedResult;
-use winapi::um::minwinbase::{LPSECURITY_ATTRIBUTES, OVERLAPPED, SECURITY_ATTRIBUTES};
-use winapi::um::namedpipeapi::CreateNamedPipeW;
-use winapi::um::processthreadsapi::{CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW};
-use winapi::um::synchapi::CreateEventW;
-use winapi::um::winbase::{
-    CREATE_UNICODE_ENVIRONMENT, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
-    PIPE_ACCESS_OUTBOUND, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+use windows_sys::Win32::Globalization::{
+    CSTR_EQUAL, CSTR_GREATER_THAN, CSTR_LESS_THAN, CompareStringOrdinal,
 };
-use winapi::um::winbase::{INFINITE, WAIT_ABANDONED, WAIT_ABANDONED_0, WAIT_FAILED, WAIT_OBJECT_0};
-use winapi::um::winnt::GENERIC_READ;
-use winapi::um::{fileapi, handleapi, processenv, processthreadsapi, synchapi};
+use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
+    PIPE_ACCESS_OUTBOUND,
+};
+use windows_sys::Win32::System::Console::{STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+use windows_sys::Win32::System::Pipes::{
+    CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+};
+use windows_sys::Win32::System::Threading::{
+    CREATE_UNICODE_ENVIRONMENT, CreateEventW, CreateProcessW, INFINITE, PROCESS_INFORMATION,
+    STARTUPINFOW,
+};
+use windows_sys::Win32::{Foundation, Storage::FileSystem, System::Console, System::Threading};
+use windows_sys::core::BOOL;
 
-pub use winapi::shared::winerror::{ERROR_ACCESS_DENIED, ERROR_BAD_PATHNAME};
+pub use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_BAD_PATHNAME};
 pub const STILL_ACTIVE: u32 = 259;
 
 use crate::exec::Redirection;
@@ -65,7 +71,7 @@ impl FromRawHandle for Handle {
 }
 
 pub const HANDLE_FLAG_INHERIT: u32 = 1;
-pub const STARTF_USESTDHANDLES: DWORD = winapi::um::winbase::STARTF_USESTDHANDLES;
+pub const STARTF_USESTDHANDLES: u32 = Threading::STARTF_USESTDHANDLES;
 
 fn check(status: BOOL) -> Result<()> {
     if status != 0 {
@@ -100,10 +106,10 @@ fn unique_pipe_name() -> Vec<u16> {
 
 pub fn make_pipe() -> Result<(File, File)> {
     let pipe_name = unique_pipe_name();
-    const BUFFER_SIZE: DWORD = 4096;
+    const BUFFER_SIZE: u32 = 4096;
 
-    let mut sa = SECURITY_ATTRIBUTES {
-        nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as DWORD,
+    let sa = SECURITY_ATTRIBUTES {
+        nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
         lpSecurityDescriptor: ptr::null_mut(),
         bInheritHandle: FALSE,
     };
@@ -119,7 +125,7 @@ pub fn make_pipe() -> Result<(File, File)> {
             BUFFER_SIZE,
             BUFFER_SIZE,
             0,
-            &mut sa as LPSECURITY_ATTRIBUTES,
+            &sa,
         )
     })?;
     // Take ownership immediately so a CreateFileW failure below closes the named pipe
@@ -130,8 +136,8 @@ pub fn make_pipe() -> Result<(File, File)> {
             pipe_name.as_ptr(),
             GENERIC_READ,
             0,
-            &mut sa as LPSECURITY_ATTRIBUTES,
-            fileapi::OPEN_EXISTING,
+            &sa,
+            OPEN_EXISTING,
             FILE_FLAG_OVERLAPPED,
             ptr::null_mut(),
         )
@@ -148,7 +154,7 @@ fn CreateEvent() -> Result<Handle> {
 
 /// Reset an event to non-signaled state.
 fn ResetEvent(event: &Handle) -> Result<()> {
-    check(unsafe { synchapi::ResetEvent(event.as_raw_handle()) })
+    check(unsafe { Threading::ResetEvent(event.as_raw_handle()) })
 }
 
 /// Get the result of an overlapped operation.
@@ -161,7 +167,7 @@ fn get_overlapped_result(
     overlapped: &mut OVERLAPPED,
     wait: bool,
 ) -> Result<u32> {
-    let mut bytes_transferred: DWORD = 0;
+    let mut bytes_transferred: u32 = 0;
     let result =
         unsafe { GetOverlappedResult(handle, overlapped, &mut bytes_transferred, wait as BOOL) };
     if result != 0 {
@@ -332,15 +338,15 @@ pub fn ReadFileOverlapped(handle: RawHandle, buffer_size: usize) -> Result<Pendi
     };
 
     ResetEvent(&pending.event)?;
-    let mut bytes_read: DWORD = 0;
+    let mut bytes_read: u32 = 0;
     // SAFETY: We pass a pointer to the buffer which we own. The OS will write to it
     // asynchronously, which is why the buffer is wrapped in UnsafeCell.
     let result = unsafe {
         let buffer = &mut *pending.buffer.get();
-        fileapi::ReadFile(
+        FileSystem::ReadFile(
             handle,
-            buffer.as_mut_ptr() as LPVOID,
-            buffer.len() as DWORD,
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
             &mut bytes_read,
             pending.overlapped.as_mut() as _,
         )
@@ -382,12 +388,12 @@ pub fn WriteFileOverlapped(handle: RawHandle, data: &[u8]) -> Result<PendingWrit
     };
 
     ResetEvent(&pending.event)?;
-    let mut bytes_written: DWORD = 0;
+    let mut bytes_written: u32 = 0;
     let result = unsafe {
-        fileapi::WriteFile(
+        FileSystem::WriteFile(
             handle,
-            pending.buffer.as_ptr() as LPVOID,
-            pending.buffer.len() as DWORD,
+            pending.buffer.as_ptr(),
+            pending.buffer.len() as u32,
             &mut bytes_written,
             pending.overlapped.as_mut() as _,
         )
@@ -449,8 +455,8 @@ pub fn WaitForMultipleObjects(
         let (timeout_ms, overflow) = wait_timeout_to_ms(remaining_timeout);
 
         let result = unsafe {
-            synchapi::WaitForMultipleObjects(
-                handles.len() as DWORD,
+            Threading::WaitForMultipleObjects(
+                handles.len() as u32,
                 handles.as_ptr(),
                 FALSE, // wait for any, not all
                 timeout_ms,
@@ -486,7 +492,7 @@ pub fn WaitForMultipleObjects(
 }
 
 pub fn SetHandleInformation(handle: RawHandle, mask: u32, flags: u32) -> Result<()> {
-    check(unsafe { handleapi::SetHandleInformation(handle, mask, flags) })?;
+    check(unsafe { Foundation::SetHandleInformation(handle, mask, flags) })?;
     Ok(())
 }
 
@@ -495,11 +501,8 @@ pub fn SetHandleInformation(handle: RawHandle, mask: u32, flags: u32) -> Result<
 /// (operates per UTF-16 code unit, surrogate-preserving), then ordinal-compares
 /// the result. See https://learn.microsoft.com/en-us/windows/win32/api/stringapiset/nf-stringapiset-comparestringordinal
 pub fn compare_string_ordinal(a: &[u16], b: &[u16], ignore_case: bool) -> std::cmp::Ordering {
-    const CSTR_LESS_THAN: i32 = 1;
-    const CSTR_EQUAL: i32 = 2;
-    const CSTR_GREATER_THAN: i32 = 3;
     let r = unsafe {
-        winapi::um::stringapiset::CompareStringOrdinal(
+        CompareStringOrdinal(
             a.as_ptr(),
             a.len() as i32,
             b.as_ptr(),
@@ -529,7 +532,7 @@ pub fn CreateProcess(
     sinfo_flags: u32,
 ) -> Result<(Handle, u64)> {
     let mut sinfo: STARTUPINFOW = unsafe { mem::zeroed() };
-    sinfo.cb = mem::size_of::<STARTUPINFOW>() as DWORD;
+    sinfo.cb = mem::size_of::<STARTUPINFOW>() as u32;
     sinfo.hStdInput = stdin.unwrap_or(ptr::null_mut());
     sinfo.hStdOutput = stdout.unwrap_or(ptr::null_mut());
     sinfo.hStdError = stderr.unwrap_or(ptr::null_mut());
@@ -537,7 +540,8 @@ pub fn CreateProcess(
     let mut pinfo: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let mut cmdline = to_nullterm(cmdline);
     let wc_appname = appname.map(to_nullterm);
-    let env_block_ptr = env_block.map(|v| v.as_ptr()).unwrap_or(ptr::null()) as LPVOID;
+    let env_block_ptr =
+        env_block.map(|v| v.as_ptr()).unwrap_or(ptr::null()) as *const std::ffi::c_void;
     let cwd = cwd.map(to_nullterm);
     creation_flags |= CREATE_UNICODE_ENVIRONMENT;
     check(unsafe {
@@ -553,7 +557,7 @@ pub fn CreateProcess(
             creation_flags,          // dwCreationFlags
             env_block_ptr,           // lpEnvironment
             cwd.as_ref().map(|v| v.as_ptr()).unwrap_or(ptr::null()), // lpCurrentDirectory
-            &mut sinfo,
+            &sinfo,
             &mut pinfo,
         )
     })?;
@@ -581,7 +585,7 @@ pub fn WaitForSingleObject(handle: &Handle, mut timeout: Option<Duration>) -> Re
         // loop.
         let (timeout_ms, overflow) = wait_timeout_to_ms(timeout);
 
-        let result = unsafe { synchapi::WaitForSingleObject(handle.as_raw_handle(), timeout_ms) };
+        let result = unsafe { Threading::WaitForSingleObject(handle.as_raw_handle(), timeout_ms) };
         if result != WAIT_TIMEOUT || !overflow {
             break result;
         }
@@ -609,25 +613,24 @@ pub fn WaitForSingleObject(handle: &Handle, mut timeout: Option<Duration>) -> Re
 pub fn GetExitCodeProcess(handle: &Handle) -> Result<u32> {
     let mut exit_code = 0u32;
     check(unsafe {
-        processthreadsapi::GetExitCodeProcess(handle.as_raw_handle(), &mut exit_code as *mut u32)
+        Threading::GetExitCodeProcess(handle.as_raw_handle(), &mut exit_code as *mut u32)
     })?;
     Ok(exit_code)
 }
 
 pub fn TerminateProcess(handle: &Handle, exit_code: u32) -> Result<()> {
-    check(unsafe { processthreadsapi::TerminateProcess(handle.as_raw_handle(), exit_code) })
+    check(unsafe { Threading::TerminateProcess(handle.as_raw_handle(), exit_code) })
 }
 
 unsafe fn GetStdHandle(which: StandardStream) -> Result<RawHandle> {
     // private/unsafe because the raw handle it returns must be duplicated or leaked
     // before converting to an owned Handle.
-    use winapi::um::winbase::{STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
     let id = match which {
         StandardStream::Input => STD_INPUT_HANDLE,
         StandardStream::Output => STD_OUTPUT_HANDLE,
         StandardStream::Error => STD_ERROR_HANDLE,
     };
-    let raw_handle = check_handle(unsafe { processenv::GetStdHandle(id) })?;
+    let raw_handle = check_handle(unsafe { Console::GetStdHandle(id) })?;
     Ok(raw_handle)
 }
 
@@ -647,7 +650,7 @@ pub fn make_redirection_to_standard_stream(which: StandardStream) -> Result<Arc<
 /// overlapped structure and buffer. It handles the case where no I/O was actually pending
 /// (e.g., ReadFile failed immediately with ERROR_BROKEN_PIPE) by checking CancelIoEx's return.
 fn cancel_and_wait_io(handle: RawHandle, overlapped: &mut OVERLAPPED) {
-    let cancel_result = unsafe { winapi::um::ioapiset::CancelIoEx(handle, overlapped as _) };
+    let cancel_result = unsafe { CancelIoEx(handle, overlapped) };
     if cancel_result != 0 {
         // I/O was pending and is now cancelled - wait for completion
         let _ = get_overlapped_result(handle, overlapped, true);
