@@ -17,7 +17,16 @@ rust-version = "1.88"
 libc = "0.2.78"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3.8", features = ["std", "handleapi", "namedpipeapi", "processenv", "synchapi", "winerror", "processthreadsapi", "winbase", "fileapi", "minwinbase", "ioapiset", "stringapiset"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tempfile = "3.3.0"
