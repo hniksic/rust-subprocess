@@ -13,7 +13,7 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -22,7 +22,7 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - run: RUSTDOCFLAGS="--cfg docsrs" cargo doc --no-deps
 
@@ -35,7 +35,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.rust != 'stable' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
@@ -45,7 +45,7 @@ jobs:
   msrv:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.88"
@@ -56,7 +56,7 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build
       - run: cargo test
@@ -64,7 +64,7 @@ jobs:
   freebsd:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Test on FreeBSD
         uses: vmactions/freebsd-vm@v1
         with:
@@ -80,7 +80,7 @@ jobs:
   openbsd:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Test on OpenBSD
         uses: vmactions/openbsd-vm@v1
         with:
@@ -94,7 +94,7 @@ jobs:
   netbsd:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Test on NetBSD
         uses: vmactions/netbsd-vm@v1
         with:
@@ -110,7 +110,7 @@ jobs:
     container: alpine:latest
     steps:
       - run: apk add --no-cache build-base rust cargo
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: |
           cargo build
           cargo test
@@ -118,7 +118,7 @@ jobs:
   illumos:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Test on illumos (OmniOS)
         uses: vmactions/omnios-vm@v1
         with:
