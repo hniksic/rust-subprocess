@@ -1,6 +1,8 @@
 use std::env;
 use std::ffi::{CString, OsStr, OsString};
 use std::fs::File;
+#[cfg(any(target_os = "tvos", target_os = "watchos"))]
+use std::io::ErrorKind;
 use std::io::{Error, Result};
 use std::iter;
 use std::marker::PhantomData;
@@ -77,11 +79,20 @@ pub fn pipe() -> Result<(File, File)> {
 
 // marked unsafe because the child must not allocate before exec-ing
 pub unsafe fn fork() -> Result<Option<u32>> {
-    let pid = check_err(unsafe { libc::fork() })?;
-    if pid == 0 {
-        Ok(None) // child
-    } else {
-        Ok(Some(pid as u32)) // parent
+    #[cfg(not(any(target_os = "tvos", target_os = "watchos")))]
+    {
+        let pid = check_err(unsafe { libc::fork() })?;
+        if pid == 0 {
+            Ok(None) // child
+        } else {
+            Ok(Some(pid as u32)) // parent
+        }
+    }
+
+    // fork is prohibited on tvOS and watchOS
+    #[cfg(any(target_os = "tvos", target_os = "watchos"))]
+    {
+        Err(Error::from(ErrorKind::Unsupported))
     }
 }
 
@@ -113,6 +124,7 @@ struct CVec {
     strings: Vec<CString>,
 
     // nullptr-terminated vector of pointers to data inside self.strings.
+    #[cfg_attr(any(target_os = "tvos", target_os = "watchos"), expect(dead_code))]
     ptrs: Vec<*const c_char>,
 }
 
@@ -129,6 +141,7 @@ impl CVec {
         Ok(CVec { strings, ptrs })
     }
 
+    #[cfg_attr(any(target_os = "tvos", target_os = "watchos"), expect(dead_code))]
     pub fn as_c_vec(&self) -> *const *const c_char {
         self.ptrs.as_ptr()
     }
@@ -158,7 +171,9 @@ fn split_path(mut path: &OsStr) -> impl Iterator<Item = &OsStr> {
 
 struct PrepExec {
     cmd: OsString,
+    #[cfg_attr(any(target_os = "tvos", target_os = "watchos"), expect(dead_code))]
     argvec: CVec,
+    #[cfg_attr(any(target_os = "tvos", target_os = "watchos"), expect(dead_code))]
     envvec: Option<CVec>,
     search_path: Option<OsString>,
     prealloc_exe: Vec<u8>,
@@ -235,15 +250,25 @@ impl PrepExec {
     }
 
     fn libc_exec(&self, exe: &[u8]) -> Result<()> {
-        unsafe {
-            match self.envvec.as_ref() {
-                Some(envvec) => {
-                    libc::execve(exe.as_ptr() as _, self.argvec.as_c_vec(), envvec.as_c_vec())
+        #[cfg(not(any(target_os = "tvos", target_os = "watchos")))]
+        {
+            unsafe {
+                match self.envvec.as_ref() {
+                    Some(envvec) => {
+                        libc::execve(exe.as_ptr() as _, self.argvec.as_c_vec(), envvec.as_c_vec())
+                    }
+                    None => libc::execv(exe.as_ptr() as _, self.argvec.as_c_vec()),
                 }
-                None => libc::execv(exe.as_ptr() as _, self.argvec.as_c_vec()),
-            }
-        };
-        Err(Error::last_os_error())
+            };
+            Err(Error::last_os_error())
+        }
+
+        // exec* is prohibited on tvOS and watchOS
+        #[cfg(any(target_os = "tvos", target_os = "watchos"))]
+        {
+            _ = exe;
+            Err(Error::from(ErrorKind::Unsupported))
+        }
     }
 }
 
